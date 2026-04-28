@@ -1,71 +1,73 @@
 {
-  "generatedAt": "2026-04-28T18:10:47.682Z",
+  "generatedAt": "2026-04-28T18:26:04.937Z",
   "source": "github-actions-coinbase-rest-snapshot",
   "prices": {
     "oil": {
       "id": "oil",
       "ticker": "NOL-18MAY26-CDE",
       "productId": "NOL-18MAY26-CDE",
-      "fetchedAt": "2026-04-28T18:10:47.597Z",
-      "minimumTradeValue": 88.75,
-      "ok": false,
-      "price": 88.75,
-      "error": "fetch failed",
-      "method": "reference_fallback"
+      "fetchedAt": "2026-04-28T18:26:04.486Z",
+      "minimumTradeValue": 99.605,
+      "ok": true,
+      "price": 99.605,
+      "bestBid": 99.59,
+      "bestAsk": 99.62,
+      "lastTrade": 99.6,
+      "method": "bid_ask_midpoint"
     },
     "natural-gas": {
       "id": "natural-gas",
       "ticker": "NG-USD-FUT",
       "productId": "NATURAL-GAS-USD",
-      "fetchedAt": "2026-04-28T18:10:47.662Z",
+      "fetchedAt": "2026-04-28T18:26:04.652Z",
       "minimumTradeValue": 2.31,
       "ok": false,
       "price": 2.31,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "reference_fallback"
     },
     "gold": {
       "id": "gold",
       "ticker": "GOLD-USD-FUT",
       "productId": "GOLD-USD",
-      "fetchedAt": "2026-04-28T18:10:47.664Z",
+      "fetchedAt": "2026-04-28T18:26:04.654Z",
       "minimumTradeValue": 4818,
       "ok": false,
       "price": 4818,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "reference_fallback"
     },
     "silver": {
       "id": "silver",
       "ticker": "SILVER-USD-FUT",
       "productId": "SILVER-USD",
-      "fetchedAt": "2026-04-28T18:10:47.665Z",
+      "fetchedAt": "2026-04-28T18:26:04.655Z",
       "minimumTradeValue": 27.6,
       "ok": false,
       "price": 27.6,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "reference_fallback"
     },
     "copper": {
       "id": "copper",
       "ticker": "COPPER-USD-FUT",
       "productId": "COPPER-USD",
-      "fetchedAt": "2026-04-28T18:10:47.666Z",
+      "fetchedAt": "2026-04-28T18:26:04.656Z",
       "minimumTradeValue": 4.58,
       "ok": false,
       "price": 4.58,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "reference_fallback"
     },
     "platinum": {
       "id": "platinum",
       "ticker": "PLATINUM-USD-FUT",
       "productId": "PLATINUM-USD",
-      "fetchedAt": "2026-04-28T18:10:47.667Z",
+      "fetchedAt": "2026-04-28T18:26:04.657Z",
       "minimumTradeValue": 980.5,
       "ok": false,
       "price": 980.5,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "reference_fallback"
     }
   }
