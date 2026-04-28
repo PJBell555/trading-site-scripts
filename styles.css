@@ -1,0 +1,366 @@
+:root {
+  --bg: #f2ede3;
+  --panel: rgba(255, 251, 244, 0.84);
+  --ink: #11202b;
+  --muted: #56646e;
+  --line: rgba(17, 32, 43, 0.14);
+  --accent: #006d5b;
+  --accent-strong: #00473c;
+  --warm: #cf6a32;
+  --danger: #8d2d2d;
+  --shadow: 0 22px 60px rgba(17, 32, 43, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Aptos", "Segoe UI Variable Text", "Trebuchet MS", sans-serif;
+  color: var(--ink);
+  background:
+    radial-gradient(circle at top left, rgba(207, 106, 50, 0.20), transparent 32%),
+    radial-gradient(circle at top right, rgba(0, 109, 91, 0.18), transparent 26%),
+    linear-gradient(180deg, #f8f2e8 0%, var(--bg) 100%);
+}
+
+.shell {
+  width: min(1100px, calc(100% - 32px));
+  margin: 0 auto;
+  padding: 20px 0 36px;
+}
+
+.hero,
+.band,
+.panel {
+  border: 1px solid var(--line);
+  backdrop-filter: blur(12px);
+  box-shadow: var(--shadow);
+}
+
+.hero {
+  display: grid;
+  grid-template-columns: 1.6fr 1fr;
+  gap: 24px;
+  padding: 22px 24px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, rgba(255, 251, 244, 0.92), rgba(243, 233, 214, 0.92));
+}
+
+.notice {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin-top: 12px;
+  padding: 14px 16px;
+  border: 1px solid rgba(141, 45, 45, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 248, 244, 0.92);
+  color: #6f3f29;
+  box-shadow: var(--shadow);
+}
+
+.eyebrow,
+.stat-label,
+.scale,
+label,
+li,
+p {
+  color: var(--muted);
+}
+
+.eyebrow {
+  margin: 0 0 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.78rem;
+}
+
+h1,
+h2,
+h3,
+strong {
+  color: var(--ink);
+}
+
+h1 {
+  margin: 0;
+  max-width: 13ch;
+  font-family: "Bahnschrift", "Aptos Display", sans-serif;
+  font-size: clamp(2.2rem, 4.8vw, 4rem);
+  line-height: 1;
+}
+
+h2,
+h3,
+p,
+ol,
+ul {
+  margin-top: 0;
+}
+
+.lede {
+  max-width: 56ch;
+  margin: 14px 0 0;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.hero-stats {
+  display: grid;
+  gap: 14px;
+  align-content: end;
+}
+
+.hero-stats div,
+.score-row div,
+.commodity-chip,
+.risk-box {
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(17, 32, 43, 0.08);
+  border-radius: 8px;
+}
+
+.hero-stats div {
+  padding: 14px 16px;
+}
+
+.hero-stats strong,
+.score-row strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.5rem;
+}
+
+.layout {
+  display: grid;
+  gap: 18px;
+  margin-top: 18px;
+}
+
+.band {
+  padding: 20px;
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.intro {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 24px;
+  align-items: center;
+}
+
+.commodity-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.commodity-chip {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  min-width: 112px;
+  text-align: center;
+  font-weight: 600;
+  color: var(--accent-strong);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 140ms ease, border-color 140ms ease, background 140ms ease, color 140ms ease;
+}
+
+.commodity-chip:hover {
+  transform: translateY(-1px);
+}
+
+.commodity-chip[data-selected="true"] {
+  border-color: #1677ff;
+  box-shadow: 0 0 0 2px rgba(22, 119, 255, 0.16);
+}
+
+.commodity-chip[data-tone="long"] {
+  background: rgba(0, 109, 91, 0.14);
+  color: #0d5f51;
+}
+
+.commodity-chip[data-tone="short"] {
+  background: rgba(141, 45, 45, 0.12);
+  color: #7e2f2f;
+}
+
+.commodity-chip[data-tone="wait"] {
+  background: rgba(207, 106, 50, 0.13);
+  color: #875129;
+}
+
+.commodity-name {
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.commodity-state {
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(280px, 420px) 1fr;
+  gap: 18px;
+}
+
+.panel {
+  padding: 20px;
+  border-radius: 8px;
+  background: rgba(255, 253, 249, 0.92);
+}
+
+.panel-head p {
+  margin-bottom: 20px;
+}
+
+label {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 18px;
+  font-size: 0.95rem;
+  font-weight: 700;
+}
+
+input[type="range"],
+select {
+  width: 100%;
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+select {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.scale {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.84rem;
+  font-weight: 500;
+}
+
+.signal-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 56px;
+  padding: 12px 18px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #f6fffb;
+  font-family: "Bahnschrift", "Aptos Display", sans-serif;
+  font-size: clamp(1.5rem, 3vw, 2.4rem);
+}
+
+.score-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin: 18px 0 22px;
+}
+
+.score-row div,
+.risk-box {
+  padding: 16px 18px;
+}
+
+.thesis ul {
+  display: grid;
+  gap: 10px;
+  padding-left: 20px;
+}
+
+.risk-box {
+  margin-top: 18px;
+}
+
+.roadmap {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+}
+
+.paper-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.paper-card {
+  padding: 16px 18px;
+  background: rgba(255, 255, 255, 0.56);
+  border: 1px solid rgba(17, 32, 43, 0.08);
+  border-radius: 8px;
+}
+
+.paper-card strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1.35rem;
+}
+
+ol {
+  padding-left: 22px;
+  line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  .hero,
+  .intro,
+  .workspace,
+  .roadmap {
+    grid-template-columns: 1fr;
+  }
+
+  .commodity-strip {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100% - 20px, 1180px);
+    padding-top: 18px;
+  }
+
+  .hero,
+  .band,
+  .panel {
+    padding: 18px;
+  }
+
+  .notice {
+    flex-direction: column;
+  }
+
+  .score-row {
+    grid-template-columns: 1fr;
+  }
+
+  .paper-grid {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    max-width: 10ch;
+  }
+}

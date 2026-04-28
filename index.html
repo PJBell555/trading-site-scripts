@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Atlas Commodities Advisor</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Coinbase futures decision support</p>
+        <h1>Trade Energy and Metals on Coinbase</h1>
+        <p class="lede">
+          Start with an oil-first directional advisor for Coinbase commodity futures, then layer in live data once the logic earns trust.
+        </p>
+      </div>
+      <div class="hero-stats" aria-label="Commodity coverage">
+        <div>
+          <span class="stat-label">Commodity contracts</span>
+          <strong id="contract-count">6</strong>
+        </div>
+        <div>
+          <span class="stat-label">Primary model</span>
+          <strong>Oil bias</strong>
+        </div>
+        <div>
+          <span class="stat-label">Mode</span>
+          <strong>Advisory</strong>
+        </div>
+      </div>
+    </header>
+
+    <section class="notice" aria-label="Disclaimer">
+      <strong>Important:</strong>
+      <span>
+        Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
+      </span>
+    </section>
+
+    <main class="layout">
+      <section class="band intro">
+        <div>
+          <h2>Where to start</h2>
+          <p>
+            The safest first version of this product is an advisor that weighs market structure, inventories, macro pressure, and momentum, then explains why it prefers long, short, or wait.
+          </p>
+        </div>
+        <div class="commodity-strip" id="commodity-strip" aria-label="Supported commodities"></div>
+      </section>
+
+      <section class="band workspace">
+        <div class="panel controls">
+          <div class="panel-head">
+            <h2 id="inputs-title">Advisor inputs: Oil</h2>
+            <p>Adjust the oil setup and the model will revise its bias.</p>
+          </div>
+
+          <label>
+            Commodity
+            <select id="commodity"></select>
+          </label>
+
+          <label>
+            Front-month price trend
+            <input id="trend" type="range" min="-10" max="10" value="3">
+            <div class="scale"><span>Falling</span><span>Rising</span></div>
+          </label>
+
+          <label>
+            Inventory pressure
+            <input id="inventory" type="range" min="-10" max="10" value="-2">
+            <div class="scale"><span>Builds</span><span>Draws</span></div>
+          </label>
+
+          <label>
+            US dollar pressure
+            <input id="dollar" type="range" min="-10" max="10" value="-1">
+            <div class="scale"><span>Stronger USD</span><span>Weaker USD</span></div>
+          </label>
+
+          <label>
+            Geopolitical supply risk
+            <input id="geopolitics" type="range" min="-10" max="10" value="4">
+            <div class="scale"><span>Calm</span><span>Disrupted</span></div>
+          </label>
+
+          <label>
+            Curve structure
+            <select id="curve">
+              <option value="4">Backwardation</option>
+              <option value="0" selected>Flat</option>
+              <option value="-4">Contango</option>
+            </select>
+          </label>
+
+          <label>
+            Trade horizon
+            <select id="horizon">
+              <option value="intraday">Intraday</option>
+              <option value="swing" selected>Swing</option>
+              <option value="position">Position</option>
+            </select>
+          </label>
+        </div>
+
+        <div class="panel verdict">
+          <div class="panel-head">
+            <h2 id="output-title">Advisor output: Oil</h2>
+            <p>Decision support only. No brokerage connectivity or auto-execution is enabled.</p>
+          </div>
+
+          <div class="signal-badge" id="signal-badge">Moderate Long</div>
+          <div class="score-row">
+            <div>
+              <span class="stat-label">Conviction</span>
+              <strong id="conviction">63 / 100</strong>
+            </div>
+            <div>
+              <span class="stat-label">Action</span>
+              <strong id="action">Lean long small</strong>
+            </div>
+            <div>
+              <span class="stat-label">Ticker</span>
+              <strong id="ticker">OIL-USD-FUT</strong>
+            </div>
+            <div>
+              <span class="stat-label">Coinbase price</span>
+              <strong id="price">$78.40</strong>
+            </div>
+            <div>
+              <span class="stat-label">Target buy</span>
+              <strong id="target-buy">$78.20</strong>
+            </div>
+            <div>
+              <span class="stat-label">Target sell</span>
+              <strong id="target-sell">$79.18</strong>
+            </div>
+            <div>
+              <span class="stat-label">Buy window</span>
+              <strong id="buy-window">09:45-10:30 ET</strong>
+            </div>
+            <div>
+              <span class="stat-label">Price source</span>
+              <strong id="price-source">Reference</strong>
+            </div>
+          </div>
+
+          <div class="thesis">
+            <h3>Why the model thinks this</h3>
+            <ul id="reasons"></ul>
+          </div>
+
+          <div class="risk-box">
+            <h3>What could break the call</h3>
+            <p id="risk-copy"></p>
+          </div>
+        </div>
+      </section>
+
+      <section class="band roadmap">
+        <div>
+          <h2>Paper trading system</h2>
+          <div class="paper-grid">
+            <div class="paper-card">
+              <span class="stat-label">Paper equity</span>
+              <strong id="paper-equity">$100,000</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">Risk per trade</span>
+              <strong id="paper-risk">0.75%</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">Position size</span>
+              <strong id="paper-size">1 contract</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">System status</span>
+              <strong id="paper-status">Armed</strong>
+            </div>
+          </div>
+        </div>
+        <div>
+          <h2>Paper execution plan</h2>
+          <ol id="paper-steps">
+            <li>Wait for the buy window and confirm the advisory still matches the latest signal.</li>
+            <li>Enter the paper trade at the target buy level or skip if price runs too far.</li>
+            <li>Take profit at the target sell level and log the result for review.</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
