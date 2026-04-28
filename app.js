@@ -91,8 +91,10 @@ const marketConfig = {
 
 const latestPrices = new Map();
 const latestPriceTimes = new Map();
+const latestPriceSources = new Map();
 const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
+const SNAPSHOT_PRICE_REFRESH_MS = 60000;
 const PAPER_START_EQUITY = 100000;
 const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
@@ -104,6 +106,8 @@ const transactionHistory = [];
 let paperEquity = PAPER_START_EQUITY;
 let martingaleStep = 1;
 let nextTransactionId = 1;
+let snapshotPricesPromise = null;
+let snapshotPricesLoadedAt = 0;
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 
 for (const commodity of commodities) {
@@ -272,6 +276,26 @@ function getCoinbaseMinimumTradeValue(data, livePrice) {
   return livePrice;
 }
 
+function getSnapshotUrl() {
+  return `./prices.json?ts=${Date.now()}`;
+}
+
+async function loadSnapshotPrices() {
+  const now = Date.now();
+  if (snapshotPricesPromise && now - snapshotPricesLoadedAt < SNAPSHOT_PRICE_REFRESH_MS) {
+    return snapshotPricesPromise;
+  }
+
+  snapshotPricesLoadedAt = now;
+  snapshotPricesPromise = fetch(getSnapshotUrl(), { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) throw new Error("snapshot unavailable");
+      return response.json();
+    });
+
+  return snapshotPricesPromise;
+}
+
 function getSignalSide(signal) {
   if (signal.tone === "long") return "long";
   if (signal.tone === "short") return "short";
@@ -336,6 +360,7 @@ function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
   const updatedAt = latestPriceTimes.get(commodity);
+  const priceSource = latestPriceSources.get(commodity);
   const minTradeValue = productMinimums.get(commodity) ?? livePrice;
   const longBias = signal.tone === "long";
   const shortBias = signal.tone === "short";
@@ -366,7 +391,7 @@ function buildTradePlan(commodity, signal) {
     sellPrice,
     stopLoss,
     buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
-    priceSource: updatedAt ? `Coinbase live / ${formatPriceTime(updatedAt)}` : "Reference (live unavailable)",
+    priceSource: updatedAt ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : "Reference (snapshot unavailable)",
     minTradeValue,
     minLong: `1 contract / ${formatMoney(minTradeValue)}`,
     minShort: `1 contract / ${formatMoney(minTradeValue)}`,
@@ -388,19 +413,48 @@ async function refreshCoinbasePrice(commodity) {
   if (!config) return;
 
   try {
-    const response = await fetch(`https://api.coinbase.com/api/v3/brokerage/market/products/${config.productId}/ticker`);
+    const response = await fetch(`https://api.coinbase.com/api/v3/brokerage/market/products/${config.productId}/ticker?ts=${Date.now()}`, {
+      cache: "no-store"
+    });
     if (!response.ok) throw new Error("price unavailable");
     const data = await response.json();
     const livePrice = getCoinbasePrice(data);
     if (livePrice) {
       latestPrices.set(commodity, livePrice);
       latestPriceTimes.set(commodity, new Date());
+      latestPriceSources.set(commodity, "Coinbase live");
       await refreshCoinbaseProductDetails(commodity, livePrice);
       if (commoditySelect.value === commodity) calculateSignal();
     }
   } catch (error) {
+    await refreshSnapshotPrice(commodity);
+  }
+}
+
+async function refreshSnapshotPrice(commodity) {
+  try {
+    const data = await loadSnapshotPrices();
+    const snapshot = data?.prices?.[commodity];
+    const snapshotPrice = Number(snapshot?.price);
+
+    if (!Number.isFinite(snapshotPrice) || snapshotPrice <= 0) {
+      throw new Error("snapshot price unavailable");
+    }
+
+    latestPrices.set(commodity, snapshotPrice);
+    latestPriceTimes.set(commodity, new Date(snapshot.fetchedAt || data.generatedAt || Date.now()));
+    latestPriceSources.set(commodity, snapshot.ok ? "GitHub snapshot" : "Reference snapshot");
+
+    const minimumTradeValue = Number(snapshot.minimumTradeValue);
+    if (Number.isFinite(minimumTradeValue) && minimumTradeValue > 0) {
+      productMinimums.set(commodity, minimumTradeValue);
+    }
+
+    if (commoditySelect.value === commodity) calculateSignal();
+  } catch (error) {
     if (!latestPrices.has(commodity)) {
       latestPriceTimes.delete(commodity);
+      latestPriceSources.delete(commodity);
       if (commoditySelect.value === commodity) calculateSignal();
     }
   }
