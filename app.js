@@ -15,11 +15,15 @@ const signalBadge = document.querySelector("#signal-badge");
 const convictionEl = document.querySelector("#conviction");
 const actionEl = document.querySelector("#action");
 const tickerEl = document.querySelector("#ticker");
+const contractMonthEl = document.querySelector("#contract-month");
 const priceEl = document.querySelector("#price");
 const targetBuyEl = document.querySelector("#target-buy");
 const targetSellEl = document.querySelector("#target-sell");
+const stopLossEl = document.querySelector("#stop-loss");
 const buyWindowEl = document.querySelector("#buy-window");
 const priceSourceEl = document.querySelector("#price-source");
+const minLongEl = document.querySelector("#min-long");
+const minShortEl = document.querySelector("#min-short");
 const paperEquityEl = document.querySelector("#paper-equity");
 const paperRiskEl = document.querySelector("#paper-risk");
 const paperSizeEl = document.querySelector("#paper-size");
@@ -62,12 +66,18 @@ const commodityTweaks = {
 };
 
 const marketConfig = {
-  oil: { ticker: "OIL-USD-FUT", productId: "OIL-USD", referencePrice: 78.4, buyWindow: "09:45-10:30 ET" },
-  "natural-gas": { ticker: "NG-USD-FUT", productId: "NATURAL-GAS-USD", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
-  gold: { ticker: "GOLD-USD-FUT", productId: "GOLD-USD", referencePrice: 2348.2, buyWindow: "09:35-10:15 ET" },
-  silver: { ticker: "SILVER-USD-FUT", productId: "SILVER-USD", referencePrice: 27.6, buyWindow: "09:35-10:15 ET" },
-  copper: { ticker: "COPPER-USD-FUT", productId: "COPPER-USD", referencePrice: 4.58, buyWindow: "09:45-10:45 ET" },
-  platinum: { ticker: "PLATINUM-USD-FUT", productId: "PLATINUM-USD", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
+  oil: {
+    ticker: "NOL-18MAY26-CDE",
+    productId: "NOL-18MAY26-CDE",
+    contractMonth: "May 2026",
+    referencePrice: 88.75,
+    buyWindow: "09:45-10:30 ET"
+  },
+  "natural-gas": { ticker: "NG-USD-FUT", productId: "NATURAL-GAS-USD", contractMonth: "May 2026", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
+  gold: { ticker: "GOLD-USD-FUT", productId: "GOLD-USD", contractMonth: "May 2026", referencePrice: 4818.0, buyWindow: "09:35-10:15 ET" },
+  silver: { ticker: "SILVER-USD-FUT", productId: "SILVER-USD", contractMonth: "May 2026", referencePrice: 27.6, buyWindow: "09:35-10:15 ET" },
+  copper: { ticker: "COPPER-USD-FUT", productId: "COPPER-USD", contractMonth: "May 2026", referencePrice: 4.58, buyWindow: "09:45-10:45 ET" },
+  platinum: { ticker: "PLATINUM-USD-FUT", productId: "PLATINUM-USD", contractMonth: "May 2026", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
 };
 
 const latestPrices = new Map();
@@ -165,6 +175,15 @@ function formatPrice(value) {
   return `$${value.toFixed(decimals)}`;
 }
 
+function formatTradeDate() {
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "America/New_York"
+  }).format(new Date());
+}
+
 function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
@@ -173,26 +192,34 @@ function buildTradePlan(commodity, signal) {
   const waitBias = signal.tone === "wait";
   const entryOffset = waitBias ? 0.004 : 0.0025;
   const targetOffset = waitBias ? 0.006 : 0.01;
-  const buyPrice = longBias ? livePrice * (1 - entryOffset) : shortBias ? livePrice * (1 + entryOffset) : livePrice * (1 - 0.001);
+  const stopOffset = waitBias ? 0.005 : 0.0075;
+  const longEntry = livePrice * (1 - entryOffset);
+  const shortEntry = livePrice * (1 + entryOffset);
+  const buyPrice = longBias ? longEntry : shortBias ? shortEntry : livePrice * (1 - 0.001);
   const sellPrice = longBias ? livePrice * (1 + targetOffset) : shortBias ? livePrice * (1 - targetOffset) : livePrice * (1 + 0.003);
+  const stopLoss = longBias ? livePrice * (1 - stopOffset) : shortBias ? livePrice * (1 + stopOffset) : livePrice * (1 - 0.0035);
   const riskPct = signal.conviction >= 70 ? "1.00%" : signal.conviction >= 55 ? "0.75%" : "0.50%";
   const size = signal.conviction >= 70 ? "2 contracts" : "1 contract";
   const status = waitBias ? "Stand by" : "Armed";
 
   return {
     ticker: config.ticker,
+    contractMonth: config.contractMonth || "Front month",
     livePrice,
     buyPrice,
     sellPrice,
-    buyWindow: config.buyWindow,
+    stopLoss,
+    buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
     priceSource: latestPrices.has(commodity) ? "Coinbase live" : "Reference",
+    minLong: `1 contract / ${formatPrice(longEntry)}`,
+    minShort: `1 contract / ${formatPrice(shortEntry)}`,
     riskPct,
     size,
     status,
     steps: [
       `Wait for ${config.buyWindow} and confirm ${commodity} still shows a ${signal.chipLabel.toLowerCase()} bias.`,
       `Paper-enter near ${formatPrice(buyPrice)} and avoid chasing beyond the planned level.`,
-      `Exit near ${formatPrice(sellPrice)} and log whether the advisory reached target or failed.`
+      `Use ${formatPrice(stopLoss)} as the suggested stop and exit near ${formatPrice(sellPrice)} if target is hit.`
     ]
   };
 }
@@ -261,11 +288,15 @@ function calculateSignal() {
   convictionEl.textContent = `${primarySignal.conviction} / 100`;
   actionEl.textContent = primarySignal.action;
   tickerEl.textContent = tradePlan.ticker;
+  contractMonthEl.textContent = tradePlan.contractMonth;
   priceEl.textContent = formatPrice(tradePlan.livePrice);
   targetBuyEl.textContent = formatPrice(tradePlan.buyPrice);
   targetSellEl.textContent = formatPrice(tradePlan.sellPrice);
+  stopLossEl.textContent = formatPrice(tradePlan.stopLoss);
   buyWindowEl.textContent = tradePlan.buyWindow;
   priceSourceEl.textContent = tradePlan.priceSource;
+  minLongEl.textContent = tradePlan.minLong;
+  minShortEl.textContent = tradePlan.minShort;
   paperEquityEl.textContent = "$100,000";
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = tradePlan.size;
