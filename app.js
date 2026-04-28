@@ -81,6 +81,8 @@ const marketConfig = {
 };
 
 const latestPrices = new Map();
+const latestPriceTimes = new Map();
+const LIVE_PRICE_REFRESH_MS = 10000;
 
 const chipMap = new Map();
 
@@ -105,6 +107,7 @@ for (const commodity of commodities) {
   chip.addEventListener("click", () => {
     commoditySelect.value = commodity.id;
     calculateSignal();
+    refreshCoinbasePrice(commodity.id);
   });
   commodityStrip.append(chip);
   chipMap.set(commodity.id, { chip, state });
@@ -184,9 +187,33 @@ function formatTradeDate() {
   }).format(new Date());
 }
 
+function formatPriceTime(value) {
+  return new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(value);
+}
+
+function getCoinbasePrice(data) {
+  const bestBid = Number(data?.best_bid);
+  const bestAsk = Number(data?.best_ask);
+  const lastTrade = Number(data?.trades?.[0]?.price);
+
+  if (Number.isFinite(bestBid) && Number.isFinite(bestAsk) && bestBid > 0 && bestAsk > 0) {
+    return (bestBid + bestAsk) / 2;
+  }
+
+  if (Number.isFinite(lastTrade) && lastTrade > 0) return lastTrade;
+  if (Number.isFinite(bestBid) && bestBid > 0) return bestBid;
+  if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  return null;
+}
+
 function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
+  const updatedAt = latestPriceTimes.get(commodity);
   const longBias = signal.tone === "long";
   const shortBias = signal.tone === "short";
   const waitBias = signal.tone === "wait";
@@ -210,7 +237,7 @@ function buildTradePlan(commodity, signal) {
     sellPrice,
     stopLoss,
     buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
-    priceSource: latestPrices.has(commodity) ? "Coinbase live" : "Reference",
+    priceSource: updatedAt ? `Coinbase live / ${formatPriceTime(updatedAt)}` : "Reference (live unavailable)",
     minLong: `1 contract / ${formatPrice(longEntry)}`,
     minShort: `1 contract / ${formatPrice(shortEntry)}`,
     riskPct,
@@ -232,15 +259,22 @@ async function refreshCoinbasePrice(commodity) {
     const response = await fetch(`https://api.coinbase.com/api/v3/brokerage/market/products/${config.productId}/ticker`);
     if (!response.ok) throw new Error("price unavailable");
     const data = await response.json();
-    const tradePrice = Number(data?.trades?.[0]?.price || data?.best_bid || data?.best_ask);
-    if (Number.isFinite(tradePrice) && tradePrice > 0) {
-      latestPrices.set(commodity, tradePrice);
+    const livePrice = getCoinbasePrice(data);
+    if (livePrice) {
+      latestPrices.set(commodity, livePrice);
+      latestPriceTimes.set(commodity, new Date());
       if (commoditySelect.value === commodity) calculateSignal();
     }
   } catch (error) {
-    latestPrices.delete(commodity);
-    if (commoditySelect.value === commodity) calculateSignal();
+    if (!latestPrices.has(commodity)) {
+      latestPriceTimes.delete(commodity);
+      if (commoditySelect.value === commodity) calculateSignal();
+    }
   }
+}
+
+function refreshSelectedCoinbasePrice() {
+  refreshCoinbasePrice(commoditySelect.value);
 }
 
 function calculateSignal() {
@@ -331,5 +365,8 @@ function calculateSignal() {
   element.addEventListener("change", calculateSignal);
 });
 
+commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
+
 calculateSignal();
-refreshCoinbasePrice(commoditySelect.value);
+refreshSelectedCoinbasePrice();
+window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
