@@ -195,15 +195,70 @@
               <span class="stat-label">System status</span>
               <strong id="paper-status">Armed</strong>
             </div>
+            <div class="paper-card">
+              <span class="stat-label">Committed capital</span>
+              <strong id="paper-committed">$0.00</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">Open P/L</span>
+              <strong id="paper-open-pl">$0.00</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">Martingale step</span>
+              <strong id="paper-martingale">Step 1 / 4</strong>
+            </div>
+            <div class="paper-card">
+              <span class="stat-label">Karpathy loop</span>
+              <strong id="paper-karpathy">Learning idle</strong>
+            </div>
           </div>
         </div>
         <div>
           <h2>Paper execution plan</h2>
           <ol id="paper-steps">
-            <li>Wait for the buy window and confirm the advisory still matches the latest signal.</li>
-            <li>Enter the paper trade at the target buy level or skip if price runs too far.</li>
-            <li>Take profit at the target sell level and log the result for review.</li>
+            <li>Auto-enter long or short when conviction clears the learned threshold.</li>
+            <li>Double committed capital after each loser through the 4th Martingale step.</li>
+            <li>Reset to the Coinbase minimum after a winner or after a losing 4th trade.</li>
           </ol>
+          <div class="karpathy-loop">
+            <div>
+              <span class="stat-label">Collect</span>
+              <strong id="loop-collect">0 closed trades</strong>
+            </div>
+            <div>
+              <span class="stat-label">Evaluate</span>
+              <strong id="loop-evaluate">No sample yet</strong>
+            </div>
+            <div>
+              <span class="stat-label">Adjust</span>
+              <strong id="loop-adjust">Threshold 50</strong>
+            </div>
+          </div>
+        </div>
+        <div class="paper-ledger">
+          <h2>Transaction history</h2>
+          <div id="paper-trade-summary" class="trade-summary">No paper trades yet.</div>
+          <div class="history-wrap">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Action</th>
+                  <th>Side</th>
+                  <th>Step</th>
+                  <th>Contract</th>
+                  <th>Price</th>
+                  <th>Capital</th>
+                  <th>P/L</th>
+                </tr>
+              </thead>
+              <tbody id="transaction-history">
+                <tr>
+                  <td colspan="8">Waiting for a long or short advisory above 50 conviction.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </section>
     </main>
