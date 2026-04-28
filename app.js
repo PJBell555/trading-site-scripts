@@ -17,6 +17,8 @@ const actionEl = document.querySelector("#action");
 const tickerEl = document.querySelector("#ticker");
 const contractMonthEl = document.querySelector("#contract-month");
 const priceEl = document.querySelector("#price");
+const entryLabelEl = document.querySelector("#entry-label");
+const targetLabelEl = document.querySelector("#target-label");
 const targetBuyEl = document.querySelector("#target-buy");
 const targetSellEl = document.querySelector("#target-sell");
 const stopLossEl = document.querySelector("#stop-loss");
@@ -79,14 +81,15 @@ const marketConfig = {
     ticker: "NOL-18MAY26-CDE",
     productId: "NOL-18MAY26-CDE",
     contractMonth: "May 2026",
+    productType: "Coinbase futures contract",
     referencePrice: 88.75,
     buyWindow: "09:45-10:30 ET"
   },
-  "natural-gas": { ticker: "NG-USD-FUT", productId: "NATURAL-GAS-USD", contractMonth: "May 2026", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
-  gold: { ticker: "GOLD-USD-FUT", productId: "GOLD-USD", contractMonth: "May 2026", referencePrice: 4818.0, buyWindow: "09:35-10:15 ET" },
-  silver: { ticker: "SILVER-USD-FUT", productId: "SILVER-USD", contractMonth: "May 2026", referencePrice: 27.6, buyWindow: "09:35-10:15 ET" },
-  copper: { ticker: "COPPER-USD-FUT", productId: "COPPER-USD", contractMonth: "May 2026", referencePrice: 4.58, buyWindow: "09:45-10:45 ET" },
-  platinum: { ticker: "PLATINUM-USD-FUT", productId: "PLATINUM-USD", contractMonth: "May 2026", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
+  "natural-gas": { ticker: "NG reference", productId: "NATURAL-GAS-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
+  gold: { ticker: "Gold reference", productId: "GOLD-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 4818.0, buyWindow: "09:35-10:15 ET" },
+  silver: { ticker: "Silver reference", productId: "SILVER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 27.6, buyWindow: "09:35-10:15 ET" },
+  copper: { ticker: "Copper reference", productId: "COPPER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 4.58, buyWindow: "09:45-10:45 ET" },
+  platinum: { ticker: "Platinum reference", productId: "PLATINUM-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
 };
 
 const latestPrices = new Map();
@@ -380,13 +383,18 @@ function buildTradePlan(commodity, signal) {
   const status = waitBias ? "Stand by" : "Armed";
   const nextCapital = getMartingaleCapital(minTradeValue);
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
+  const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
+  const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
 
   return {
     ticker: config.ticker,
     contractMonth: config.contractMonth || "Front month",
+    productType: config.productType,
     livePrice,
     entryPrice,
     targetPrice,
+    entryLabel,
+    targetLabel,
     buyPrice,
     sellPrice,
     stopLoss,
@@ -776,6 +784,8 @@ function calculateSignal() {
   tickerEl.textContent = tradePlan.ticker;
   contractMonthEl.textContent = tradePlan.contractMonth;
   priceEl.textContent = formatPrice(tradePlan.livePrice);
+  entryLabelEl.textContent = tradePlan.entryLabel;
+  targetLabelEl.textContent = tradePlan.targetLabel;
   targetBuyEl.textContent = formatPrice(tradePlan.buyPrice);
   targetSellEl.textContent = formatPrice(tradePlan.sellPrice);
   stopLossEl.textContent = formatPrice(tradePlan.stopLoss);
