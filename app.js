@@ -102,6 +102,7 @@ const PAPER_START_EQUITY = 100000;
 const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
+const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -111,6 +112,9 @@ let martingaleStep = 1;
 let nextTransactionId = 1;
 let snapshotPricesPromise = null;
 let snapshotPricesLoadedAt = 0;
+let activePriceSocket = null;
+let activePriceSocketCommodity = null;
+let activePriceSocketReconnectTimer = null;
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 
 for (const commodity of commodities) {
@@ -134,6 +138,7 @@ for (const commodity of commodities) {
   chip.addEventListener("click", () => {
     commoditySelect.value = commodity.id;
     calculateSignal();
+    connectCoinbaseWebSocket(commodity.id);
     refreshCoinbasePrice(commodity.id);
   });
   commodityStrip.append(chip);
@@ -257,6 +262,30 @@ function getCoinbasePrice(data) {
   if (Number.isFinite(lastTrade) && lastTrade > 0) return lastTrade;
   if (Number.isFinite(bestBid) && bestBid > 0) return bestBid;
   if (Number.isFinite(bestAsk) && bestAsk > 0) return bestAsk;
+  return null;
+}
+
+function getCoinbaseWebSocketPrice(data) {
+  const directPrice = getCoinbasePrice(data);
+  if (directPrice) return directPrice;
+
+  const events = Array.isArray(data?.events) ? data.events : [];
+  for (const event of events) {
+    const tickers = Array.isArray(event?.tickers) ? event.tickers : [];
+    for (const ticker of tickers) {
+      const tickerPrice = getCoinbasePrice(ticker);
+      if (tickerPrice) return tickerPrice;
+      const price = Number(ticker?.price);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+
+    const trades = Array.isArray(event?.trades) ? event.trades : [];
+    for (const trade of trades) {
+      const price = Number(trade?.price);
+      if (Number.isFinite(price) && price > 0) return price;
+    }
+  }
+
   return null;
 }
 
@@ -417,6 +446,14 @@ function buildTradePlan(commodity, signal) {
 }
 
 async function refreshCoinbasePrice(commodity) {
+  if (
+    latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
+    activePriceSocketCommodity === commodity &&
+    activePriceSocket?.readyState === WebSocket.OPEN
+  ) {
+    return;
+  }
+
   const config = marketConfig[commodity];
   if (!config) return;
 
@@ -436,6 +473,95 @@ async function refreshCoinbasePrice(commodity) {
     }
   } catch (error) {
     await refreshSnapshotPrice(commodity);
+  }
+}
+
+function closeCoinbaseWebSocket() {
+  if (activePriceSocketReconnectTimer) {
+    window.clearTimeout(activePriceSocketReconnectTimer);
+    activePriceSocketReconnectTimer = null;
+  }
+
+  if (activePriceSocket) {
+    activePriceSocket.onclose = null;
+    activePriceSocket.close();
+    activePriceSocket = null;
+  }
+
+  activePriceSocketCommodity = null;
+}
+
+function connectCoinbaseWebSocket(commodity) {
+  const config = marketConfig[commodity];
+
+  if (!config || config.productType !== "Coinbase futures contract") {
+    closeCoinbaseWebSocket();
+    return;
+  }
+
+  if (
+    activePriceSocket &&
+    activePriceSocketCommodity === commodity &&
+    [WebSocket.CONNECTING, WebSocket.OPEN].includes(activePriceSocket.readyState)
+  ) {
+    return;
+  }
+
+  closeCoinbaseWebSocket();
+  activePriceSocketCommodity = commodity;
+
+  try {
+    const socket = new WebSocket(COINBASE_WS_URL);
+    activePriceSocket = socket;
+
+    socket.onopen = () => {
+      const subscriptions = [
+        { type: "subscribe", channel: "ticker", product_ids: [config.productId] },
+        { type: "subscribe", channel: "heartbeats", product_ids: [config.productId] }
+      ];
+
+      subscriptions.forEach((message) => socket.send(JSON.stringify(message)));
+    };
+
+    socket.onmessage = (event) => {
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch (error) {
+        return;
+      }
+
+      const socketPrice = getCoinbaseWebSocketPrice(data);
+      if (!socketPrice) return;
+
+      latestPrices.set(commodity, socketPrice);
+      latestPriceTimes.set(commodity, new Date());
+      latestPriceSources.set(commodity, "Coinbase WebSocket");
+      refreshCoinbaseProductDetails(commodity, socketPrice);
+
+      if (commoditySelect.value === commodity) calculateSignal();
+    };
+
+    socket.onerror = () => {
+      refreshCoinbasePrice(commodity);
+    };
+
+    socket.onclose = () => {
+      if (activePriceSocket !== socket) return;
+      activePriceSocket = null;
+
+      if (commoditySelect.value === commodity) {
+        if (latestPriceSources.get(commodity) === "Coinbase WebSocket") {
+          latestPriceSources.set(commodity, "Coinbase WebSocket stale");
+        }
+        refreshCoinbasePrice(commodity);
+        activePriceSocketReconnectTimer = window.setTimeout(() => {
+          connectCoinbaseWebSocket(commodity);
+        }, 15000);
+      }
+    };
+  } catch (error) {
+    refreshCoinbasePrice(commodity);
   }
 }
 
@@ -828,8 +954,12 @@ function calculateSignal() {
 });
 
 commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
+commoditySelect.addEventListener("change", () => {
+  connectCoinbaseWebSocket(commoditySelect.value);
+});
 
 loadPaperState();
 calculateSignal();
+connectCoinbaseWebSocket(commoditySelect.value);
 refreshSelectedCoinbasePrice();
 window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
