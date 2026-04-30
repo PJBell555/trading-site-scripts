@@ -804,6 +804,7 @@ function resetLocalTradeState() {
 function replaceTransactionHistory(entries) {
   resetLocalTradeState();
   mergeTransactionHistory(entries, { persist: false });
+  rebuildPaperStateFromHistory();
   const maxId = transactionHistory.reduce((max, entry) => (
     Number.isInteger(entry.id) ? Math.max(max, entry.id) : max
   ), 0);
@@ -831,6 +832,84 @@ function mergeTransactionHistory(entries, options = {}) {
   }
 
   return added;
+}
+
+function getTradeLifecycleKey(entry) {
+  if (entry.tradeId) return `id:${entry.tradeId}`;
+
+  return [
+    entry.commodity || "commodity",
+    entry.contract || "contract",
+    entry.side || "side",
+    entry.step || "step"
+  ].join("|");
+}
+
+function tradeFromOpeningEntry(entry) {
+  const config = marketConfig[entry.commodity];
+  const contracts = Number(entry.contracts) > 0 ? entry.contracts : 1;
+  const contractMultiplier = Number(entry.contractMultiplier) > 0 ? entry.contractMultiplier : getContractMultiplier(config);
+  const openFee = Number(entry.openFee) || getEstimatedFees(config, contracts, 1);
+  const estimatedExitFee = Number(entry.estimatedExitFee) || getEstimatedFees(config, contracts, 1);
+
+  return {
+    id: entry.tradeId || entry.id,
+    commodity: entry.commodity,
+    commodityName: entry.commodityName,
+    contract: entry.contract,
+    side: entry.side,
+    martingaleStep: entry.step || 1,
+    entryPrice: Number(entry.entryPrice ?? entry.price),
+    targetEntryPrice: Number(entry.targetEntryPrice ?? entry.entryPrice ?? entry.price),
+    targetPrice: Number(entry.targetPrice),
+    stopPrice: Number(entry.stopPrice),
+    contractMultiplier,
+    contracts,
+    marginRequirement: Number(entry.marginRequirement),
+    notionalValue: Number(entry.notionalValue),
+    capital: Number(entry.capital) || 0,
+    quantity: contracts,
+    openFee,
+    estimatedExitFee,
+    totalEstimatedFees: Number(entry.totalEstimatedFees) || openFee + estimatedExitFee,
+    feePerContractSide: Number(entry.feePerContractSide) || getFeePerContractSide(config),
+    feeLabel: entry.feeLabel,
+    conviction: Number(entry.conviction) || 0,
+    openedAt: entry.openedAt ? new Date(entry.openedAt) : new Date(entry.time)
+  };
+}
+
+function rebuildPaperStateFromHistory() {
+  const activeTrades = new Map();
+  const chronological = [...transactionHistory].sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+  let latestClosed = null;
+
+  chronological.forEach((entry) => {
+    const key = getTradeLifecycleKey(entry);
+    if (isOpeningTransaction(entry)) {
+      activeTrades.set(key, tradeFromOpeningEntry(entry));
+      return;
+    }
+
+    if (isClosingTransaction(entry)) {
+      activeTrades.delete(key);
+      latestClosed = entry;
+    }
+  });
+
+  openPaperTrades.clear();
+  activeTrades.forEach((trade) => {
+    if (trade.commodity) openPaperTrades.set(trade.commodity, trade);
+  });
+
+  const closedEntries = transactionHistory.filter(isClosingTransaction);
+  paperEquity = PAPER_START_EQUITY + closedEntries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+
+  if (!latestClosed || getDisplayPnl(latestClosed) >= 0 || Number(latestClosed.step) >= MARTINGALE_MAX_STEP) {
+    martingaleStep = 1;
+  } else {
+    martingaleStep = Math.max(1, Math.min(MARTINGALE_MAX_STEP, Number(latestClosed.step || 1) + 1));
+  }
 }
 
 function getTradePnl(trade, exitPrice) {
