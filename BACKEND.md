@@ -6,6 +6,7 @@ This project uses a Cloudflare Worker to make `transactions.json` the shared mas
 
 - `GET` returns the current GitHub master `transactions.json`.
 - `POST` merges browser trades into the master ledger and writes it back to GitHub.
+- `POST /coinbase/sandbox/orders` forwards mock market orders to Coinbase's sandbox endpoint.
 - Every successful `POST` also writes a date-stamped backup like `backups/transactions-2026-04-30.json`.
 - The browser never sees the GitHub token.
 
@@ -49,3 +50,5 @@ Open the site, paste the Worker URL into **Backend URL**, and click **Save API**
 Use the same Worker URL on desktop, mobile, and the Codex local browser.
 
 After that, all devices sync through the same GitHub-backed master ledger.
+
+To test mock Coinbase order flow, enable **Send mock orders** in the Coinbase sandbox control. The app will continue to manage targets and stops locally, but each paper open/close will also send a sandbox market order through the Worker and record the sandbox response in the trade detail.

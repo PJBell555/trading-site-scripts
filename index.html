@@ -211,6 +211,10 @@
               <span class="stat-label">Karpathy loop</span>
               <strong id="paper-karpathy">Learning idle</strong>
             </div>
+            <div class="paper-card">
+              <span class="stat-label">Coinbase sandbox</span>
+              <strong id="coinbase-sandbox-status">Off</strong>
+            </div>
           </div>
         </div>
         <div>
@@ -271,6 +275,15 @@
                 <span class="shared-status" id="shared-history-status">Local only</span>
               </div>
             </div>
+            <div>
+              <span class="stat-label">Coinbase sandbox</span>
+              <div class="filter-row">
+                <label class="toggle-control">
+                  <input id="coinbase-sandbox-enabled" type="checkbox">
+                  <span>Send mock orders</span>
+                </label>
+              </div>
+            </div>
           </div>
           <div class="ledger-totals" aria-label="Transaction totals">
             <div>
@@ -312,6 +325,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=remote-ledger-2"></script>
+  <script src="./app.js?v=coinbase-sandbox-1"></script>
 </body>
 </html>

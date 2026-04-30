@@ -1,6 +1,7 @@
 const DEFAULT_BRANCH = "main";
 const DEFAULT_HISTORY_PATH = "transactions.json";
 const DEFAULT_BACKUP_DIR = "backups";
+const COINBASE_SANDBOX_BASE_URL = "https://api-sandbox.coinbase.com/api/v3/brokerage";
 
 function corsHeaders(origin) {
   return {
@@ -125,6 +126,56 @@ function compactPayload(payload = {}) {
   };
 }
 
+function coinbaseSandboxOrderPayload(body = {}) {
+  const contracts = Math.max(1, Number(body.contracts) || 1);
+  const productId = body.productId || body.contract;
+  const side = String(body.side || "").toUpperCase();
+
+  if (!productId || !["BUY", "SELL"].includes(side)) {
+    throw new Error("Missing Coinbase sandbox productId or side");
+  }
+
+  return {
+    client_order_id: body.clientOrderId || crypto.randomUUID(),
+    product_id: productId,
+    side,
+    order_configuration: {
+      market_market_ioc: {
+        base_size: String(contracts)
+      }
+    }
+  };
+}
+
+async function createCoinbaseSandboxOrder(body = {}) {
+  const orderPayload = coinbaseSandboxOrderPayload(body);
+  const headers = {
+    "Content-Type": "application/json"
+  };
+
+  if (body.sandboxHeader) {
+    headers["X-Sandbox"] = body.sandboxHeader;
+  }
+
+  const response = await fetch(`${COINBASE_SANDBOX_BASE_URL}/orders`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(orderPayload)
+  });
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    throw new Error(data?.error_response?.message || data?.message || `Coinbase sandbox order failed: ${response.status}`);
+  }
+
+  return {
+    endpoint: `${COINBASE_SANDBOX_BASE_URL}/orders`,
+    request: orderPayload,
+    response: data
+  };
+}
+
 async function githubRequest(env, path, options = {}) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPOSITORY || env.REPO_FULL_NAME;
@@ -227,12 +278,26 @@ async function saveDailyBackup(env, payload) {
 export default {
   async fetch(request, env) {
     const origin = getAllowedOrigin(request, env);
+    const url = new URL(request.url);
 
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
 
     try {
+      if (url.pathname === "/coinbase/sandbox/orders") {
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const sandboxOrder = await createCoinbaseSandboxOrder(body);
+        return jsonResponse({
+          sandbox: true,
+          ...sandboxOrder
+        }, 200, origin);
+      }
+
       if (request.method === "GET") {
         const { payload } = await getMasterFile(env);
         return jsonResponse(payload, 200, origin);

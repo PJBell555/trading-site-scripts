@@ -34,6 +34,7 @@ const paperCommittedEl = document.querySelector("#paper-committed");
 const paperOpenPlEl = document.querySelector("#paper-open-pl");
 const paperMartingaleEl = document.querySelector("#paper-martingale");
 const paperKarpathyEl = document.querySelector("#paper-karpathy");
+const coinbaseSandboxStatusEl = document.querySelector("#coinbase-sandbox-status");
 const paperStepsEl = document.querySelector("#paper-steps");
 const loopCollectEl = document.querySelector("#loop-collect");
 const loopEvaluateEl = document.querySelector("#loop-evaluate");
@@ -50,6 +51,7 @@ const syncHistoryEl = document.querySelector("#sync-history");
 const cleanHistoryEl = document.querySelector("#clean-history");
 const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
+const coinbaseSandboxEnabledEl = document.querySelector("#coinbase-sandbox-enabled");
 const transactionHistoryEl = document.querySelector("#transaction-history");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
@@ -120,6 +122,7 @@ const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const HISTORY_API_KEY = "atlas-history-api-url";
+const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -1013,10 +1016,68 @@ function setHistoryApiUrl(value) {
 function initializeHistoryApiControls() {
   historyApiUrlEl.value = getHistoryApiUrl();
   sharedHistoryStatusEl.textContent = historyApiUrlEl.value ? "Backend API ready" : "Backend required";
+  setCoinbaseSandboxEnabled(isCoinbaseSandboxEnabled());
 }
 
 function getMasterHistoryUrl() {
   return getHistoryApiUrl();
+}
+
+function isCoinbaseSandboxEnabled() {
+  return window.localStorage.getItem(COINBASE_SANDBOX_KEY) === "true";
+}
+
+function setCoinbaseSandboxEnabled(enabled) {
+  window.localStorage.setItem(COINBASE_SANDBOX_KEY, String(Boolean(enabled)));
+  coinbaseSandboxEnabledEl.checked = Boolean(enabled);
+  coinbaseSandboxStatusEl.textContent = enabled ? "Sandbox armed" : "Off";
+}
+
+function getCoinbaseSandboxOrderUrl() {
+  return `${getHistoryApiUrl()}/coinbase/sandbox/orders`;
+}
+
+function getCoinbaseOrderId(orderResult) {
+  return orderResult?.response?.success_response?.order_id
+    || orderResult?.response?.order_id
+    || orderResult?.response?.orderId
+    || "-";
+}
+
+async function submitCoinbaseSandboxOrder(trade, side, intent) {
+  if (!isCoinbaseSandboxEnabled()) return null;
+  if (!hasHistoryBackend()) throw new Error("Backend required for Coinbase sandbox");
+
+  coinbaseSandboxStatusEl.textContent = `Sending ${intent}`;
+  const response = await fetch(getCoinbaseSandboxOrderUrl(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      intent,
+      productId: trade.contract,
+      side,
+      contracts: trade.contracts,
+      price: trade.entryPrice,
+      targetPrice: trade.targetPrice,
+      stopPrice: trade.stopPrice,
+      clientOrderId: `atlas-${intent}-${trade.id}-${Date.now()}`
+    })
+  });
+
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data?.error || "Coinbase sandbox order failed");
+
+  coinbaseSandboxStatusEl.textContent = `Sandbox ${intent} sent`;
+  return {
+    sandbox: true,
+    intent,
+    orderId: getCoinbaseOrderId(data),
+    productId: trade.contract,
+    side,
+    sentAt: new Date().toISOString(),
+    request: data.request,
+    response: data.response
+  };
 }
 
 async function saveSharedTransactionHistory() {
@@ -1163,6 +1224,15 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     conviction: signal.conviction,
     openedAt: new Date()
   };
+  let sandboxOrder = null;
+
+  try {
+    sandboxOrder = await submitCoinbaseSandboxOrder(trade, side === "short" ? "SELL" : "BUY", "open");
+  } catch (error) {
+    coinbaseSandboxStatusEl.textContent = "Sandbox open failed";
+    clearPaperActionPending(commodity);
+    return;
+  }
 
   openPaperTrades.set(commodity, trade);
   savePaperState();
@@ -1188,6 +1258,7 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     totalEstimatedFees: trade.totalEstimatedFees,
     feePerContractSide: trade.feePerContractSide,
     feeLabel: trade.feeLabel,
+    coinbaseSandbox: sandboxOrder,
     openedAt: trade.openedAt,
     capital,
     pnl: 0,
@@ -1208,6 +1279,18 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   paperEquity += pnl;
   openPaperTrades.delete(commodity);
   const closedAt = new Date();
+  let sandboxOrder = null;
+
+  try {
+    sandboxOrder = await submitCoinbaseSandboxOrder(trade, trade.side === "short" ? "BUY" : "SELL", "close");
+  } catch (error) {
+    coinbaseSandboxStatusEl.textContent = "Sandbox close failed";
+    paperEquity -= pnl;
+    openPaperTrades.set(commodity, trade);
+    clearPaperActionPending(commodity);
+    return;
+  }
+
   recordTransaction({
     tradeId: trade.id,
     commodity,
@@ -1231,6 +1314,7 @@ async function closePaperTrade(commodity, exitPrice, reason) {
     totalEstimatedFees: totalFees,
     feePerContractSide: trade.feePerContractSide,
     feeLabel: trade.feeLabel,
+    coinbaseSandbox: sandboxOrder,
     grossPnl,
     netPnl: pnl,
     exitPrice,
@@ -1503,6 +1587,8 @@ function renderTransactionDetail(entry) {
     ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
     ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],
     ["Time open", Number.isFinite(detail.durationMs) ? formatDuration(detail.durationMs) : entry.pnl === 0 ? "Still open" : "-"],
+    ["Sandbox order", entry.coinbaseSandbox?.sandbox ? entry.coinbaseSandbox.orderId || "Sent" : "-"],
+    ["Sandbox side", entry.coinbaseSandbox?.sandbox ? `${entry.coinbaseSandbox.intent} ${entry.coinbaseSandbox.side}` : "-"],
     ["Commodity", entry.commodityName || entry.commodity || "-"],
     ["Note", entry.note || "-"]
   ];
@@ -1552,7 +1638,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   } else if (openTrade) {
     paperStatusEl.textContent = `${formatSide(openTrade.side)} open`;
   } else if (signalSide && signal.conviction >= tradePlan.learnedThreshold) {
-    paperStatusEl.textContent = `Ready to ${signalSide}`;
+    paperStatusEl.textContent = isCoinbaseSandboxEnabled() ? `Sandbox ready to ${signalSide}` : `Ready to ${signalSide}`;
   } else {
     paperStatusEl.textContent = `Waiting for signal > ${tradePlan.learnedThreshold}`;
   }
@@ -1790,6 +1876,10 @@ syncHistoryEl.addEventListener("click", () => {
 });
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
+coinbaseSandboxEnabledEl.addEventListener("change", () => {
+  setCoinbaseSandboxEnabled(coinbaseSandboxEnabledEl.checked);
+  calculateSignal();
+});
 
 loadPaperState();
 initializeHistoryApiControls();
