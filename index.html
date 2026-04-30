@@ -238,6 +238,35 @@
         <div class="paper-ledger">
           <h2>Transaction history</h2>
           <div id="paper-trade-summary" class="trade-summary">No paper trades yet.</div>
+          <div class="ledger-toolbar" aria-label="Transaction filters">
+            <div>
+              <span class="stat-label">Show</span>
+              <div id="history-commodity-filters" class="filter-row"></div>
+            </div>
+            <div>
+              <span class="stat-label">Period</span>
+              <div id="history-period-filters" class="filter-row">
+                <button class="filter-button" type="button" data-period="all">All time</button>
+                <button class="filter-button" type="button" data-period="day">Day</button>
+                <button class="filter-button" type="button" data-period="week">Week</button>
+                <button class="filter-button" type="button" data-period="month">Month</button>
+              </div>
+            </div>
+          </div>
+          <div class="ledger-totals" aria-label="Transaction totals">
+            <div>
+              <span class="stat-label">All P/L</span>
+              <strong id="history-total-all">$0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Filtered P/L</span>
+              <strong id="history-total-filtered">$0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Trades</span>
+              <strong id="history-total-count">0 rows</strong>
+            </div>
+          </div>
           <div class="history-wrap">
             <table class="history-table">
               <thead>

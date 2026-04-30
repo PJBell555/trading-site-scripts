@@ -39,6 +39,11 @@ const loopCollectEl = document.querySelector("#loop-collect");
 const loopEvaluateEl = document.querySelector("#loop-evaluate");
 const loopAdjustEl = document.querySelector("#loop-adjust");
 const paperTradeSummaryEl = document.querySelector("#paper-trade-summary");
+const historyCommodityFiltersEl = document.querySelector("#history-commodity-filters");
+const historyPeriodFiltersEl = document.querySelector("#history-period-filters");
+const historyTotalAllEl = document.querySelector("#history-total-all");
+const historyTotalFilteredEl = document.querySelector("#history-total-filtered");
+const historyTotalCountEl = document.querySelector("#history-total-count");
 const transactionHistoryEl = document.querySelector("#transaction-history");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
@@ -115,6 +120,9 @@ let snapshotPricesLoadedAt = 0;
 let activePriceSocket = null;
 let activePriceSocketCommodity = null;
 let activePriceSocketReconnectTimer = null;
+let historyCommodityFilter = "all";
+let historyPeriodFilter = "all";
+let expandedTransactionId = null;
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 
 for (const commodity of commodities) {
@@ -146,6 +154,44 @@ for (const commodity of commodities) {
 }
 
 commoditySelect.value = "oil";
+
+function renderHistoryFilterButtons() {
+  historyCommodityFiltersEl.innerHTML = "";
+
+  const filters = [
+    { id: "all", name: "All" },
+    ...commodities.map(({ id, name }) => ({ id, name }))
+  ];
+
+  filters.forEach(({ id, name }) => {
+    const button = document.createElement("button");
+    const check = document.createElement("span");
+
+    button.type = "button";
+    button.className = "filter-button";
+    button.dataset.commodity = id;
+    button.dataset.active = String(historyCommodityFilter === id);
+    check.className = "check";
+    check.textContent = historyCommodityFilter === id ? "✓" : "";
+    button.append(check, document.createTextNode(name));
+    button.addEventListener("click", () => {
+      historyCommodityFilter = id;
+      expandedTransactionId = null;
+      renderHistoryFilterButtons();
+      renderPeriodFilterButtons();
+      calculateSignal();
+    });
+    historyCommodityFiltersEl.append(button);
+  });
+}
+
+function renderPeriodFilterButtons() {
+  historyPeriodFiltersEl.querySelectorAll("[data-period]").forEach((button) => {
+    const active = button.dataset.period === historyPeriodFilter;
+    button.dataset.active = String(active);
+    button.textContent = `${active ? "✓ " : ""}${button.dataset.period === "all" ? "All time" : button.dataset.period[0].toUpperCase() + button.dataset.period.slice(1)}`;
+  });
+}
 
 function readBaseSignals() {
   return {
@@ -248,6 +294,21 @@ function formatTradeTime(value) {
     minute: "2-digit",
     second: "2-digit"
   }).format(value);
+}
+
+function formatDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "-";
+
+  const totalSeconds = Math.max(0, Math.round(ms / 1000));
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (days) return `${days}d ${hours}h`;
+  if (hours) return `${hours}h ${minutes}m`;
+  if (minutes) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
 }
 
 function getCoinbasePrice(data) {
@@ -620,6 +681,10 @@ function getOpenPaperTrade(commodity) {
   return openPaperTrades.get(commodity) || null;
 }
 
+function getCommodityFromContract(contract) {
+  return commodities.find(({ id }) => marketConfig[id]?.ticker === contract)?.id || null;
+}
+
 function getTradePnl(trade, exitPrice) {
   const priceMove = trade.side === "short"
     ? trade.entryPrice - exitPrice
@@ -664,7 +729,11 @@ function loadPaperState() {
     if (Array.isArray(state.transactionHistory)) {
       transactionHistory.push(...state.transactionHistory.map((entry) => ({
         ...entry,
-        time: new Date(entry.time)
+        commodity: entry.commodity || getCommodityFromContract(entry.contract),
+        commodityName: entry.commodityName || commodities.find(({ id }) => id === (entry.commodity || getCommodityFromContract(entry.contract)))?.name,
+        time: new Date(entry.time),
+        openedAt: entry.openedAt ? new Date(entry.openedAt) : null,
+        closedAt: entry.closedAt ? new Date(entry.closedAt) : null
       })));
     }
   } catch (error) {
@@ -697,6 +766,7 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     side,
     martingaleStep,
     entryPrice,
+    targetEntryPrice: tradePlan.entryPrice,
     targetPrice: tradePlan.targetPrice,
     stopPrice: tradePlan.stopLoss,
     capital,
@@ -708,11 +778,19 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   openPaperTrades.set(commodity, trade);
   savePaperState();
   recordTransaction({
+    tradeId: trade.id,
+    commodity,
+    commodityName: commodityMeta.name,
     action: side === "short" ? "SELL SHORT" : "BUY",
     side,
     step: trade.martingaleStep,
     contract: trade.contract,
     price: entryPrice,
+    entryPrice,
+    targetEntryPrice: trade.targetEntryPrice,
+    targetPrice: trade.targetPrice,
+    stopPrice: trade.stopPrice,
+    openedAt: trade.openedAt,
     capital,
     pnl: 0,
     note: `${commodityMeta.name} ${side} opened at ${signal.conviction} conviction`
@@ -726,12 +804,24 @@ function closePaperTrade(commodity, exitPrice, reason) {
   const pnl = getTradePnl(trade, exitPrice);
   paperEquity += pnl;
   openPaperTrades.delete(commodity);
+  const closedAt = new Date();
   recordTransaction({
+    tradeId: trade.id,
+    commodity,
+    commodityName: trade.commodityName,
     action: reason,
     side: trade.side,
     step: trade.martingaleStep,
     contract: trade.contract,
     price: exitPrice,
+    entryPrice: trade.entryPrice,
+    targetEntryPrice: trade.targetEntryPrice,
+    targetPrice: trade.targetPrice,
+    stopPrice: trade.stopPrice,
+    exitPrice,
+    openedAt: trade.openedAt,
+    closedAt,
+    durationMs: closedAt - new Date(trade.openedAt),
     capital: trade.capital,
     pnl,
     note: `${trade.commodityName} ${trade.side} closed from ${formatPrice(trade.entryPrice)}`
@@ -793,6 +883,114 @@ function renderKarpathyLoop(signal, tradePlan) {
   }
 }
 
+function getPeriodStart(period) {
+  const now = new Date();
+  const start = new Date(now);
+
+  if (period === "day") {
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  if (period === "week") {
+    start.setDate(now.getDate() - 6);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  if (period === "month") {
+    start.setMonth(now.getMonth() - 1);
+    start.setHours(0, 0, 0, 0);
+    return start;
+  }
+
+  return null;
+}
+
+function isEntryInPeriod(entry, period) {
+  const start = getPeriodStart(period);
+  return !start || entry.time >= start;
+}
+
+function getFilteredTransactions() {
+  return transactionHistory.filter((entry) => {
+    const commodityMatch = historyCommodityFilter === "all" || entry.commodity === historyCommodityFilter;
+    return commodityMatch && isEntryInPeriod(entry, historyPeriodFilter);
+  });
+}
+
+function getProfitTotal(entries) {
+  return entries.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
+}
+
+function getClosingEntry(entry) {
+  if (!entry.tradeId) return null;
+  return transactionHistory.find((candidate) => (
+    candidate.tradeId === entry.tradeId &&
+    candidate.id !== entry.id &&
+    Number(candidate.pnl) !== 0
+  )) || null;
+}
+
+function getEntryDetail(entry) {
+  const closingEntry = getClosingEntry(entry);
+  const entryPrice = Number(entry.entryPrice ?? entry.price);
+  const targetEntryPrice = Number(entry.targetEntryPrice ?? entry.entryPrice);
+  const targetPrice = Number(entry.targetPrice);
+  const stopPrice = Number(entry.stopPrice);
+  const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (entry.pnl ? entry.price : NaN));
+  const openedAt = entry.openedAt ? new Date(entry.openedAt) : entry.time;
+  const closedAt = entry.closedAt ? new Date(entry.closedAt) : closingEntry?.closedAt ? new Date(closingEntry.closedAt) : null;
+  const durationMs = Number.isFinite(entry.durationMs)
+    ? entry.durationMs
+    : Number.isFinite(closingEntry?.durationMs) ? closingEntry.durationMs
+    : closedAt ? closedAt - openedAt : null;
+
+  return {
+    entryPrice,
+    targetEntryPrice,
+    targetPrice,
+    stopPrice,
+    exitPrice,
+    openedAt,
+    closedAt,
+    durationMs
+  };
+}
+
+function renderTransactionDetail(entry) {
+  const detail = getEntryDetail(entry);
+  const labels = [
+    ["Actual entry", Number.isFinite(detail.entryPrice) ? formatPrice(detail.entryPrice) : "-"],
+    ["Target entry", Number.isFinite(detail.targetEntryPrice) ? formatPrice(detail.targetEntryPrice) : "-"],
+    ["Actual exit", Number.isFinite(detail.exitPrice) ? formatPrice(detail.exitPrice) : entry.pnl === 0 ? "Open" : "-"],
+    ["Target exit", Number.isFinite(detail.targetPrice) ? formatPrice(detail.targetPrice) : "-"],
+    ["Stop", Number.isFinite(detail.stopPrice) ? formatPrice(detail.stopPrice) : "-"],
+    ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
+    ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],
+    ["Time open", Number.isFinite(detail.durationMs) ? formatDuration(detail.durationMs) : entry.pnl === 0 ? "Still open" : "-"],
+    ["Commodity", entry.commodityName || entry.commodity || "-"],
+    ["Note", entry.note || "-"]
+  ];
+
+  const wrap = document.createElement("div");
+  wrap.className = "detail-grid";
+
+  labels.forEach(([label, value]) => {
+    const item = document.createElement("div");
+    const labelEl = document.createElement("span");
+    const valueEl = document.createElement("strong");
+
+    labelEl.className = "stat-label";
+    labelEl.textContent = label;
+    valueEl.textContent = value;
+    item.append(labelEl, valueEl);
+    wrap.append(item);
+  });
+
+  return wrap;
+}
+
 function renderPaperTrading(commodity, signal, tradePlan) {
   const openTrade = getOpenPaperTrade(commodity);
   const openTrades = Array.from(openPaperTrades.values());
@@ -830,10 +1028,17 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   transactionHistoryEl.innerHTML = "";
+  renderHistoryFilterButtons();
+  renderPeriodFilterButtons();
 
   if (!transactionHistory.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
+    historyTotalAllEl.textContent = "$0.00";
+    historyTotalAllEl.className = "";
+    historyTotalFilteredEl.textContent = "$0.00";
+    historyTotalFilteredEl.className = "";
+    historyTotalCountEl.textContent = "0 rows";
     cell.colSpan = 8;
     cell.textContent = "Waiting for a long or short advisory above 50 conviction.";
     row.append(cell);
@@ -841,25 +1046,93 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     return;
   }
 
-  transactionHistory.slice(0, 20).forEach((entry) => {
+  const periodEntries = transactionHistory.filter((entry) => isEntryInPeriod(entry, historyPeriodFilter));
+  const filteredEntries = getFilteredTransactions();
+  const allTotal = getProfitTotal(periodEntries);
+  const filteredTotal = getProfitTotal(filteredEntries);
+
+  historyTotalAllEl.textContent = formatSignedMoney(allTotal);
+  historyTotalAllEl.className = allTotal >= 0 ? "gain" : "loss";
+  historyTotalFilteredEl.textContent = formatSignedMoney(filteredTotal);
+  historyTotalFilteredEl.className = filteredTotal >= 0 ? "gain" : "loss";
+  historyTotalCountEl.textContent = `${filteredEntries.length} row${filteredEntries.length === 1 ? "" : "s"}`;
+
+  if (!filteredEntries.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "No transactions match the selected filters.";
+    row.append(cell);
+    transactionHistoryEl.append(row);
+    return;
+  }
+
+  filteredEntries.slice(0, 50).forEach((entry) => {
     const row = document.createElement("tr");
     const pnlClass = entry.pnl > 0 ? "gain" : entry.pnl < 0 ? "loss" : "";
-    [
+    const expanded = expandedTransactionId === entry.id;
+    const values = [
       formatTradeTime(entry.time),
-      entry.action,
+      null,
       entry.side ? formatSide(entry.side) : "-",
       entry.step ? `#${entry.step}` : "-",
       entry.contract,
       formatPrice(entry.price),
       formatMoney(entry.capital),
       formatSignedMoney(entry.pnl)
-    ].forEach((value, index) => {
+    ];
+
+    row.className = "transaction-row";
+    row.tabIndex = 0;
+    row.setAttribute("aria-expanded", String(expanded));
+    row.addEventListener("click", () => {
+      expandedTransactionId = expanded ? null : entry.id;
+      calculateSignal();
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        expandedTransactionId = expanded ? null : entry.id;
+        calculateSignal();
+      }
+    });
+
+    values.forEach((value, index) => {
       const cell = document.createElement("td");
-      cell.textContent = value;
+      if (index === 1) {
+        const toggle = document.createElement("button");
+        const chevron = document.createElement("span");
+
+        toggle.type = "button";
+        toggle.className = "transaction-toggle";
+        toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${entry.action} transaction`);
+        chevron.className = "chevron";
+        chevron.textContent = expanded ? "▾" : "▸";
+        toggle.append(chevron, document.createTextNode(entry.action));
+        toggle.addEventListener("click", (event) => {
+          event.stopPropagation();
+          expandedTransactionId = expanded ? null : entry.id;
+          calculateSignal();
+        });
+        cell.append(toggle);
+      } else {
+        cell.textContent = value;
+      }
       if (index === 7 && pnlClass) cell.className = pnlClass;
       row.append(cell);
     });
     transactionHistoryEl.append(row);
+
+    if (expanded) {
+      const detailRow = document.createElement("tr");
+      const detailCell = document.createElement("td");
+
+      detailRow.className = "transaction-detail";
+      detailCell.colSpan = 8;
+      detailCell.append(renderTransactionDetail(entry));
+      detailRow.append(detailCell);
+      transactionHistoryEl.append(detailRow);
+    }
   });
 }
 
@@ -957,8 +1230,18 @@ commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
 commoditySelect.addEventListener("change", () => {
   connectCoinbaseWebSocket(commoditySelect.value);
 });
+historyPeriodFiltersEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-period]");
+  if (!button) return;
+
+  historyPeriodFilter = button.dataset.period;
+  expandedTransactionId = null;
+  calculateSignal();
+});
 
 loadPaperState();
+renderHistoryFilterButtons();
+renderPeriodFilterButtons();
 calculateSignal();
 connectCoinbaseWebSocket(commoditySelect.value);
 refreshSelectedCoinbasePrice();
