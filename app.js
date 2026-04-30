@@ -123,6 +123,7 @@ const HISTORY_API_KEY = "atlas-history-api-url";
 const chipMap = new Map();
 const openPaperTrades = new Map();
 const transactionHistory = [];
+const pendingPaperActions = new Set();
 let paperEquity = PAPER_START_EQUITY;
 let martingaleStep = 1;
 let nextTransactionId = 1;
@@ -886,20 +887,6 @@ function loadPaperState() {
   }
 }
 
-function recordTransaction(entry) {
-  const transaction = normalizeTransactionEntry({
-    id: nextTransactionId,
-    time: new Date(),
-    ...entry
-  });
-
-  transaction.sharedKey = getTransactionKey(transaction);
-  transactionHistory.unshift(transaction);
-  nextTransactionId += 1;
-  savePaperState();
-  saveSharedTransactionHistory();
-}
-
 function getSharedHistoryPayload() {
   sortTransactionHistory();
 
@@ -974,7 +961,6 @@ async function saveSharedTransactionHistory() {
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     replaceTransactionHistory(entries);
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
-    calculateSignal();
     return true;
   } catch (error) {
     sharedHistoryStatusEl.textContent = "Backend save failed";
@@ -1005,9 +991,38 @@ async function loadSharedTransactionHistory(manual = false) {
   }
 }
 
-function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
+async function recordTransaction(entry) {
+  const transaction = normalizeTransactionEntry({
+    id: nextTransactionId,
+    time: new Date(),
+    ...entry
+  });
+
+  transaction.sharedKey = getTransactionKey(transaction);
+  transactionHistory.unshift(transaction);
+  nextTransactionId += 1;
+  savePaperState();
+  await saveSharedTransactionHistory();
+  return transaction;
+}
+
+function isPaperActionPending(commodity) {
+  return pendingPaperActions.has(commodity);
+}
+
+function markPaperActionPending(commodity) {
+  pendingPaperActions.add(commodity);
+}
+
+function clearPaperActionPending(commodity) {
+  pendingPaperActions.delete(commodity);
+}
+
+async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   const side = getSignalSide(signal);
   if (!side) return;
+  if (getOpenPaperTrade(commodity) || isPaperActionPending(commodity)) return;
+  markPaperActionPending(commodity);
 
   const entryPrice = tradePlan.livePrice;
   const contracts = tradePlan.plannedContracts;
@@ -1070,12 +1085,14 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     capital,
     pnl: 0,
     note: `${commodityMeta.name} ${side} opened at ${signal.conviction} conviction`
-  });
+  }).finally(() => clearPaperActionPending(commodity));
 }
 
-function closePaperTrade(commodity, exitPrice, reason) {
+async function closePaperTrade(commodity, exitPrice, reason) {
   const trade = getOpenPaperTrade(commodity);
   if (!trade) return;
+  if (isPaperActionPending(commodity)) return;
+  markPaperActionPending(commodity);
 
   const grossPnl = getTradeGrossPnl(trade, exitPrice);
   const closeFee = Number(trade.estimatedExitFee) || getEstimatedFees(marketConfig[commodity], trade.contracts, 1);
@@ -1116,7 +1133,7 @@ function closePaperTrade(commodity, exitPrice, reason) {
     capital: trade.capital,
     pnl,
     note: `${trade.commodityName} ${trade.side} closed from ${formatPrice(trade.entryPrice)}`
-  });
+  }).finally(() => clearPaperActionPending(commodity));
 
   if (pnl >= 0 || trade.martingaleStep >= MARTINGALE_MAX_STEP) {
     martingaleStep = 1;
