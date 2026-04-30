@@ -47,6 +47,7 @@ const historyTotalCountEl = document.querySelector("#history-total-count");
 const historyApiUrlEl = document.querySelector("#history-api-url");
 const saveHistoryApiEl = document.querySelector("#save-history-api");
 const syncHistoryEl = document.querySelector("#sync-history");
+const cleanHistoryEl = document.querySelector("#clean-history");
 const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
 const transactionHistoryEl = document.querySelector("#transaction-history");
@@ -1045,6 +1046,35 @@ async function saveSharedTransactionHistory() {
   }
 }
 
+async function cleanSharedTransactionHistory() {
+  const apiUrl = getHistoryApiUrl();
+  if (!apiUrl) {
+    sharedHistoryStatusEl.textContent = "Add backend URL to clean";
+    return false;
+  }
+
+  try {
+    sharedHistoryStatusEl.textContent = "Cleaning backend ledger";
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "cleanup" })
+    });
+    if (!response.ok) throw new Error("backend cleanup failed");
+
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    const removed = Number(data?.removed || 0);
+    replaceTransactionHistory(entries);
+    sharedHistoryStatusEl.textContent = `Backend cleaned ${removed} duplicate row${removed === 1 ? "" : "s"}`;
+    calculateSignal();
+    return true;
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = "Backend cleanup failed";
+    return false;
+  }
+}
+
 async function loadSharedTransactionHistory(manual = false) {
   if (!hasHistoryBackend()) {
     sharedHistoryStatusEl.textContent = "Backend required";
@@ -1758,6 +1788,7 @@ historyApiUrlEl.addEventListener("keydown", (event) => {
 syncHistoryEl.addEventListener("click", () => {
   saveSharedTransactionHistory().then(() => loadSharedTransactionHistory(true));
 });
+cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 
 loadPaperState();

@@ -111,6 +111,19 @@ function mergeTransactions(existing = [], incoming = []) {
   return deduped.sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
 }
 
+function compactPayload(payload = {}) {
+  const originalTransactions = Array.isArray(payload.transactions) ? payload.transactions : [];
+  const transactions = mergeTransactions(originalTransactions, []);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-github-master-paper-trading-ledger",
+    cleaned: true,
+    removed: Math.max(originalTransactions.length - transactions.length, 0),
+    transactions
+  };
+}
+
 async function githubRequest(env, path, options = {}) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPOSITORY || env.REPO_FULL_NAME;
@@ -181,20 +194,24 @@ export default {
       }
 
       const body = await request.json().catch(() => ({}));
-      const incoming = Array.isArray(body.transactions) ? body.transactions : [];
       const { file, payload } = await getMasterFile(env);
-      const transactions = mergeTransactions(payload.transactions, incoming);
-      const updatedPayload = {
-        generatedAt: new Date().toISOString(),
-        source: "cloudflare-github-master-paper-trading-ledger",
-        transactions
-      };
+      const cleanupOnly = body.mode === "cleanup";
+      const incoming = cleanupOnly ? [] : Array.isArray(body.transactions) ? body.transactions : [];
+      const updatedPayload = cleanupOnly
+        ? compactPayload(payload)
+        : {
+            generatedAt: new Date().toISOString(),
+            source: "cloudflare-github-master-paper-trading-ledger",
+            transactions: mergeTransactions(payload.transactions, incoming)
+          };
       const result = await saveMasterFile(env, file, updatedPayload);
 
       return jsonResponse({
         commit: result.commit?.sha,
-        merged: transactions.length,
-        transactions
+        cleaned: cleanupOnly,
+        removed: updatedPayload.removed || 0,
+        merged: updatedPayload.transactions.length,
+        transactions: updatedPayload.transactions
       }, 200, origin);
     } catch (error) {
       return jsonResponse({ error: error.message }, 500, origin);
