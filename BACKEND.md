@@ -1,30 +1,49 @@
 # Paper Trade History Backend
 
-This project can use a small serverless API to make `transactions.json` the shared master ledger.
+This project uses a Cloudflare Worker to make `transactions.json` the shared master ledger.
 
-## Deploy
+## What It Does
 
-Deploy the repo to a serverless host that supports Node functions, such as Vercel. The API endpoint is:
+- `GET` returns the current GitHub master `transactions.json`.
+- `POST` merges browser trades into the master ledger and writes it back to GitHub.
+- The browser never sees the GitHub token.
 
-```text
-https://YOUR-BACKEND-DOMAIN/api/transactions
+## One-Time GitHub Token
+
+Create a fine-grained GitHub token with **Contents: Read and write** access for:
+
+`PJBell555/trading-site-scripts`
+
+## Cloudflare Worker Setup
+
+From the repo root, log in and deploy:
+
+```powershell
+npx wrangler login
+npx wrangler secret put GITHUB_TOKEN
+npx wrangler deploy
 ```
 
-## Environment Variables
+When prompted for `GITHUB_TOKEN`, paste the GitHub token.
 
-Set these on the backend host:
+The non-secret Worker variables live in `wrangler.toml`:
 
 ```text
-GITHUB_TOKEN=github fine-grained token with Contents read/write for this repo
-GITHUB_REPOSITORY=PJBell555/trading-site-scripts
-GITHUB_BRANCH=main
-HISTORY_PATH=transactions.json
-ALLOWED_ORIGIN=https://pjbell555.github.io
+GITHUB_REPOSITORY = "PJBell555/trading-site-scripts"
+GITHUB_BRANCH = "main"
+HISTORY_PATH = "transactions.json"
+ALLOWED_ORIGIN = "https://pjbell555.github.io"
 ```
 
-Use `ALLOWED_ORIGIN=*` while testing if needed.
+After deploy, Cloudflare prints a Worker URL like:
+
+```text
+https://atlas-trade-history.YOUR-SUBDOMAIN.workers.dev
+```
 
 ## Browser Setup
 
-Open the site, paste the backend endpoint into **Backend URL**, and click **Save API**.
-After that, both desktop and mobile browsers can sync through the same GitHub-backed master ledger.
+Open the site, paste the Worker URL into **Backend URL**, and click **Save API**.
+Use the same Worker URL on desktop, mobile, and the Codex local browser.
+
+After that, all devices sync through the same GitHub-backed master ledger.

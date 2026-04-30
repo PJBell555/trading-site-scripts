@@ -1,0 +1,9 @@
+name = "atlas-trade-history"
+main = "workers/transactions.js"
+compatibility_date = "2024-11-01"
+
+[vars]
+GITHUB_REPOSITORY = "PJBell555/trading-site-scripts"
+GITHUB_BRANCH = "main"
+HISTORY_PATH = "transactions.json"
+ALLOWED_ORIGIN = "https://pjbell555.github.io"
