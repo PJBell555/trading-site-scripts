@@ -1133,7 +1133,7 @@ function getFilteredTransactions() {
 }
 
 function getProfitTotal(entries) {
-  return entries.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
+  return entries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
 }
 
 function isClosingTransaction(entry) {
@@ -1217,7 +1217,10 @@ function getEntryDetail(entry) {
   const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (isClosingTransaction(entry) ? entry.price : NaN));
   const targetPrice = Number(entry.targetPrice ?? openingEntry?.targetPrice ?? closingEntry?.targetPrice ?? (closingAction.includes("TARGET") ? exitPrice : NaN));
   const stopPrice = Number(entry.stopPrice ?? openingEntry?.stopPrice ?? closingEntry?.stopPrice ?? (closingAction.includes("STOP") ? exitPrice : NaN));
-  const contracts = Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts ?? entry.quantity ?? openingEntry?.quantity ?? 1);
+  const hasStoredContractCount = Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts) > 0;
+  const contracts = hasStoredContractCount
+    ? Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts)
+    : isClosingTransaction(entry) ? 1 : Number(entry.quantity ?? openingEntry?.quantity ?? 1);
   const contractMultiplier = Number(entry.contractMultiplier ?? openingEntry?.contractMultiplier ?? closingEntry?.contractMultiplier ?? getContractMultiplier(marketConfig[entry.commodity]));
   const marginRequirement = Number(entry.marginRequirement ?? openingEntry?.marginRequirement ?? closingEntry?.marginRequirement);
   const capital = Number(entry.capital ?? openingEntry?.capital ?? closingEntry?.capital);
@@ -1261,11 +1264,19 @@ function getEntryDetail(entry) {
     totalFees,
     feeLabel,
     grossPnl,
-    netPnl,
+    netPnl: Number.isFinite(netPnl) ? netPnl : Number(entry.pnl) || 0,
     openedAt,
     closedAt,
     durationMs
   };
+}
+
+function getDisplayPnl(entry) {
+  if (!isClosingTransaction(entry)) return 0;
+
+  const detail = getEntryDetail(entry);
+  if (Number.isFinite(detail.netPnl)) return detail.netPnl;
+  return Number(entry.pnl) || 0;
 }
 
 function renderTransactionDetail(entry) {
@@ -1389,7 +1400,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 
   filteredEntries.slice(0, 50).forEach((entry) => {
     const row = document.createElement("tr");
-    const pnlClass = entry.pnl > 0 ? "gain" : entry.pnl < 0 ? "loss" : "";
+    const displayPnl = getDisplayPnl(entry);
+    const pnlClass = displayPnl > 0 ? "gain" : displayPnl < 0 ? "loss" : "";
     const expanded = expandedTransactionId === entry.id;
     const values = [
       formatTradeTime(entry.time),
@@ -1399,7 +1411,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       entry.contract,
       formatPrice(entry.price),
       formatMoney(entry.capital),
-      formatSignedMoney(entry.pnl)
+      formatSignedMoney(displayPnl)
     ];
 
     row.className = "transaction-row";
