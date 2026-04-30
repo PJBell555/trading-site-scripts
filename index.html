@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css">
+  <link rel="stylesheet" href="./styles.css?v=ledger-filters-2">
 </head>
 <body>
   <div class="shell">
@@ -241,7 +241,15 @@
           <div class="ledger-toolbar" aria-label="Transaction filters">
             <div>
               <span class="stat-label">Show</span>
-              <div id="history-commodity-filters" class="filter-row"></div>
+              <div id="history-commodity-filters" class="filter-row">
+                <button class="filter-button" type="button" data-commodity="all" data-active="true"><span class="check">✓</span>All</button>
+                <button class="filter-button" type="button" data-commodity="oil"><span class="check"></span>Oil</button>
+                <button class="filter-button" type="button" data-commodity="natural-gas"><span class="check"></span>Natural Gas</button>
+                <button class="filter-button" type="button" data-commodity="gold"><span class="check"></span>Gold</button>
+                <button class="filter-button" type="button" data-commodity="silver"><span class="check"></span>Silver</button>
+                <button class="filter-button" type="button" data-commodity="copper"><span class="check"></span>Copper</button>
+                <button class="filter-button" type="button" data-commodity="platinum"><span class="check"></span>Platinum</button>
+              </div>
             </div>
             <div>
               <span class="stat-label">Period</span>
@@ -293,6 +301,6 @@
     </main>
   </div>
 
-  <script src="./app.js"></script>
+  <script src="./app.js?v=ledger-filters-2"></script>
 </body>
 </html>
