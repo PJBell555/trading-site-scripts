@@ -1,5 +1,6 @@
 const DEFAULT_BRANCH = "main";
 const DEFAULT_HISTORY_PATH = "transactions.json";
+const DEFAULT_BACKUP_DIR = "backups";
 
 function corsHeaders(origin) {
   return {
@@ -160,19 +161,67 @@ async function getMasterFile(env) {
   return { file, payload: decodeContent(file.content) };
 }
 
-async function saveMasterFile(env, file, payload) {
+async function getFileIfExists(env, path) {
   const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
-  const historyPath = env.HISTORY_PATH || DEFAULT_HISTORY_PATH;
 
-  return githubRequest(env, `/contents/${historyPath}`, {
+  try {
+    return await githubRequest(env, `/contents/${path}?ref=${encodeURIComponent(branch)}`);
+  } catch (error) {
+    if (/not found/i.test(error.message)) return null;
+    throw error;
+  }
+}
+
+async function saveJsonFile(env, path, payload, message, sha = null) {
+  const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
+
+  return githubRequest(env, `/contents/${path}`, {
     method: "PUT",
     body: JSON.stringify({
       branch,
       content: encodeContent(payload),
-      message: `Sync paper trade history (${payload.transactions.length} rows)`,
-      sha: file.sha
+      message,
+      ...(sha ? { sha } : {})
     })
   });
+}
+
+async function saveMasterFile(env, file, payload) {
+  const historyPath = env.HISTORY_PATH || DEFAULT_HISTORY_PATH;
+
+  return saveJsonFile(
+    env,
+    historyPath,
+    payload,
+    `Sync paper trade history (${payload.transactions.length} rows)`,
+    file.sha
+  );
+}
+
+async function saveDailyBackup(env, payload) {
+  const backupDir = env.BACKUP_DIR || DEFAULT_BACKUP_DIR;
+  const date = new Date().toISOString().slice(0, 10);
+  const backupPath = `${backupDir.replace(/\/$/, "")}/transactions-${date}.json`;
+  const existingBackup = await getFileIfExists(env, backupPath);
+  const backupPayload = {
+    ...payload,
+    backupGeneratedAt: new Date().toISOString(),
+    backupDate: date,
+    source: "cloudflare-github-daily-paper-trading-ledger-backup"
+  };
+
+  const result = await saveJsonFile(
+    env,
+    backupPath,
+    backupPayload,
+    `Backup paper trade history ${date} (${payload.transactions.length} rows)`,
+    existingBackup?.sha
+  );
+
+  return {
+    path: backupPath,
+    commit: result.commit?.sha
+  };
 }
 
 export default {
@@ -205,9 +254,11 @@ export default {
             transactions: mergeTransactions(payload.transactions, incoming)
           };
       const result = await saveMasterFile(env, file, updatedPayload);
+      const backup = await saveDailyBackup(env, updatedPayload);
 
       return jsonResponse({
         commit: result.commit?.sha,
+        backup,
         cleaned: cleanupOnly,
         removed: updatedPayload.removed || 0,
         merged: updatedPayload.transactions.length,

@@ -6,6 +6,7 @@ This project uses a Cloudflare Worker to make `transactions.json` the shared mas
 
 - `GET` returns the current GitHub master `transactions.json`.
 - `POST` merges browser trades into the master ledger and writes it back to GitHub.
+- Every successful `POST` also writes a date-stamped backup like `backups/transactions-2026-04-30.json`.
 - The browser never sees the GitHub token.
 
 ## One-Time GitHub Token
@@ -32,6 +33,7 @@ The non-secret Worker variables live in `wrangler.toml`:
 GITHUB_REPOSITORY = "PJBell555/trading-site-scripts"
 GITHUB_BRANCH = "main"
 HISTORY_PATH = "transactions.json"
+BACKUP_DIR = "backups"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 ```
 
