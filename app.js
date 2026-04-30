@@ -44,6 +44,9 @@ const historyPeriodFiltersEl = document.querySelector("#history-period-filters")
 const historyTotalAllEl = document.querySelector("#history-total-all");
 const historyTotalFilteredEl = document.querySelector("#history-total-filtered");
 const historyTotalCountEl = document.querySelector("#history-total-count");
+const syncHistoryEl = document.querySelector("#sync-history");
+const exportHistoryEl = document.querySelector("#export-history");
+const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
 const transactionHistoryEl = document.querySelector("#transaction-history");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
@@ -108,6 +111,7 @@ const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
+const GITHUB_MASTER_HISTORY_URL = "https://pjbell555.github.io/trading-site-scripts/transactions.json";
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -685,6 +689,64 @@ function getCommodityFromContract(contract) {
   return commodities.find(({ id }) => marketConfig[id]?.ticker === contract)?.id || null;
 }
 
+function getTransactionDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? new Date() : date;
+}
+
+function normalizeTransactionEntry(entry) {
+  const commodity = entry.commodity || getCommodityFromContract(entry.contract);
+  const time = getTransactionDate(entry.time);
+  const openedAt = entry.openedAt ? getTransactionDate(entry.openedAt) : null;
+  const closedAt = entry.closedAt ? getTransactionDate(entry.closedAt) : null;
+
+  return {
+    ...entry,
+    commodity,
+    commodityName: entry.commodityName || commodities.find(({ id }) => id === commodity)?.name,
+    time,
+    openedAt,
+    closedAt
+  };
+}
+
+function getTransactionKey(entry) {
+  if (entry.sharedKey) return entry.sharedKey;
+
+  return [
+    entry.tradeId || entry.id || "trade",
+    entry.action || "action",
+    entry.contract || "contract",
+    getTransactionDate(entry.time).toISOString(),
+    Number(entry.price || 0).toFixed(4)
+  ].join("|");
+}
+
+function sortTransactionHistory() {
+  transactionHistory.sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+}
+
+function mergeTransactionHistory(entries) {
+  const existing = new Map(transactionHistory.map((entry) => [getTransactionKey(entry), entry]));
+  let added = 0;
+
+  entries.map(normalizeTransactionEntry).forEach((entry) => {
+    const sharedKey = getTransactionKey(entry);
+    if (existing.has(sharedKey)) return;
+
+    transactionHistory.push({ ...entry, sharedKey });
+    existing.set(sharedKey, entry);
+    added += 1;
+  });
+
+  if (added) {
+    sortTransactionHistory();
+    savePaperState();
+  }
+
+  return added;
+}
+
 function getTradePnl(trade, exitPrice) {
   const priceMove = trade.side === "short"
     ? trade.entryPrice - exitPrice
@@ -727,14 +789,7 @@ function loadPaperState() {
       });
     }
     if (Array.isArray(state.transactionHistory)) {
-      transactionHistory.push(...state.transactionHistory.map((entry) => ({
-        ...entry,
-        commodity: entry.commodity || getCommodityFromContract(entry.contract),
-        commodityName: entry.commodityName || commodities.find(({ id }) => id === (entry.commodity || getCommodityFromContract(entry.contract)))?.name,
-        time: new Date(entry.time),
-        openedAt: entry.openedAt ? new Date(entry.openedAt) : null,
-        closedAt: entry.closedAt ? new Date(entry.closedAt) : null
-      })));
+      mergeTransactionHistory(state.transactionHistory);
     }
   } catch (error) {
     window.localStorage.removeItem(PAPER_STATE_KEY);
@@ -742,13 +797,66 @@ function loadPaperState() {
 }
 
 function recordTransaction(entry) {
-  transactionHistory.unshift({
+  const transaction = normalizeTransactionEntry({
     id: nextTransactionId,
     time: new Date(),
     ...entry
   });
+
+  transaction.sharedKey = getTransactionKey(transaction);
+  transactionHistory.unshift(transaction);
   nextTransactionId += 1;
   savePaperState();
+}
+
+function getSharedHistoryPayload() {
+  sortTransactionHistory();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "github-master-paper-trading-ledger",
+    transactions: transactionHistory
+  };
+}
+
+function downloadSharedHistory() {
+  const payload = JSON.stringify(getSharedHistoryPayload(), null, 2);
+  const blob = new Blob([payload], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+
+  link.href = url;
+  link.download = "transactions.json";
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+
+  sharedHistoryStatusEl.textContent = `${transactionHistory.length} rows exported for GitHub`;
+}
+
+function getMasterHistoryUrl() {
+  if (window.location.protocol === "file:") return GITHUB_MASTER_HISTORY_URL;
+  return "./transactions.json";
+}
+
+async function loadSharedTransactionHistory(manual = false) {
+  try {
+    sharedHistoryStatusEl.textContent = "Syncing from GitHub";
+    const response = await fetch(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("master history unavailable");
+
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    const added = mergeTransactionHistory(entries);
+
+    sharedHistoryStatusEl.textContent = added
+      ? `Synced ${added} GitHub row${added === 1 ? "" : "s"}`
+      : "GitHub master current";
+    calculateSignal();
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = manual ? "GitHub sync failed" : "Local only";
+  }
 }
 
 function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
@@ -923,28 +1031,101 @@ function getProfitTotal(entries) {
   return entries.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
 }
 
+function isClosingTransaction(entry) {
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP"].some((word) => entry.action?.includes(word));
+}
+
+function isOpeningTransaction(entry) {
+  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
+}
+
+function getClosedFromPrice(entry) {
+  const match = String(entry.note || "").match(/closed from\s+\$?([\d,.]+)/i);
+  if (!match) return NaN;
+  return Number(match[1].replace(/,/g, ""));
+}
+
+function isSameTradePair(left, right) {
+  return (
+    left &&
+    right &&
+    left.id !== right.id &&
+    left.contract === right.contract &&
+    left.side === right.side &&
+    left.step === right.step &&
+    (!left.commodity || !right.commodity || left.commodity === right.commodity)
+  );
+}
+
+function getOpeningEntry(entry) {
+  if (entry.tradeId) {
+    const exact = transactionHistory.find((candidate) => (
+      candidate.tradeId === entry.tradeId &&
+      candidate.id !== entry.id &&
+      isOpeningTransaction(candidate)
+    ));
+    if (exact) return exact;
+  }
+
+  const entryTime = getTransactionDate(entry.time).getTime();
+  return transactionHistory
+    .filter((candidate) => (
+      isOpeningTransaction(candidate) &&
+      isSameTradePair(candidate, entry) &&
+      getTransactionDate(candidate.time).getTime() <= entryTime
+    ))
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))[0] || null;
+}
+
 function getClosingEntry(entry) {
-  if (!entry.tradeId) return null;
-  return transactionHistory.find((candidate) => (
-    candidate.tradeId === entry.tradeId &&
-    candidate.id !== entry.id &&
-    Number(candidate.pnl) !== 0
-  )) || null;
+  if (entry.tradeId) {
+    const exact = transactionHistory.find((candidate) => (
+      candidate.tradeId === entry.tradeId &&
+      candidate.id !== entry.id &&
+      isClosingTransaction(candidate)
+    ));
+    if (exact) return exact;
+  }
+
+  const entryTime = getTransactionDate(entry.time).getTime();
+  return transactionHistory
+    .filter((candidate) => (
+      isClosingTransaction(candidate) &&
+      isSameTradePair(candidate, entry) &&
+      getTransactionDate(candidate.time).getTime() >= entryTime
+    ))
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))[0] || null;
 }
 
 function getEntryDetail(entry) {
+  const openingEntry = getOpeningEntry(entry);
   const closingEntry = getClosingEntry(entry);
-  const entryPrice = Number(entry.entryPrice ?? entry.price);
-  const targetEntryPrice = Number(entry.targetEntryPrice ?? entry.entryPrice);
-  const targetPrice = Number(entry.targetPrice);
-  const stopPrice = Number(entry.stopPrice);
-  const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (entry.pnl ? entry.price : NaN));
-  const openedAt = entry.openedAt ? new Date(entry.openedAt) : entry.time;
-  const closedAt = entry.closedAt ? new Date(entry.closedAt) : closingEntry?.closedAt ? new Date(closingEntry.closedAt) : null;
+  const closingAction = entry.action || closingEntry?.action || "";
+  const inferredEntryPrice = getClosedFromPrice(entry);
+  const entryPrice = Number(
+    entry.entryPrice ??
+    openingEntry?.entryPrice ??
+    openingEntry?.price ??
+    (Number.isFinite(inferredEntryPrice) ? inferredEntryPrice : NaN)
+  );
+  const targetEntryPrice = Number(entry.targetEntryPrice ?? openingEntry?.targetEntryPrice);
+  const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (isClosingTransaction(entry) ? entry.price : NaN));
+  const targetPrice = Number(entry.targetPrice ?? openingEntry?.targetPrice ?? closingEntry?.targetPrice ?? (closingAction.includes("TARGET") ? exitPrice : NaN));
+  const stopPrice = Number(entry.stopPrice ?? openingEntry?.stopPrice ?? closingEntry?.stopPrice ?? (closingAction.includes("STOP") ? exitPrice : NaN));
+  const openedAt = entry.openedAt
+    ? new Date(entry.openedAt)
+    : openingEntry?.openedAt ? new Date(openingEntry.openedAt)
+    : openingEntry?.time ? new Date(openingEntry.time)
+    : null;
+  const closedAt = entry.closedAt
+    ? new Date(entry.closedAt)
+    : closingEntry?.closedAt ? new Date(closingEntry.closedAt)
+    : isClosingTransaction(entry) ? new Date(entry.time)
+    : null;
   const durationMs = Number.isFinite(entry.durationMs)
     ? entry.durationMs
     : Number.isFinite(closingEntry?.durationMs) ? closingEntry.durationMs
-    : closedAt ? closedAt - openedAt : null;
+    : closedAt && openedAt ? closedAt - openedAt : null;
 
   return {
     entryPrice,
@@ -1238,11 +1419,16 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
   expandedTransactionId = null;
   calculateSignal();
 });
+syncHistoryEl.addEventListener("click", () => {
+  loadSharedTransactionHistory(true);
+});
+exportHistoryEl.addEventListener("click", downloadSharedHistory);
 
 loadPaperState();
 renderHistoryFilterButtons();
 renderPeriodFilterButtons();
 calculateSignal();
+loadSharedTransactionHistory();
 connectCoinbaseWebSocket(commoditySelect.value);
 refreshSelectedCoinbasePrice();
 window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
