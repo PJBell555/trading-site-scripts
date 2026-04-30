@@ -62,17 +62,53 @@ function getTransactionKey(entry) {
   ].join("|");
 }
 
+function isClosingTransaction(entry) {
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP"].some((word) => entry.action?.includes(word));
+}
+
+function isOpeningTransaction(entry) {
+  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
+}
+
+function getTradeLifecycleKey(entry) {
+  return [
+    entry.commodity || "commodity",
+    entry.contract || "contract",
+    entry.side || "side",
+    entry.step || "step"
+  ].join("|");
+}
+
 function mergeTransactions(existing = [], incoming = []) {
-  const merged = new Map();
+  const bySharedKey = new Map();
 
   [...existing, ...incoming].forEach((entry) => {
     const sharedKey = getTransactionKey(entry);
-    merged.set(sharedKey, { ...entry, sharedKey });
+    bySharedKey.set(sharedKey, { ...entry, sharedKey });
   });
 
-  return Array.from(merged.values()).sort((a, b) => (
-    new Date(b.time || 0) - new Date(a.time || 0)
+  const activeTrades = new Set();
+  const deduped = [];
+  const chronological = Array.from(bySharedKey.values()).sort((a, b) => (
+    new Date(a.time || 0) - new Date(b.time || 0)
   ));
+
+  chronological.forEach((entry) => {
+    const lifecycleKey = getTradeLifecycleKey(entry);
+
+    if (isOpeningTransaction(entry)) {
+      if (activeTrades.has(lifecycleKey)) return;
+      activeTrades.add(lifecycleKey);
+    }
+
+    if (isClosingTransaction(entry)) {
+      activeTrades.delete(lifecycleKey);
+    }
+
+    deduped.push(entry);
+  });
+
+  return deduped.sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
 }
 
 async function githubRequest(env, path, options = {}) {

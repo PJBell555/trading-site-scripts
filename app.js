@@ -835,8 +835,6 @@ function mergeTransactionHistory(entries, options = {}) {
 }
 
 function getTradeLifecycleKey(entry) {
-  if (entry.tradeId) return `id:${entry.tradeId}`;
-
   return [
     entry.commodity || "commodity",
     entry.contract || "contract",
