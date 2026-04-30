@@ -387,6 +387,17 @@ select {
   margin-right: 6px;
 }
 
+.backend-input {
+  border: 1px solid rgba(17, 32, 43, 0.14);
+  border-radius: 8px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.9rem;
+  min-height: 36px;
+  min-width: min(100%, 260px);
+  padding: 7px 10px;
+}
+
 .shared-status {
   align-items: center;
   color: var(--muted);

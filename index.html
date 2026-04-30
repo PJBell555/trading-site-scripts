@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=margin-fees-2">
+  <link rel="stylesheet" href="./styles.css?v=backend-history-1">
 </head>
 <body>
   <div class="shell">
@@ -263,7 +263,9 @@
             <div>
               <span class="stat-label">GitHub master</span>
               <div class="filter-row">
-                <button class="filter-button" type="button" id="sync-history">Sync from GitHub</button>
+                <input class="backend-input" id="history-api-url" type="url" placeholder="Backend URL">
+                <button class="filter-button" type="button" id="save-history-api">Save API</button>
+                <button class="filter-button" type="button" id="sync-history">Sync now</button>
                 <button class="filter-button" type="button" id="export-history">Export history</button>
                 <span class="shared-status" id="shared-history-status">Local only</span>
               </div>
@@ -309,6 +311,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=margin-fees-2"></script>
+  <script src="./app.js?v=backend-history-1"></script>
 </body>
 </html>

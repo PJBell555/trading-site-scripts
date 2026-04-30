@@ -44,6 +44,8 @@ const historyPeriodFiltersEl = document.querySelector("#history-period-filters")
 const historyTotalAllEl = document.querySelector("#history-total-all");
 const historyTotalFilteredEl = document.querySelector("#history-total-filtered");
 const historyTotalCountEl = document.querySelector("#history-total-count");
+const historyApiUrlEl = document.querySelector("#history-api-url");
+const saveHistoryApiEl = document.querySelector("#save-history-api");
 const syncHistoryEl = document.querySelector("#sync-history");
 const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
@@ -117,6 +119,7 @@ const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const GITHUB_MASTER_HISTORY_URL = "https://pjbell555.github.io/trading-site-scripts/transactions.json";
+const HISTORY_API_KEY = "atlas-history-api-url";
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -875,6 +878,7 @@ function recordTransaction(entry) {
   transactionHistory.unshift(transaction);
   nextTransactionId += 1;
   savePaperState();
+  saveSharedTransactionHistory();
 }
 
 function getSharedHistoryPayload() {
@@ -903,14 +907,64 @@ function downloadSharedHistory() {
   sharedHistoryStatusEl.textContent = `${transactionHistory.length} rows exported for GitHub`;
 }
 
+function getHistoryApiUrl() {
+  return window.localStorage.getItem(HISTORY_API_KEY) || "";
+}
+
+function setHistoryApiUrl(value) {
+  const normalized = value.trim().replace(/\/$/, "");
+  if (normalized) {
+    window.localStorage.setItem(HISTORY_API_KEY, normalized);
+  } else {
+    window.localStorage.removeItem(HISTORY_API_KEY);
+  }
+  historyApiUrlEl.value = normalized;
+  sharedHistoryStatusEl.textContent = normalized ? "Backend API saved" : "Local only";
+}
+
+function initializeHistoryApiControls() {
+  historyApiUrlEl.value = getHistoryApiUrl();
+  if (historyApiUrlEl.value) sharedHistoryStatusEl.textContent = "Backend API ready";
+}
+
 function getMasterHistoryUrl() {
+  const apiUrl = getHistoryApiUrl();
+  if (apiUrl) return apiUrl;
   if (window.location.protocol === "file:") return GITHUB_MASTER_HISTORY_URL;
   return "./transactions.json";
 }
 
+async function saveSharedTransactionHistory() {
+  const apiUrl = getHistoryApiUrl();
+  if (!apiUrl) {
+    sharedHistoryStatusEl.textContent = "Add backend URL to save";
+    return false;
+  }
+
+  try {
+    sharedHistoryStatusEl.textContent = "Saving to backend";
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(getSharedHistoryPayload())
+    });
+    if (!response.ok) throw new Error("backend save failed");
+
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    mergeTransactionHistory(entries);
+    sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
+    calculateSignal();
+    return true;
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = "Backend save failed";
+    return false;
+  }
+}
+
 async function loadSharedTransactionHistory(manual = false) {
   try {
-    sharedHistoryStatusEl.textContent = "Syncing from GitHub";
+    sharedHistoryStatusEl.textContent = getHistoryApiUrl() ? "Syncing backend" : "Syncing from GitHub";
     const response = await fetch(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("master history unavailable");
 
@@ -919,8 +973,8 @@ async function loadSharedTransactionHistory(manual = false) {
     const added = mergeTransactionHistory(entries);
 
     sharedHistoryStatusEl.textContent = added
-      ? `Synced ${added} GitHub row${added === 1 ? "" : "s"}`
-      : "GitHub master current";
+      ? `Synced ${added} row${added === 1 ? "" : "s"}`
+      : getHistoryApiUrl() ? "Backend current" : "GitHub master current";
     calculateSignal();
   } catch (error) {
     sharedHistoryStatusEl.textContent = manual ? "GitHub sync failed" : "Local only";
@@ -1570,12 +1624,19 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
   expandedTransactionId = null;
   calculateSignal();
 });
+saveHistoryApiEl.addEventListener("click", () => {
+  setHistoryApiUrl(historyApiUrlEl.value);
+});
+historyApiUrlEl.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") setHistoryApiUrl(historyApiUrlEl.value);
+});
 syncHistoryEl.addEventListener("click", () => {
-  loadSharedTransactionHistory(true);
+  saveSharedTransactionHistory().then(() => loadSharedTransactionHistory(true));
 });
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 
 loadPaperState();
+initializeHistoryApiControls();
 renderHistoryFilterButtons();
 renderPeriodFilterButtons();
 calculateSignal();
