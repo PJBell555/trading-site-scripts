@@ -118,7 +118,6 @@ const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
-const GITHUB_MASTER_HISTORY_URL = "https://pjbell555.github.io/trading-site-scripts/transactions.json";
 const HISTORY_API_KEY = "atlas-history-api-url";
 
 const chipMap = new Map();
@@ -792,7 +791,27 @@ function sortTransactionHistory() {
   transactionHistory.sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
-function mergeTransactionHistory(entries) {
+function resetLocalTradeState() {
+  transactionHistory.length = 0;
+  openPaperTrades.clear();
+  paperEquity = PAPER_START_EQUITY;
+  martingaleStep = 1;
+  nextTransactionId = 1;
+  expandedTransactionId = null;
+}
+
+function replaceTransactionHistory(entries) {
+  resetLocalTradeState();
+  mergeTransactionHistory(entries, { persist: false });
+  const maxId = transactionHistory.reduce((max, entry) => (
+    Number.isInteger(entry.id) ? Math.max(max, entry.id) : max
+  ), 0);
+  nextTransactionId = maxId + 1;
+  savePaperState();
+}
+
+function mergeTransactionHistory(entries, options = {}) {
+  const persist = options.persist !== false;
   const existing = new Map(transactionHistory.map((entry) => [getTransactionKey(entry), entry]));
   let added = 0;
 
@@ -807,7 +826,7 @@ function mergeTransactionHistory(entries) {
 
   if (added) {
     sortTransactionHistory();
-    savePaperState();
+    if (persist) savePaperState();
   }
 
   return added;
@@ -911,6 +930,10 @@ function getHistoryApiUrl() {
   return window.localStorage.getItem(HISTORY_API_KEY) || "";
 }
 
+function hasHistoryBackend() {
+  return Boolean(getHistoryApiUrl());
+}
+
 function setHistoryApiUrl(value) {
   const normalized = value.trim().replace(/\/$/, "");
   if (normalized) {
@@ -919,19 +942,16 @@ function setHistoryApiUrl(value) {
     window.localStorage.removeItem(HISTORY_API_KEY);
   }
   historyApiUrlEl.value = normalized;
-  sharedHistoryStatusEl.textContent = normalized ? "Backend API saved" : "Local only";
+  sharedHistoryStatusEl.textContent = normalized ? "Backend API saved" : "Backend required";
 }
 
 function initializeHistoryApiControls() {
   historyApiUrlEl.value = getHistoryApiUrl();
-  if (historyApiUrlEl.value) sharedHistoryStatusEl.textContent = "Backend API ready";
+  sharedHistoryStatusEl.textContent = historyApiUrlEl.value ? "Backend API ready" : "Backend required";
 }
 
 function getMasterHistoryUrl() {
-  const apiUrl = getHistoryApiUrl();
-  if (apiUrl) return apiUrl;
-  if (window.location.protocol === "file:") return GITHUB_MASTER_HISTORY_URL;
-  return "./transactions.json";
+  return getHistoryApiUrl();
 }
 
 async function saveSharedTransactionHistory() {
@@ -952,7 +972,7 @@ async function saveSharedTransactionHistory() {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    mergeTransactionHistory(entries);
+    replaceTransactionHistory(entries);
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
     calculateSignal();
     return true;
@@ -963,21 +983,25 @@ async function saveSharedTransactionHistory() {
 }
 
 async function loadSharedTransactionHistory(manual = false) {
+  if (!hasHistoryBackend()) {
+    sharedHistoryStatusEl.textContent = "Backend required";
+    return false;
+  }
+
   try {
-    sharedHistoryStatusEl.textContent = getHistoryApiUrl() ? "Syncing backend" : "Syncing from GitHub";
+    sharedHistoryStatusEl.textContent = "Syncing backend";
     const response = await fetch(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("master history unavailable");
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    const added = mergeTransactionHistory(entries);
-
-    sharedHistoryStatusEl.textContent = added
-      ? `Synced ${added} row${added === 1 ? "" : "s"}`
-      : getHistoryApiUrl() ? "Backend current" : "GitHub master current";
+    replaceTransactionHistory(entries);
+    sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     calculateSignal();
+    return true;
   } catch (error) {
-    sharedHistoryStatusEl.textContent = manual ? "GitHub sync failed" : "Local only";
+    sharedHistoryStatusEl.textContent = manual ? "Backend sync failed" : "Backend offline";
+    return false;
   }
 }
 
@@ -1104,6 +1128,7 @@ function closePaperTrade(commodity, exitPrice, reason) {
 
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
   if (!latestPrices.has(commodity)) return;
+  if (!hasHistoryBackend()) return;
 
   const openTrade = getOpenPaperTrade(commodity);
   if (openTrade) {
@@ -1396,7 +1421,9 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
   paperMartingaleEl.textContent = `Step ${martingaleStep} / ${MARTINGALE_MAX_STEP} (${formatMoney(nextCapital)})`;
 
-  if (!latestPrices.has(commodity)) {
+  if (!hasHistoryBackend()) {
+    paperStatusEl.textContent = "Connect backend API";
+  } else if (!latestPrices.has(commodity)) {
     paperStatusEl.textContent = "Waiting for live price";
   } else if (openTrade) {
     paperStatusEl.textContent = `${formatSide(openTrade.side)} open`;
@@ -1626,9 +1653,13 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
 });
 saveHistoryApiEl.addEventListener("click", () => {
   setHistoryApiUrl(historyApiUrlEl.value);
+  loadSharedTransactionHistory(true);
 });
 historyApiUrlEl.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") setHistoryApiUrl(historyApiUrlEl.value);
+  if (event.key === "Enter") {
+    setHistoryApiUrl(historyApiUrlEl.value);
+    loadSharedTransactionHistory(true);
+  }
 });
 syncHistoryEl.addEventListener("click", () => {
   saveSharedTransactionHistory().then(() => loadSharedTransactionHistory(true));
