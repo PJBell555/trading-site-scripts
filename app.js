@@ -91,6 +91,11 @@ const marketConfig = {
     contractMonth: "May 2026",
     productType: "Coinbase futures contract",
     referencePrice: 88.75,
+    contractMultiplier: 10,
+    marginRateLong: 0.1,
+    marginRateShort: 0.12,
+    feePerContractSide: 0.25,
+    feeLabel: "Estimated exchange/brokerage fee",
     buyWindow: "09:45-10:30 ET"
   },
   "natural-gas": { ticker: "NG reference", productId: "NATURAL-GAS-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
@@ -403,6 +408,44 @@ function getMartingaleCapital(minTradeValue) {
   return minTradeValue * (2 ** (martingaleStep - 1));
 }
 
+function getContractMultiplier(config) {
+  return Number(config?.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
+}
+
+function getMarginRate(config, side) {
+  const key = side === "short" ? "marginRateShort" : "marginRateLong";
+  return Number(config?.[key]) > 0 ? Number(config[key]) : 1;
+}
+
+function getMarginRequirement(config, side, price) {
+  const notional = price * getContractMultiplier(config);
+  return notional * getMarginRate(config, side);
+}
+
+function getFeePerContractSide(config) {
+  return Number(config?.feePerContractSide) >= 0 ? Number(config.feePerContractSide) : 0;
+}
+
+function getEstimatedFees(config, contracts, sides = 2) {
+  return getFeePerContractSide(config) * contracts * sides;
+}
+
+function getTradeGrossPnl(trade, exitPrice) {
+  const priceMove = trade.side === "short"
+    ? trade.entryPrice - exitPrice
+    : exitPrice - trade.entryPrice;
+  const multiplier = Number(trade.contractMultiplier) > 0 ? trade.contractMultiplier : 1;
+  const contracts = Number(trade.contracts) > 0 ? trade.contracts : Number(trade.quantity) || 1;
+  return priceMove * multiplier * contracts;
+}
+
+function getTradeNetPnl(trade, exitPrice) {
+  const grossPnl = getTradeGrossPnl(trade, exitPrice);
+  const openFee = Number(trade.openFee) || 0;
+  const estimatedExitFee = Number(trade.estimatedExitFee) || 0;
+  return grossPnl - openFee - estimatedExitFee;
+}
+
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
@@ -458,9 +501,10 @@ function buildTradePlan(commodity, signal) {
   const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
   const updatedAt = latestPriceTimes.get(commodity);
   const priceSource = latestPriceSources.get(commodity);
-  const minTradeValue = productMinimums.get(commodity) ?? livePrice;
+  const contractMultiplier = getContractMultiplier(config);
   const longBias = signal.tone === "long";
   const shortBias = signal.tone === "short";
+  const tradeSide = shortBias ? "short" : "long";
   const waitBias = signal.tone === "wait";
   const entryOffset = waitBias ? 0.004 : 0.0025;
   const targetOffset = waitBias ? 0.006 : 0.01;
@@ -473,12 +517,21 @@ function buildTradePlan(commodity, signal) {
   const entryPrice = shortBias ? shortEntry : longEntry;
   const targetPrice = sellPrice;
   const riskPct = signal.conviction >= 70 ? "1.00%" : signal.conviction >= 55 ? "0.75%" : "0.50%";
-  const size = signal.conviction >= 70 ? "2 contracts" : "1 contract";
   const status = waitBias ? "Stand by" : "Armed";
-  const nextCapital = getMartingaleCapital(minTradeValue);
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
+  const longMargin = getMarginRequirement(config, "long", livePrice);
+  const shortMargin = getMarginRequirement(config, "short", livePrice);
+  const minTradeValue = tradeSide === "short" ? shortMargin : longMargin;
+  const feePerContractSide = getFeePerContractSide(config);
+  const nextCapital = getMartingaleCapital(minTradeValue);
+  const plannedContracts = Math.max(1, Math.floor(nextCapital / minTradeValue));
+  const notionalValue = livePrice * contractMultiplier * plannedContracts;
+  const estimatedRoundTripFees = getEstimatedFees(config, plannedContracts, 2);
+  const marginSource = config.productType === "Coinbase futures contract"
+    ? "Estimated margin"
+    : "Reference margin";
 
   return {
     ticker: config.ticker,
@@ -487,6 +540,15 @@ function buildTradePlan(commodity, signal) {
     livePrice,
     entryPrice,
     targetPrice,
+    tradeSide,
+    contractMultiplier,
+    plannedContracts,
+    notionalValue,
+    longMargin,
+    shortMargin,
+    estimatedRoundTripFees,
+    feePerContractSide,
+    feeLabel: config.feeLabel || "Estimated fee",
     entryLabel,
     targetLabel,
     buyPrice,
@@ -495,16 +557,17 @@ function buildTradePlan(commodity, signal) {
     buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
     priceSource: updatedAt ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : "Reference (snapshot unavailable)",
     minTradeValue,
-    minLong: `1 contract / ${formatMoney(minTradeValue)}`,
-    minShort: `1 contract / ${formatMoney(minTradeValue)}`,
+    minLong: `1 contract / ${formatMoney(longMargin)}`,
+    minShort: `1 contract / ${formatMoney(shortMargin)}`,
     nextCapital,
     learnedThreshold,
     riskPct,
-    size,
+    size: `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}`,
     status,
     steps: [
       `Auto-enter long or short when conviction clears the learned threshold of ${learnedThreshold}.`,
-      `Commit Martingale step ${martingaleStep} capital, currently ${formatMoney(nextCapital)}, and set the stop at ${formatPrice(stopLoss)}.`,
+      `Commit Martingale step ${martingaleStep} margin, currently ${formatMoney(nextCapital)}, for ${plannedContracts} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
+      `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then adjust the next Martingale step.`
     ]
   };
@@ -748,10 +811,7 @@ function mergeTransactionHistory(entries) {
 }
 
 function getTradePnl(trade, exitPrice) {
-  const priceMove = trade.side === "short"
-    ? trade.entryPrice - exitPrice
-    : exitPrice - trade.entryPrice;
-  return priceMove * trade.quantity;
+  return getTradeNetPnl(trade, exitPrice);
 }
 
 function savePaperState() {
@@ -782,8 +842,16 @@ function loadPaperState() {
     if (Number.isInteger(state.nextTransactionId)) nextTransactionId = state.nextTransactionId;
     if (Array.isArray(state.openPaperTrades)) {
       state.openPaperTrades.forEach(([commodity, trade]) => {
+        const config = marketConfig[commodity];
+        const contracts = Number(trade.contracts) > 0 ? trade.contracts : Math.max(1, Math.round(Number(trade.quantity) || 1));
+        const contractMultiplier = Number(trade.contractMultiplier) > 0 ? trade.contractMultiplier : getContractMultiplier(config);
+        const openFee = Number(trade.openFee) || getEstimatedFees(config, contracts, 1);
         openPaperTrades.set(commodity, {
           ...trade,
+          contracts,
+          contractMultiplier,
+          openFee,
+          estimatedExitFee: Number(trade.estimatedExitFee) || getEstimatedFees(config, contracts, 1),
           openedAt: new Date(trade.openedAt)
         });
       });
@@ -864,8 +932,12 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   if (!side) return;
 
   const entryPrice = tradePlan.livePrice;
-  const capital = tradePlan.nextCapital;
-  const quantity = capital / entryPrice;
+  const contracts = tradePlan.plannedContracts;
+  const marginRequirement = side === "short" ? tradePlan.shortMargin : tradePlan.longMargin;
+  const capital = marginRequirement * contracts;
+  const notionalValue = entryPrice * tradePlan.contractMultiplier * contracts;
+  const openFee = getEstimatedFees(marketConfig[commodity], contracts, 1);
+  const estimatedExitFee = getEstimatedFees(marketConfig[commodity], contracts, 1);
   const trade = {
     id: nextTransactionId,
     commodity,
@@ -877,8 +949,17 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     targetEntryPrice: tradePlan.entryPrice,
     targetPrice: tradePlan.targetPrice,
     stopPrice: tradePlan.stopLoss,
+    contractMultiplier: tradePlan.contractMultiplier,
+    contracts,
+    marginRequirement,
+    notionalValue,
     capital,
-    quantity,
+    quantity: contracts,
+    openFee,
+    estimatedExitFee,
+    totalEstimatedFees: openFee + estimatedExitFee,
+    feePerContractSide: tradePlan.feePerContractSide,
+    feeLabel: tradePlan.feeLabel,
     conviction: signal.conviction,
     openedAt: new Date()
   };
@@ -898,6 +979,15 @@ function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
     targetEntryPrice: trade.targetEntryPrice,
     targetPrice: trade.targetPrice,
     stopPrice: trade.stopPrice,
+    contractMultiplier: trade.contractMultiplier,
+    contracts: trade.contracts,
+    marginRequirement: trade.marginRequirement,
+    notionalValue: trade.notionalValue,
+    openFee: trade.openFee,
+    estimatedExitFee: trade.estimatedExitFee,
+    totalEstimatedFees: trade.totalEstimatedFees,
+    feePerContractSide: trade.feePerContractSide,
+    feeLabel: trade.feeLabel,
     openedAt: trade.openedAt,
     capital,
     pnl: 0,
@@ -909,7 +999,10 @@ function closePaperTrade(commodity, exitPrice, reason) {
   const trade = getOpenPaperTrade(commodity);
   if (!trade) return;
 
-  const pnl = getTradePnl(trade, exitPrice);
+  const grossPnl = getTradeGrossPnl(trade, exitPrice);
+  const closeFee = Number(trade.estimatedExitFee) || getEstimatedFees(marketConfig[commodity], trade.contracts, 1);
+  const totalFees = (Number(trade.openFee) || 0) + closeFee;
+  const pnl = grossPnl - totalFees;
   paperEquity += pnl;
   openPaperTrades.delete(commodity);
   const closedAt = new Date();
@@ -926,6 +1019,18 @@ function closePaperTrade(commodity, exitPrice, reason) {
     targetEntryPrice: trade.targetEntryPrice,
     targetPrice: trade.targetPrice,
     stopPrice: trade.stopPrice,
+    contractMultiplier: trade.contractMultiplier,
+    contracts: trade.contracts,
+    marginRequirement: trade.marginRequirement,
+    notionalValue: trade.notionalValue,
+    openFee: trade.openFee,
+    closeFee,
+    estimatedExitFee: trade.estimatedExitFee,
+    totalEstimatedFees: totalFees,
+    feePerContractSide: trade.feePerContractSide,
+    feeLabel: trade.feeLabel,
+    grossPnl,
+    netPnl: pnl,
     exitPrice,
     openedAt: trade.openedAt,
     closedAt,
@@ -1112,6 +1217,19 @@ function getEntryDetail(entry) {
   const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (isClosingTransaction(entry) ? entry.price : NaN));
   const targetPrice = Number(entry.targetPrice ?? openingEntry?.targetPrice ?? closingEntry?.targetPrice ?? (closingAction.includes("TARGET") ? exitPrice : NaN));
   const stopPrice = Number(entry.stopPrice ?? openingEntry?.stopPrice ?? closingEntry?.stopPrice ?? (closingAction.includes("STOP") ? exitPrice : NaN));
+  const contracts = Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts ?? entry.quantity ?? openingEntry?.quantity ?? 1);
+  const contractMultiplier = Number(entry.contractMultiplier ?? openingEntry?.contractMultiplier ?? closingEntry?.contractMultiplier ?? getContractMultiplier(marketConfig[entry.commodity]));
+  const marginRequirement = Number(entry.marginRequirement ?? openingEntry?.marginRequirement ?? closingEntry?.marginRequirement);
+  const capital = Number(entry.capital ?? openingEntry?.capital ?? closingEntry?.capital);
+  const notionalValue = Number(entry.notionalValue ?? openingEntry?.notionalValue ?? closingEntry?.notionalValue ?? (Number.isFinite(entryPrice) ? entryPrice * contractMultiplier * contracts : NaN));
+  const openFee = Number(entry.openFee ?? openingEntry?.openFee ?? closingEntry?.openFee ?? 0);
+  const closeFee = Number(entry.closeFee ?? closingEntry?.closeFee ?? entry.estimatedExitFee ?? closingEntry?.estimatedExitFee ?? 0);
+  const totalFees = Number(entry.totalEstimatedFees ?? closingEntry?.totalEstimatedFees ?? openFee + closeFee);
+  const feeLabel = entry.feeLabel || openingEntry?.feeLabel || closingEntry?.feeLabel || "Estimated fees";
+  const grossPnl = Number(entry.grossPnl ?? closingEntry?.grossPnl ?? (Number.isFinite(entryPrice) && Number.isFinite(exitPrice)
+    ? ((entry.side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice) * contractMultiplier * contracts)
+    : NaN));
+  const netPnl = Number(entry.netPnl ?? closingEntry?.netPnl ?? (Number(entry.pnl) || (Number.isFinite(grossPnl) ? grossPnl - totalFees : NaN)));
   const openedAt = entry.openedAt
     ? new Date(entry.openedAt)
     : openingEntry?.openedAt ? new Date(openingEntry.openedAt)
@@ -1133,6 +1251,17 @@ function getEntryDetail(entry) {
     targetPrice,
     stopPrice,
     exitPrice,
+    contracts,
+    contractMultiplier,
+    marginRequirement,
+    capital,
+    notionalValue,
+    openFee,
+    closeFee,
+    totalFees,
+    feeLabel,
+    grossPnl,
+    netPnl,
     openedAt,
     closedAt,
     durationMs
@@ -1147,6 +1276,16 @@ function renderTransactionDetail(entry) {
     ["Actual exit", Number.isFinite(detail.exitPrice) ? formatPrice(detail.exitPrice) : entry.pnl === 0 ? "Open" : "-"],
     ["Target exit", Number.isFinite(detail.targetPrice) ? formatPrice(detail.targetPrice) : "-"],
     ["Stop", Number.isFinite(detail.stopPrice) ? formatPrice(detail.stopPrice) : "-"],
+    ["Contracts", Number.isFinite(detail.contracts) ? `${detail.contracts} x ${detail.contractMultiplier} units` : "-"],
+    ["Notional exposure", Number.isFinite(detail.notionalValue) ? formatMoney(detail.notionalValue) : "-"],
+    ["Margin/contract", Number.isFinite(detail.marginRequirement) ? formatMoney(detail.marginRequirement) : "-"],
+    ["Margin committed", Number.isFinite(detail.capital) ? formatMoney(detail.capital) : "-"],
+    ["Open fee", Number.isFinite(detail.openFee) ? formatMoney(detail.openFee) : "-"],
+    ["Close fee", Number.isFinite(detail.closeFee) ? formatMoney(detail.closeFee) : "-"],
+    ["Total fees", Number.isFinite(detail.totalFees) ? formatMoney(detail.totalFees) : "-"],
+    ["Gross P/L", Number.isFinite(detail.grossPnl) ? formatSignedMoney(detail.grossPnl) : "-"],
+    ["Net P/L", Number.isFinite(detail.netPnl) ? formatSignedMoney(detail.netPnl) : "-"],
+    ["Fee model", detail.feeLabel],
     ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
     ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],
     ["Time open", Number.isFinite(detail.durationMs) ? formatDuration(detail.durationMs) : entry.pnl === 0 ? "Still open" : "-"],
@@ -1186,7 +1325,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
-  paperSizeEl.textContent = openTrade ? `${openTrade.quantity.toFixed(4)} contracts` : "Minimum trade";
+  paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
   paperCommittedEl.textContent = formatMoney(committedCapital);
   paperOpenPlEl.textContent = formatSignedMoney(openPl);
   paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
@@ -1203,7 +1342,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   if (openTrade) {
-    paperTradeSummaryEl.textContent = `Open ${openTrade.side} ${openTrade.contract}: step ${openTrade.martingaleStep}, entry ${formatPrice(openTrade.entryPrice)}, target ${formatPrice(openTrade.targetPrice)}, stop ${formatPrice(openTrade.stopPrice)}.`;
+    paperTradeSummaryEl.textContent = `Open ${openTrade.side} ${openTrade.contract}: step ${openTrade.martingaleStep}, ${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}, entry ${formatPrice(openTrade.entryPrice)}, target ${formatPrice(openTrade.targetPrice)}, stop ${formatPrice(openTrade.stopPrice)}, est. fees ${formatMoney(openTrade.totalEstimatedFees || 0)}.`;
   } else {
     paperTradeSummaryEl.textContent = `No open paper trade for the selected contract. Next trade uses Martingale step ${martingaleStep}.`;
   }
