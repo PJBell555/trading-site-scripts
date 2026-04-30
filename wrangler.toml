@@ -1,4 +1,4 @@
-name = "atlas-trade-history"
+name = "trading-site-scripts"
 main = "workers/transactions.js"
 compatibility_date = "2024-11-01"
 
