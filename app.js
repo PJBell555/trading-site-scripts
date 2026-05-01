@@ -130,6 +130,7 @@ const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
+const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ADVISORY_CAPTURE_MS = 60000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -1317,8 +1318,10 @@ function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
 
   const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
   const batchKey = `${commodity}|${minute}`;
-  if (batchKey === lastAdvisorySnapshotKey) return;
+  const savedBatchKey = window.localStorage.getItem(ADVISORY_SNAPSHOT_KEY);
+  if (batchKey === lastAdvisorySnapshotKey || batchKey === savedBatchKey) return;
   lastAdvisorySnapshotKey = batchKey;
+  window.localStorage.setItem(ADVISORY_SNAPSHOT_KEY, batchKey);
 
   const snapshots = ADVISORY_HORIZONS.map((horizon) => (
     buildAdvisorySnapshot(commodity, horizon, baseSignals, tradePlan.livePrice, tradePlan.priceSource)

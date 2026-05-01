@@ -166,6 +166,23 @@ function mergeAdvisorySnapshots(existing = [], incoming = []) {
     .slice(0, MAX_ADVISORY_SNAPSHOTS);
 }
 
+function getNewAdvisorySnapshots(existing = [], incoming = []) {
+  const existingKeys = new Set(
+    existing
+      .map((entry) => normalizeAdvisorySnapshot(entry)?.snapshotKey)
+      .filter(Boolean)
+  );
+  const incomingByKey = new Map();
+
+  incoming.forEach((entry) => {
+    const normalized = normalizeAdvisorySnapshot(entry);
+    if (!normalized || existingKeys.has(normalized.snapshotKey)) return;
+    incomingByKey.set(normalized.snapshotKey, normalized);
+  });
+
+  return Array.from(incomingByKey.values());
+}
+
 function compactPayload(payload = {}) {
   const originalTransactions = Array.isArray(payload.transactions) ? payload.transactions : [];
   const transactions = mergeTransactions(originalTransactions, []);
@@ -444,15 +461,28 @@ export default {
         const body = await request.json().catch(() => ({}));
         const { file, path, payload } = await getAdvisoryFile(env);
         const incoming = Array.isArray(body.snapshots) ? body.snapshots : [];
+        const newSnapshots = getNewAdvisorySnapshots(payload.snapshots, incoming);
+
+        if (!newSnapshots.length) {
+          return jsonResponse({
+            commit: null,
+            skipped: true,
+            reason: "No new advisory snapshots",
+            merged: Array.isArray(payload.snapshots) ? payload.snapshots.length : 0,
+            snapshots: Array.isArray(payload.snapshots) ? payload.snapshots : []
+          }, 200, origin);
+        }
+
         const updatedPayload = {
           generatedAt: new Date().toISOString(),
           source: "cloudflare-github-advisory-snapshots",
-          snapshots: mergeAdvisorySnapshots(payload.snapshots, incoming)
+          snapshots: mergeAdvisorySnapshots(payload.snapshots, newSnapshots)
         };
         const result = await saveAdvisoryFile(env, file, path, updatedPayload);
 
         return jsonResponse({
           commit: result.commit?.sha,
+          added: newSnapshots.length,
           merged: updatedPayload.snapshots.length,
           snapshots: updatedPayload.snapshots
         }, 200, origin);
