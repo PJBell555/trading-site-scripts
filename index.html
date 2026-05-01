@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=remote-ledger-1">
+  <link rel="stylesheet" href="./styles.css?v=open-brain-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="Atlas password access">
@@ -37,7 +37,7 @@
         </div>
         <div>
           <span class="stat-label">Primary model</span>
-          <strong>Oil bias</strong>
+          <strong id="primary-model-stat">ChatGPT 5.5</strong>
         </div>
         <div>
           <span class="stat-label">Mode</span>
@@ -55,6 +55,8 @@
 
     <nav class="app-menu" aria-label="Atlas sections">
       <button class="menu-button" type="button" data-section-target="advisories" data-active="true">Advisories</button>
+      <button class="menu-button" type="button" data-section-target="second-opinion">Second Opinion</button>
+      <button class="menu-button" type="button" data-section-target="open-brain">Open Brain</button>
       <button class="menu-button" type="button" data-section-target="trading">Trading</button>
       <button class="menu-button" type="button" data-section-target="features">Feature Requests</button>
       <button class="menu-button" type="button" data-section-target="users">Users</button>
@@ -160,6 +162,117 @@
       <div class="feature-board" id="feature-board" aria-label="Feature request board"></div>
     </section>
 
+    <section class="band second-opinion" data-app-section="second-opinion" aria-label="Second opinion model panel">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Model review desk</p>
+          <h2>Second Opinions</h2>
+          <p>Compare the current advisory against other model styles before acting on a setup.</p>
+        </div>
+        <span class="shared-status" id="second-opinion-status">Ready</span>
+      </div>
+      <div class="second-opinion-grid">
+        <div>
+          <div class="second-row-head">
+            <span class="stat-label">Models</span>
+            <button class="link-button" type="button" id="second-opinion-select-all">Select all</button>
+          </div>
+          <div class="model-choice-grid" id="second-opinion-models"></div>
+        </div>
+        <div>
+          <span class="stat-label">Character prompts</span>
+          <div class="prompt-choice-grid" id="second-opinion-prompts">
+            <label class="model-choice">
+              <input type="checkbox" value="technician" checked>
+              <span>Master Technician Analysis</span>
+            </label>
+            <label class="model-choice">
+              <input type="checkbox" value="risk-manager">
+              <span>Risk Manager Challenge</span>
+            </label>
+            <label class="model-choice">
+              <input type="checkbox" value="macro">
+              <span>Macro Cross-Check</span>
+            </label>
+          </div>
+        </div>
+      </div>
+      <div class="second-opinion-actions">
+        <button class="access-button run-selected-button" type="button" id="second-opinion-run-selected">Run Selected (0)</button>
+        <button class="filter-button run-all-button" type="button" id="second-opinion-run-all">Run All</button>
+      </div>
+      <div class="second-opinion-note">
+        Browser preview only: these cards are local advisory simulations. Connect paid model APIs through the Cloudflare Worker before sending real requests.
+      </div>
+      <div class="second-opinion-results-head">
+        <span class="stat-label" id="second-opinion-results-label">Results (0 opinions)</span>
+      </div>
+      <div class="second-opinion-results" id="second-opinion-results"></div>
+    </section>
+
+    <section class="band open-brain" data-app-section="open-brain" aria-label="Open Brain memory lab">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Persistent agent memory</p>
+          <h2>Open Brain</h2>
+          <p>Capture trader decisions, advisory context, outcomes, and lessons so future agents can search the trading memory.</p>
+        </div>
+        <span class="shared-status" id="open-brain-status">Local memory ready</span>
+      </div>
+      <div class="open-brain-grid">
+        <div class="open-brain-card">
+          <span class="stat-label">Memory events</span>
+          <strong id="open-brain-event-count">0</strong>
+          <p>Local event records waiting for a Supabase/vector memory backend.</p>
+        </div>
+        <div class="open-brain-card">
+          <span class="stat-label">Agent bridge</span>
+          <strong>MCP ready</strong>
+          <p>Planned tools: capture memory, semantic search, recent memories, and performance stats.</p>
+        </div>
+        <div class="open-brain-card">
+          <span class="stat-label">Karpathy loop</span>
+          <strong>Feedback store</strong>
+          <p>Trade results become searchable examples for threshold and prompt tuning.</p>
+        </div>
+      </div>
+      <div class="ledger-toolbar open-brain-toolbar" aria-label="Open Brain controls">
+        <div>
+          <span class="stat-label">Memory endpoint</span>
+          <div class="filter-row">
+            <input class="backend-input" id="open-brain-endpoint" type="url" placeholder="Future MCP or memory API URL">
+            <button class="filter-button" type="button" id="save-open-brain-endpoint">Save endpoint</button>
+          </div>
+        </div>
+        <div>
+          <span class="stat-label">Capture</span>
+          <div class="filter-row">
+            <button class="filter-button" type="button" id="capture-open-brain-advisory">Capture advisory</button>
+            <button class="filter-button" type="button" id="export-open-brain-memory">Export memory</button>
+          </div>
+        </div>
+      </div>
+      <div class="open-brain-pipeline" aria-label="Open Brain pipeline">
+        <div><strong>1. Capture</strong><span>Trader action, model choice, market state, trade result.</span></div>
+        <div><strong>2. Embed</strong><span>Store raw text plus vector embedding and structured metadata.</span></div>
+        <div><strong>3. Retrieve</strong><span>Agents search similar setups through MCP before advising.</span></div>
+        <div><strong>4. Improve</strong><span>Karpathy loop converts outcomes into better thresholds and prompts.</span></div>
+      </div>
+      <div class="history-wrap">
+        <table class="history-table open-brain-table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Type</th>
+              <th>Memory</th>
+              <th>Tags</th>
+            </tr>
+          </thead>
+          <tbody id="open-brain-memory-table"></tbody>
+        </table>
+      </div>
+    </section>
+
     <main class="layout">
       <section class="band intro" data-app-section="advisories">
         <div>
@@ -181,6 +294,11 @@
           <label>
             Commodity
             <select id="commodity"></select>
+          </label>
+
+          <label>
+            Primary advisory model
+            <select id="primary-model"></select>
           </label>
 
           <label>
@@ -497,6 +615,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=front-gate-1"></script>
+  <script src="./app.js?v=open-brain-1"></script>
 </body>
 </html>

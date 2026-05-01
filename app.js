@@ -33,7 +33,24 @@ const featureTypeInputEl = document.querySelector("#feature-type-input");
 const featureTagInputEl = document.querySelector("#feature-tag-input");
 const featureDescriptionInputEl = document.querySelector("#feature-description-input");
 const featureBoardEl = document.querySelector("#feature-board");
+const secondOpinionStatusEl = document.querySelector("#second-opinion-status");
+const secondOpinionModelsEl = document.querySelector("#second-opinion-models");
+const secondOpinionPromptsEl = document.querySelector("#second-opinion-prompts");
+const secondOpinionSelectAllEl = document.querySelector("#second-opinion-select-all");
+const secondOpinionRunSelectedEl = document.querySelector("#second-opinion-run-selected");
+const secondOpinionRunAllEl = document.querySelector("#second-opinion-run-all");
+const secondOpinionResultsLabelEl = document.querySelector("#second-opinion-results-label");
+const secondOpinionResultsEl = document.querySelector("#second-opinion-results");
+const openBrainStatusEl = document.querySelector("#open-brain-status");
+const openBrainEventCountEl = document.querySelector("#open-brain-event-count");
+const openBrainEndpointEl = document.querySelector("#open-brain-endpoint");
+const saveOpenBrainEndpointEl = document.querySelector("#save-open-brain-endpoint");
+const captureOpenBrainAdvisoryEl = document.querySelector("#capture-open-brain-advisory");
+const exportOpenBrainMemoryEl = document.querySelector("#export-open-brain-memory");
+const openBrainMemoryTableEl = document.querySelector("#open-brain-memory-table");
 const commoditySelect = document.querySelector("#commodity");
+const primaryModelSelect = document.querySelector("#primary-model");
+const primaryModelStatEl = document.querySelector("#primary-model-stat");
 const commodityStrip = document.querySelector("#commodity-strip");
 const inputsTitle = document.querySelector("#inputs-title");
 const outputTitle = document.querySelector("#output-title");
@@ -143,6 +160,21 @@ const marketConfig = {
   platinum: { ticker: "Platinum reference", productId: "PLATINUM-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
 };
 
+const advisoryModels = [
+  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "balanced reasoning" },
+  { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI fallback" },
+  { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "source-heavy market scan" },
+  { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "broad macro cross-check" },
+  { id: "claude", name: "Claude", provider: "Anthropic", badge: "C", tilt: -1, style: "risk-first critique" },
+  { id: "grok", name: "Grok", provider: "xAI", badge: "X", tilt: 5, style: "momentum and narrative scan" }
+];
+
+const opinionPromptLabels = {
+  technician: "Master Technician Analysis",
+  "risk-manager": "Risk Manager Challenge",
+  macro: "Macro Cross-Check"
+};
+
 const latestPrices = new Map();
 const latestPriceTimes = new Map();
 const latestPriceSources = new Map();
@@ -161,6 +193,11 @@ const ACCESS_STATE_KEY = "atlas-access-unlocked";
 const ACCESS_PASSWORD_HASH = "55bdd6bb9b1839c8f8e7c3459e61f5537d0691c6b4c8fa827d594708f4d63db2";
 const USER_ROSTER_KEY = "atlas-user-roster-v1";
 const FEATURE_REQUESTS_KEY = "atlas-feature-requests-v1";
+const PRIMARY_MODEL_KEY = "atlas-primary-advisory-model";
+const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
+const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
+const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
+const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
 const ADVISORY_CAPTURE_MS = 60000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -195,8 +232,13 @@ let appStarted = false;
 let userSearchQuery = "";
 let activeSection = "advisories";
 let featureTypeFilter = "all";
+let primaryModelId = "gpt-5-5";
+let lastPrimarySignal = null;
+let lastTradePlan = null;
+let lastCommodityMeta = commodities[0];
 const userRoster = [];
 const featureRequests = [];
+const openBrainMemory = [];
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 
 async function hashAccessPassword(value) {
@@ -221,6 +263,282 @@ function setActiveSection(section) {
     sectionEl.hidden = sectionEl.dataset.appSection !== section;
   });
   if (section === "advisories") renderAdvisoryChart();
+  if (section === "second-opinion") updateSecondOpinionRunState();
+  if (section === "open-brain") renderOpenBrainMemory();
+}
+
+function loadOpenBrainMemory() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(OPEN_BRAIN_MEMORY_KEY) || "[]");
+    openBrainMemory.splice(0, openBrainMemory.length, ...(Array.isArray(stored) ? stored : []));
+  } catch (error) {
+    openBrainMemory.splice(0, openBrainMemory.length);
+  }
+  openBrainEndpointEl.value = window.localStorage.getItem(OPEN_BRAIN_ENDPOINT_KEY) || "";
+}
+
+function saveOpenBrainMemory() {
+  window.localStorage.setItem(OPEN_BRAIN_MEMORY_KEY, JSON.stringify(openBrainMemory.slice(0, 250)));
+}
+
+function recordOpenBrainEvent(type, summary, metadata = {}) {
+  const event = {
+    id: `memory-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    time: new Date().toISOString(),
+    type,
+    summary,
+    tags: metadata.tags || [],
+    metadata
+  };
+
+  openBrainMemory.unshift(event);
+  saveOpenBrainMemory();
+  renderOpenBrainMemory();
+  return event;
+}
+
+function renderOpenBrainMemory() {
+  openBrainEventCountEl.textContent = String(openBrainMemory.length);
+  openBrainStatusEl.textContent = openBrainEndpointEl.value ? "Endpoint saved" : "Local memory ready";
+  openBrainMemoryTableEl.innerHTML = "";
+
+  if (!openBrainMemory.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.textContent = "No memory events yet. Capture the current advisory or run second opinions to start.";
+    row.append(cell);
+    openBrainMemoryTableEl.append(row);
+    return;
+  }
+
+  openBrainMemory.slice(0, 25).forEach((event) => {
+    const row = document.createElement("tr");
+    [
+      formatTradeTime(event.time),
+      event.type,
+      event.summary,
+      (event.tags || []).join(", ") || "-"
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+    openBrainMemoryTableEl.append(row);
+  });
+}
+
+function captureCurrentAdvisoryMemory(source = "manual") {
+  if (!lastPrimarySignal || !lastTradePlan || !lastCommodityMeta) return null;
+  return recordOpenBrainEvent(
+    "advisory",
+    `${lastCommodityMeta.name} ${lastPrimarySignal.label} at ${formatPrice(lastTradePlan.livePrice)} using ${getModelById(primaryModelId).name}`,
+    {
+      source,
+      commodity: lastCommodityMeta.id,
+      model: primaryModelId,
+      label: lastPrimarySignal.label,
+      tone: lastPrimarySignal.tone,
+      conviction: lastPrimarySignal.conviction,
+      price: lastTradePlan.livePrice,
+      target: lastTradePlan.sellPrice,
+      stop: lastTradePlan.stopLoss,
+      tags: ["advisory", lastCommodityMeta.id, lastPrimarySignal.tone, primaryModelId]
+    }
+  );
+}
+
+function downloadOpenBrainMemory() {
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    source: "atlas-open-brain-local-memory-export",
+    nextBackend: "Supabase/Postgres pgvector plus MCP memory server",
+    events: openBrainMemory
+  };
+  const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json" });
+  const link = document.createElement("a");
+  link.href = URL.createObjectURL(blob);
+  link.download = `atlas-open-brain-memory-${new Date().toISOString().slice(0, 10)}.json`;
+  link.click();
+  URL.revokeObjectURL(link.href);
+}
+
+function getModelById(modelId) {
+  return advisoryModels.find(({ id }) => id === modelId) || advisoryModels[0];
+}
+
+function getSelectedSecondOpinionModels() {
+  return Array.from(secondOpinionModelsEl.querySelectorAll("input[type='checkbox']:checked"))
+    .map((input) => input.value)
+    .filter((modelId) => modelId !== primaryModelId);
+}
+
+function getSelectedSecondOpinionPrompts() {
+  const selected = Array.from(secondOpinionPromptsEl.querySelectorAll("input[type='checkbox']:checked"))
+    .map((input) => input.value);
+  return selected.length ? selected : ["technician"];
+}
+
+function saveModelSettings() {
+  window.localStorage.setItem(PRIMARY_MODEL_KEY, primaryModelId);
+  window.localStorage.setItem(SECOND_OPINION_MODELS_KEY, JSON.stringify(getSelectedSecondOpinionModels()));
+  window.localStorage.setItem(SECOND_OPINION_PROMPTS_KEY, JSON.stringify(getSelectedSecondOpinionPrompts()));
+}
+
+function loadModelSettings() {
+  try {
+    const storedPrimary = window.localStorage.getItem(PRIMARY_MODEL_KEY);
+    if (advisoryModels.some(({ id }) => id === storedPrimary)) primaryModelId = storedPrimary;
+  } catch (error) {
+    primaryModelId = "gpt-5-5";
+  }
+}
+
+function renderPrimaryModelSelector() {
+  primaryModelSelect.innerHTML = "";
+  advisoryModels.forEach((model) => {
+    const option = document.createElement("option");
+    option.value = model.id;
+    option.textContent = `${model.name} (${model.provider})`;
+    primaryModelSelect.append(option);
+  });
+  primaryModelSelect.value = primaryModelId;
+  primaryModelStatEl.textContent = getModelById(primaryModelId).name;
+}
+
+function renderSecondOpinionControls() {
+  let storedModels = null;
+  let storedPrompts = null;
+
+  try {
+    storedModels = JSON.parse(window.localStorage.getItem(SECOND_OPINION_MODELS_KEY) || "null");
+    storedPrompts = JSON.parse(window.localStorage.getItem(SECOND_OPINION_PROMPTS_KEY) || "null");
+  } catch (error) {
+    storedModels = null;
+    storedPrompts = null;
+  }
+
+  const selectedModels = new Set(Array.isArray(storedModels) ? storedModels : ["perplexity", "gemini", "claude"]);
+  const selectedPrompts = new Set(Array.isArray(storedPrompts) ? storedPrompts : ["technician"]);
+
+  secondOpinionModelsEl.innerHTML = "";
+  advisoryModels
+    .filter(({ id }) => id !== primaryModelId)
+    .forEach((model) => {
+      const label = document.createElement("label");
+      const input = document.createElement("input");
+      const badge = document.createElement("span");
+      const name = document.createElement("span");
+
+      label.className = "model-choice";
+      input.type = "checkbox";
+      input.value = model.id;
+      input.checked = selectedModels.has(model.id);
+      badge.className = "model-badge";
+      badge.textContent = model.badge;
+      name.textContent = model.name;
+      label.append(input, badge, name);
+      secondOpinionModelsEl.append(label);
+    });
+
+  secondOpinionPromptsEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
+    input.checked = selectedPrompts.has(input.value);
+  });
+
+  updateSecondOpinionRunState();
+}
+
+function updateSecondOpinionRunState() {
+  const count = getSelectedSecondOpinionModels().length;
+  secondOpinionRunSelectedEl.textContent = `Run Selected (${count})`;
+  secondOpinionRunSelectedEl.disabled = count === 0;
+  secondOpinionStatusEl.textContent = `${getModelById(primaryModelId).name} primary`;
+  primaryModelStatEl.textContent = getModelById(primaryModelId).name;
+}
+
+function getOpinionScore(signal, model, promptIds) {
+  const promptTilt = promptIds.reduce((total, promptId) => {
+    if (promptId === "risk-manager") return total - 3;
+    if (promptId === "macro") return total + 1;
+    return total;
+  }, 0);
+  return Math.max(0, Math.min(100, signal.conviction + model.tilt + promptTilt));
+}
+
+function getOpinionTone(signal, score) {
+  if (score < 48) return "wait";
+  if (signal.tone === "short") return "short";
+  if (signal.tone === "long") return "long";
+  return "wait";
+}
+
+function renderSecondOpinionResults(modelIds) {
+  const signal = lastPrimarySignal;
+  const tradePlan = lastTradePlan;
+  const commodityMeta = lastCommodityMeta;
+  const promptIds = getSelectedSecondOpinionPrompts();
+
+  secondOpinionResultsEl.innerHTML = "";
+
+  if (!signal || !tradePlan) {
+    secondOpinionResultsLabelEl.textContent = "Results (0 opinions)";
+    secondOpinionStatusEl.textContent = "Run the main advisory first";
+    return;
+  }
+
+  modelIds.forEach((modelId) => {
+    const model = getModelById(modelId);
+    const score = getOpinionScore(signal, model, promptIds);
+    const tone = getOpinionTone(signal, score);
+    const card = document.createElement("article");
+    const head = document.createElement("div");
+    const title = document.createElement("div");
+    const titleStrong = document.createElement("strong");
+    const titleMeta = document.createElement("span");
+    const scoreEl = document.createElement("strong");
+    const meta = document.createElement("span");
+    const list = document.createElement("ul");
+    const promptText = promptIds.map((id) => opinionPromptLabels[id]).join(", ");
+    const directionText = tone === "long" ? "leans long" : tone === "short" ? "leans short" : "would wait";
+
+    card.className = "opinion-card";
+    card.dataset.tone = tone;
+    head.className = "opinion-card-head";
+    titleStrong.textContent = promptText;
+    titleMeta.textContent = `${model.name} / ${model.style}`;
+    title.append(titleStrong, titleMeta);
+    scoreEl.className = "opinion-score";
+    scoreEl.textContent = String(score);
+    meta.className = "opinion-data";
+    meta.textContent = `Data: ${formatPrice(tradePlan.livePrice)} via ${tradePlan.priceSource}`;
+
+    [
+      `${model.name} ${directionText} on ${commodityMeta.name.toLowerCase()} with ${score}/100 conviction.`,
+      `Primary advisory is ${signal.label.toLowerCase()} from ${getModelById(primaryModelId).name}.`,
+      `Entry ${formatPrice(tradePlan.buyPrice)}, target ${formatPrice(tradePlan.sellPrice)}, stop ${formatPrice(tradePlan.stopLoss)}.`,
+      tone === "wait" ? "Main risk: signal strength is not high enough for a clean independent confirmation." : "Main risk: validate price source, spread, and stop distance before using this as trade support."
+    ].forEach((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.append(item);
+    });
+
+    head.append(title, scoreEl);
+    card.append(head, meta, list);
+    secondOpinionResultsEl.append(card);
+  });
+
+  secondOpinionResultsLabelEl.textContent = `Results (${modelIds.length} opinion${modelIds.length === 1 ? "" : "s"})`;
+  secondOpinionStatusEl.textContent = `Prepared ${modelIds.length} local opinion${modelIds.length === 1 ? "" : "s"}`;
+  recordOpenBrainEvent("second-opinion", `Ran ${modelIds.length} second opinion${modelIds.length === 1 ? "" : "s"} for ${commodityMeta.name}`, {
+    commodity: commodityMeta.id,
+    primaryModel: primaryModelId,
+    models: modelIds,
+    prompts: promptIds,
+    primarySignal: signal.label,
+    tags: ["second-opinion", commodityMeta.id, primaryModelId]
+  });
+  saveModelSettings();
 }
 
 function getDefaultUsers() {
@@ -709,6 +1027,8 @@ function renderFeatureRequests() {
 function addFeatureRequest() {
   const title = featureTitleInputEl.value.trim();
   const description = featureDescriptionInputEl.value.trim();
+  const type = featureTypeInputEl.value;
+  const tag = featureTagInputEl.value.trim() || type;
   if (!title || !description) {
     featureRequestStatusEl.textContent = "Title and description required";
     return;
@@ -718,8 +1038,8 @@ function addFeatureRequest() {
     id: `feature-${Date.now()}`,
     title,
     description,
-    type: featureTypeInputEl.value,
-    tag: featureTagInputEl.value.trim() || featureTypeInputEl.value,
+    type,
+    tag,
     status: "submitted",
     votes: 0,
     author: "Peter",
@@ -729,6 +1049,12 @@ function addFeatureRequest() {
   featureFormEl.hidden = true;
   saveFeatureRequests();
   renderFeatureRequests();
+  recordOpenBrainEvent("feature-request", `Feature request added: ${title}`, {
+    title,
+    type,
+    tag,
+    tags: ["feature-request", type]
+  });
 }
 
 async function handleAccessSubmit(event) {
@@ -2170,6 +2496,20 @@ async function recordTransaction(entry) {
   transactionHistory.unshift(transaction);
   nextTransactionId += 1;
   savePaperState();
+  recordOpenBrainEvent(
+    "paper-trade",
+    `${transaction.action} ${transaction.contract} at ${formatPrice(transaction.price)} with net P/L ${formatCurrency(transaction.pnl || 0)}`,
+    {
+      tradeId: transaction.tradeId,
+      commodity: transaction.commodity,
+      action: transaction.action,
+      side: transaction.side,
+      step: transaction.step,
+      price: transaction.price,
+      pnl: transaction.pnl,
+      tags: ["paper-trade", transaction.commodity, transaction.side, transaction.action]
+    }
+  );
   await saveSharedTransactionHistory();
   return transaction;
 }
@@ -2792,6 +3132,10 @@ function calculateSignal() {
   const primarySignal = scoreCommodity(commodity, baseSignals);
   const tradePlan = buildTradePlan(commodity, primarySignal);
 
+  lastPrimarySignal = primarySignal;
+  lastTradePlan = tradePlan;
+  lastCommodityMeta = commodityMeta;
+
   const reasons = [];
   const trend = baseSignals.trend;
   const inventory = baseSignals.inventory;
@@ -2824,7 +3168,8 @@ function calculateSignal() {
   });
 
   inputsTitle.textContent = `Advisor inputs: ${commodityMeta.name}`;
-  outputTitle.textContent = `Advisor output: ${commodityMeta.name}`;
+  outputTitle.textContent = `Advisor output: ${commodityMeta.name} / ${getModelById(primaryModelId).name}`;
+  primaryModelStatEl.textContent = getModelById(primaryModelId).name;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
   convictionEl.textContent = `${primarySignal.conviction} / 100`;
@@ -2865,6 +3210,7 @@ function calculateSignal() {
 
 [
   commoditySelect,
+  primaryModelSelect,
   inputs.trend,
   inputs.inventory,
   inputs.dollar,
@@ -2876,6 +3222,12 @@ function calculateSignal() {
   element.addEventListener("change", calculateSignal);
 });
 
+primaryModelSelect.addEventListener("change", () => {
+  primaryModelId = primaryModelSelect.value;
+  renderSecondOpinionControls();
+  saveModelSettings();
+  calculateSignal();
+});
 commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
 commoditySelect.addEventListener("change", () => {
   connectCoinbaseWebSocket(commoditySelect.value);
@@ -2940,6 +3292,44 @@ coinbaseSandboxEnabledEl.addEventListener("change", () => {
   saveSharedSettings();
   calculateSignal();
 });
+secondOpinionModelsEl.addEventListener("change", () => {
+  updateSecondOpinionRunState();
+  saveModelSettings();
+});
+secondOpinionPromptsEl.addEventListener("change", () => {
+  updateSecondOpinionRunState();
+  saveModelSettings();
+});
+secondOpinionSelectAllEl.addEventListener("click", () => {
+  const boxes = Array.from(secondOpinionModelsEl.querySelectorAll("input[type='checkbox']"));
+  const shouldSelectAll = boxes.some((input) => !input.checked);
+  boxes.forEach((input) => {
+    input.checked = shouldSelectAll;
+  });
+  updateSecondOpinionRunState();
+  saveModelSettings();
+});
+secondOpinionRunSelectedEl.addEventListener("click", () => {
+  renderSecondOpinionResults(getSelectedSecondOpinionModels());
+});
+secondOpinionRunAllEl.addEventListener("click", () => {
+  const modelIds = advisoryModels
+    .map(({ id }) => id)
+    .filter((id) => id !== primaryModelId);
+  secondOpinionModelsEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
+    input.checked = modelIds.includes(input.value);
+  });
+  renderSecondOpinionResults(modelIds);
+});
+saveOpenBrainEndpointEl.addEventListener("click", () => {
+  window.localStorage.setItem(OPEN_BRAIN_ENDPOINT_KEY, openBrainEndpointEl.value.trim());
+  renderOpenBrainMemory();
+});
+captureOpenBrainAdvisoryEl.addEventListener("click", () => {
+  const event = captureCurrentAdvisoryMemory("manual");
+  openBrainStatusEl.textContent = event ? "Advisory captured" : "No advisory to capture";
+});
+exportOpenBrainMemoryEl.addEventListener("click", downloadOpenBrainMemory);
 menuButtons.forEach((button) => {
   button.addEventListener("click", () => setActiveSection(button.dataset.sectionTarget));
 });
@@ -2977,9 +3367,14 @@ function initializeApp() {
   appStarted = true;
 
   loadPaperState();
+  loadModelSettings();
+  loadOpenBrainMemory();
   loadUserRoster();
   loadFeatureRequests();
   markCurrentSessionActive();
+  renderPrimaryModelSelector();
+  renderSecondOpinionControls();
+  renderOpenBrainMemory();
   renderUserManagement();
   renderFeatureRequests();
   setActiveSection(activeSection);
