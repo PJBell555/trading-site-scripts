@@ -869,6 +869,48 @@ select {
   font-size: 1.35rem;
 }
 
+.paper-edit-field {
+  gap: 6px;
+  margin: 0;
+}
+
+.paper-edit-field input {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid rgba(17, 32, 43, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.78);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+}
+
+.trade-decision {
+  margin-top: 12px;
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(17, 32, 43, 0.08);
+  border-radius: 8px;
+}
+
+.trade-decision strong,
+.trade-decision p {
+  display: block;
+}
+
+.trade-decision strong {
+  margin-top: 4px;
+  font-size: 1.15rem;
+}
+
+.trade-decision p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-weight: 700;
+  line-height: 1.4;
+}
+
 .karpathy-loop {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

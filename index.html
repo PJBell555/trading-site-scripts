@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=backend-url-fix-1">
+  <link rel="stylesheet" href="./styles.css?v=editable-paper-risk-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="Atlas password access">
@@ -423,11 +423,17 @@
           <h2>Paper trading system</h2>
           <div class="paper-grid">
             <div class="paper-card">
-              <span class="stat-label">Paper equity</span>
+              <label class="paper-edit-field">
+                <span class="stat-label">Paper equity</span>
+                <input id="paper-equity-input" type="number" min="0" step="100" value="100000">
+              </label>
               <strong id="paper-equity">$100,000</strong>
             </div>
             <div class="paper-card">
-              <span class="stat-label">Risk per trade</span>
+              <label class="paper-edit-field">
+                <span class="stat-label">Risk per trade</span>
+                <input id="paper-risk-input" type="number" min="0.1" max="25" step="0.1" value="0.75">
+              </label>
               <strong id="paper-risk">0.75%</strong>
             </div>
             <div class="paper-card">
@@ -458,6 +464,11 @@
               <span class="stat-label">Coinbase sandbox</span>
               <strong id="coinbase-sandbox-status">Off</strong>
             </div>
+          </div>
+          <div class="trade-decision" aria-label="Current paper trade decision">
+            <span class="stat-label">Trade decision</span>
+            <strong id="paper-decision-title">Waiting for signal</strong>
+            <p id="paper-decision-detail">The next paper trade will open when the advisory clears the learned threshold.</p>
           </div>
         </div>
         <div>
@@ -659,6 +670,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=backend-url-fix-1"></script>
+  <script src="./app.js?v=editable-paper-risk-1"></script>
 </body>
 </html>

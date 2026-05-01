@@ -72,6 +72,8 @@ const minLongEl = document.querySelector("#min-long");
 const minShortEl = document.querySelector("#min-short");
 const paperEquityEl = document.querySelector("#paper-equity");
 const paperRiskEl = document.querySelector("#paper-risk");
+const paperEquityInputEl = document.querySelector("#paper-equity-input");
+const paperRiskInputEl = document.querySelector("#paper-risk-input");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -79,6 +81,8 @@ const paperOpenPlEl = document.querySelector("#paper-open-pl");
 const paperMartingaleEl = document.querySelector("#paper-martingale");
 const paperKarpathyEl = document.querySelector("#paper-karpathy");
 const coinbaseSandboxStatusEl = document.querySelector("#coinbase-sandbox-status");
+const paperDecisionTitleEl = document.querySelector("#paper-decision-title");
+const paperDecisionDetailEl = document.querySelector("#paper-decision-detail");
 const paperStepsEl = document.querySelector("#paper-steps");
 const loopCollectEl = document.querySelector("#loop-collect");
 const loopEvaluateEl = document.querySelector("#loop-evaluate");
@@ -194,6 +198,7 @@ const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
 const PAPER_START_EQUITY = 100000;
+const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
@@ -235,6 +240,8 @@ const transactionHistory = [];
 const advisoryHistory = [];
 const pendingPaperActions = new Set();
 let paperEquity = PAPER_START_EQUITY;
+let paperBaseEquity = PAPER_START_EQUITY;
+let paperRiskPct = PAPER_DEFAULT_RISK_PCT;
 let martingaleStep = 1;
 let nextTransactionId = 1;
 let snapshotPricesPromise = null;
@@ -1460,8 +1467,13 @@ function getSignalSide(signal) {
   return null;
 }
 
+function getBaseRiskCapital() {
+  return Math.max(0, paperBaseEquity * (paperRiskPct / 100));
+}
+
 function getMartingaleCapital(minTradeValue) {
-  return minTradeValue * (2 ** (martingaleStep - 1));
+  const baseCapital = Math.max(minTradeValue, getBaseRiskCapital());
+  return baseCapital * (2 ** (martingaleStep - 1));
 }
 
 function getContractMultiplier(config) {
@@ -1598,7 +1610,7 @@ function buildTradePlan(commodity, signal) {
   const stopLoss = longBias ? livePrice * (1 - stopOffset) : shortBias ? livePrice * (1 + stopOffset) : livePrice * (1 - 0.0035);
   const entryPrice = shortBias ? shortEntry : longEntry;
   const targetPrice = sellPrice;
-  const riskPct = signal.conviction >= 70 ? "1.00%" : signal.conviction >= 55 ? "0.75%" : "0.50%";
+  const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
@@ -1874,7 +1886,9 @@ function sortTransactionHistory() {
 function resetLocalTradeState() {
   transactionHistory.length = 0;
   openPaperTrades.clear();
-  paperEquity = PAPER_START_EQUITY;
+  paperBaseEquity = PAPER_START_EQUITY;
+  paperEquity = paperBaseEquity;
+  paperRiskPct = PAPER_DEFAULT_RISK_PCT;
   martingaleStep = 1;
   nextTransactionId = 1;
   expandedTransactionId = null;
@@ -1980,9 +1994,14 @@ function rebuildPaperStateFromHistory() {
   });
 
   const closedEntries = transactionHistory.filter(isClosingTransaction);
-  paperEquity = PAPER_START_EQUITY + closedEntries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  paperEquity = paperBaseEquity + closedEntries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
 
   martingaleStep = latestClosed ? getNextMartingaleStepFromHistory() : 1;
+}
+
+function reconcilePaperStateFromHistory() {
+  rebuildPaperStateFromHistory();
+  savePaperState();
 }
 
 function getTradePnl(trade, exitPrice) {
@@ -1993,6 +2012,8 @@ function savePaperState() {
   try {
     const state = {
       paperEquity,
+      paperBaseEquity,
+      paperRiskPct,
       martingaleStep,
       nextTransactionId,
       openPaperTrades: Array.from(openPaperTrades.entries()),
@@ -2004,13 +2025,48 @@ function savePaperState() {
   }
 }
 
+function syncPaperInputs() {
+  paperEquityInputEl.value = String(Math.round(paperBaseEquity * 100) / 100);
+  paperRiskInputEl.value = String(Math.round(paperRiskPct * 100) / 100);
+}
+
+function updatePaperEquitySetting() {
+  const value = Number(paperEquityInputEl.value);
+  if (!Number.isFinite(value) || value < 0) {
+    paperEquityInputEl.value = String(paperBaseEquity);
+    return;
+  }
+
+  const closedPnl = getClosedPaperTrades().reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  paperBaseEquity = value;
+  paperEquity = paperBaseEquity + closedPnl;
+  savePaperState();
+  calculateSignal();
+}
+
+function updatePaperRiskSetting() {
+  const value = Number(paperRiskInputEl.value);
+  if (!Number.isFinite(value) || value <= 0) {
+    paperRiskInputEl.value = String(paperRiskPct);
+    return;
+  }
+
+  paperRiskPct = clamp(value, 0.1, 25);
+  paperRiskInputEl.value = String(Math.round(paperRiskPct * 100) / 100);
+  savePaperState();
+  calculateSignal();
+}
+
 function loadPaperState() {
   try {
     const stored = window.localStorage.getItem(PAPER_STATE_KEY);
     if (!stored) return;
 
     const state = JSON.parse(stored);
+    if (Number.isFinite(state.paperBaseEquity)) paperBaseEquity = Math.max(0, Number(state.paperBaseEquity));
+    else if (Number.isFinite(state.paperEquity)) paperBaseEquity = Math.max(0, Number(state.paperEquity));
     if (Number.isFinite(state.paperEquity)) paperEquity = state.paperEquity;
+    if (Number.isFinite(state.paperRiskPct)) paperRiskPct = clamp(Number(state.paperRiskPct), 0.1, 25);
     if (Number.isInteger(state.martingaleStep)) {
       martingaleStep = Math.max(1, Math.min(MARTINGALE_MAX_STEP, state.martingaleStep));
     }
@@ -2694,6 +2750,7 @@ async function saveSharedTransactionHistory() {
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     replaceTransactionHistory(entries);
+    reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
     return true;
   } catch (error) {
@@ -2722,6 +2779,7 @@ async function cleanSharedTransactionHistory() {
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     const removed = Number(data?.removed || 0);
     replaceTransactionHistory(entries);
+    reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend cleaned ${removed} duplicate row${removed === 1 ? "" : "s"}`;
     calculateSignal();
     return true;
@@ -2745,6 +2803,7 @@ async function loadSharedTransactionHistory(manual = false) {
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     replaceTransactionHistory(entries);
+    reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     calculateSignal();
     return true;
@@ -2945,6 +3004,7 @@ async function closePaperTrade(commodity, exitPrice, reason) {
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
   if (!latestPrices.has(commodity)) return;
   if (!hasHistoryBackend()) return;
+  reconcilePaperStateFromHistory();
 
   const openTrade = getOpenPaperTrade(commodity);
   if (openTrade) {
@@ -2970,6 +3030,59 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
   if (getSignalSide(signal) && signal.conviction >= tradePlan.learnedThreshold) {
     openPaperTrade(commodity, commodityMeta, signal, tradePlan);
   }
+}
+
+function getPaperDecision(signal, tradePlan, openTrade) {
+  const signalSide = getSignalSide(signal);
+  const priceText = formatPrice(tradePlan.livePrice);
+  const thresholdText = `${signal.conviction}/${tradePlan.learnedThreshold}`;
+
+  if (!hasHistoryBackend()) {
+    return {
+      title: "Backend not connected",
+      detail: "The paper trader will not open or sync trades until the Backend API is connected."
+    };
+  }
+
+  if (!latestPrices.has(commoditySelect.value)) {
+    return {
+      title: "Waiting for live price",
+      detail: "The paper trader needs a live or backend price before it can evaluate entries."
+    };
+  }
+
+  if (openTrade) {
+    return {
+      title: `${formatSide(openTrade.side)} trade open`,
+      detail: `Watching ${priceText} against target ${formatPrice(openTrade.targetPrice)} and stop ${formatPrice(openTrade.stopPrice)}.`
+    };
+  }
+
+  if (!signalSide) {
+    return {
+      title: "No trade: advisory is Wait",
+      detail: `Oil can move without a trade opening. The bot only trades long/short advisories, and the current advisory is ${signal.label} at ${signal.conviction} conviction.`
+    };
+  }
+
+  if (signal.conviction < tradePlan.learnedThreshold) {
+    return {
+      title: `No trade: conviction ${thresholdText}`,
+      detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches ${tradePlan.learnedThreshold}. Current price is ${priceText}.`
+    };
+  }
+
+  if (isPaperActionPending(commoditySelect.value)) {
+    return {
+      title: "Trade order pending",
+      detail: "A sandbox/open or close request is already in flight, so the bot is avoiding duplicate trades."
+    };
+  }
+
+  return {
+    title: `Ready to open ${signalSide}`,
+    detail: `Conviction ${thresholdText} clears the learned threshold. Step ${martingaleStep} would commit about ${formatMoney(tradePlan.nextCapital)} at ${priceText}.`
+  };
 }
 
 function renderKarpathyLoop(signal, tradePlan) {
@@ -3037,6 +3150,21 @@ function isClosingTransaction(entry) {
 
 function isOpeningTransaction(entry) {
   return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
+}
+
+function getLatestUnclosedOpeningTrade(commodity) {
+  const chronological = [...transactionHistory].sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+  const active = new Map();
+
+  chronological.forEach((entry) => {
+    const key = getTradeLifecycleKey(entry);
+    if (isOpeningTransaction(entry)) active.set(key, entry);
+    if (isClosingTransaction(entry)) active.delete(key);
+  });
+
+  return Array.from(active.values())
+    .reverse()
+    .find((entry) => entry.commodity === commodity) || null;
 }
 
 function getClosedFromPrice(entry) {
@@ -3257,7 +3385,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const displayEquity = paperEquity + openPl;
   const signalSide = getSignalSide(signal);
   const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
+  const decision = getPaperDecision(signal, tradePlan, openTrade);
+  const staleStopTrade = !openTrade && getLatestUnclosedOpeningTrade(commodity);
 
+  syncPaperInputs();
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
@@ -3265,6 +3396,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperOpenPlEl.textContent = formatSignedMoney(openPl);
   paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
   paperMartingaleEl.textContent = `Step ${martingaleStep} / ${MARTINGALE_MAX_STEP} (${formatMoney(nextCapital)})`;
+  paperDecisionTitleEl.textContent = decision.title;
+  paperDecisionDetailEl.textContent = decision.detail;
 
   if (!hasHistoryBackend()) {
     paperStatusEl.textContent = "Connect backend API";
@@ -3280,6 +3413,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 
   if (openTrade) {
     paperTradeSummaryEl.textContent = `Open ${openTrade.side} ${openTrade.contract}: step ${openTrade.martingaleStep}, ${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}, entry ${formatPrice(openTrade.entryPrice)}, target ${formatPrice(openTrade.targetPrice)}, stop ${formatPrice(openTrade.stopPrice)}, est. fees ${formatMoney(openTrade.totalEstimatedFees || 0)}.`;
+  } else if (staleStopTrade) {
+    paperTradeSummaryEl.textContent = `Ledger has an unclosed ${staleStopTrade.side} trade from ${formatTradeTime(staleStopTrade.time)} with stop ${formatPrice(Number(staleStopTrade.stopPrice))}; reconciling before the next trade.`;
   } else {
     paperTradeSummaryEl.textContent = `No open paper trade for the selected contract. Next trade uses Martingale step ${martingaleStep}.`;
   }
@@ -3556,6 +3691,8 @@ syncHistoryEl.addEventListener("click", () => {
 });
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
+paperEquityInputEl.addEventListener("change", updatePaperEquitySetting);
+paperRiskInputEl.addEventListener("change", updatePaperRiskSetting);
 coinbaseSandboxEnabledEl.addEventListener("change", () => {
   setCoinbaseSandboxEnabled(coinbaseSandboxEnabledEl.checked);
   saveSharedSettings();
