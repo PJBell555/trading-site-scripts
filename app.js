@@ -1382,15 +1382,15 @@ function renderAdvisoryChart() {
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = Math.max(maxPrice - minPrice, Math.max(maxPrice * 0.01, 1));
-  const advisoryOffset = priceRange * 0.18;
+  const advisoryOffset = priceRange * 0.42;
   const advisoryValues = samples.map((entry) => {
-    if (entry.tone === "long") return entry.price + advisoryOffset * (entry.conviction / 100);
-    if (entry.tone === "short") return entry.price - advisoryOffset * (entry.conviction / 100);
+    if (entry.tone === "long") return entry.price + advisoryOffset;
+    if (entry.tone === "short") return entry.price - advisoryOffset;
     return entry.price;
   });
   const allValues = prices.concat(advisoryValues);
-  const minY = Math.min(...allValues) - priceRange * 0.12;
-  const maxY = Math.max(...allValues) + priceRange * 0.12;
+  const minY = Math.min(...allValues) - priceRange * 0.18;
+  const maxY = Math.max(...allValues) + priceRange * 0.18;
   const yRange = Math.max(maxY - minY, 1);
   const xFor = (time) => padding.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
   const yFor = (value) => padding.top + (1 - ((value - minY) / yRange)) * plotHeight;
@@ -1430,7 +1430,7 @@ function renderAdvisoryChart() {
   }
 
   drawLine(prices, "#11202b");
-  drawLine(advisoryValues, "#006d5b", [8, 6]);
+  drawLine(advisoryValues, "#006d5b", [10, 7]);
 
   context.textAlign = "left";
   context.fillStyle = "#11202b";
@@ -1446,11 +1446,36 @@ function renderAdvisoryChart() {
 
   samples.forEach((entry, index) => {
     if (index % Math.max(1, Math.floor(samples.length / 80)) !== 0) return;
+    const x = xFor(times[index]);
+    const priceY = yFor(prices[index]);
+    const advisoryY = yFor(advisoryValues[index]);
+    const color = entry.tone === "short" ? "#8d2d2d" : entry.tone === "long" ? "#006d5b" : "#735f2d";
+
+    if (entry.tone !== "wait") {
+      context.beginPath();
+      context.strokeStyle = color;
+      context.lineWidth = 1.5 * scale;
+      context.setLineDash([3 * scale, 5 * scale]);
+      context.moveTo(x, priceY);
+      context.lineTo(x, advisoryY);
+      context.stroke();
+      context.setLineDash([]);
+    }
+
     context.beginPath();
-    context.fillStyle = entry.tone === "short" ? "#8d2d2d" : entry.tone === "long" ? "#006d5b" : "#735f2d";
-    context.arc(xFor(times[index]), yFor(advisoryValues[index]), 3.5 * scale, 0, Math.PI * 2);
+    context.fillStyle = color;
+    context.arc(x, advisoryY, 5 * scale, 0, Math.PI * 2);
     context.fill();
   });
+
+  const latest = samples[samples.length - 1];
+  const latestX = xFor(times[samples.length - 1]);
+  const latestY = yFor(advisoryValues[samples.length - 1]);
+  const latestText = latest.tone === "short" ? "Short advisory" : latest.tone === "long" ? "Long advisory" : "Wait advisory";
+  context.textAlign = latestX > width * 0.72 ? "right" : "left";
+  context.fillStyle = latest.tone === "short" ? "#8d2d2d" : latest.tone === "long" ? "#006d5b" : "#735f2d";
+  context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
+  context.fillText(latestText, latestX + (latestX > width * 0.72 ? -10 : 10) * scale, latestY - 10 * scale);
 }
 
 async function saveSharedTransactionHistory() {
