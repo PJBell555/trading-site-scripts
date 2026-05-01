@@ -1375,6 +1375,10 @@ function renderAdvisoryChart() {
   const padding = { top: 42 * scale, right: 42 * scale, bottom: 58 * scale, left: 72 * scale };
   const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
+  const priceHeight = plotHeight * 0.66;
+  const laneGap = 24 * scale;
+  const laneTop = padding.top + priceHeight + laneGap;
+  const laneHeight = plotHeight - priceHeight - laneGap;
   const times = samples.map((entry) => new Date(entry.time).getTime());
   const prices = samples.map((entry) => entry.price);
   const minTime = Math.min(...times);
@@ -1382,18 +1386,17 @@ function renderAdvisoryChart() {
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const priceRange = Math.max(maxPrice - minPrice, Math.max(maxPrice * 0.01, 1));
-  const advisoryOffset = priceRange * 0.42;
-  const advisoryValues = samples.map((entry) => {
-    if (entry.tone === "long") return entry.price + advisoryOffset;
-    if (entry.tone === "short") return entry.price - advisoryOffset;
-    return entry.price;
-  });
-  const allValues = prices.concat(advisoryValues);
-  const minY = Math.min(...allValues) - priceRange * 0.18;
-  const maxY = Math.max(...allValues) + priceRange * 0.18;
+  const minY = minPrice - priceRange * 0.14;
+  const maxY = maxPrice + priceRange * 0.14;
   const yRange = Math.max(maxY - minY, 1);
   const xFor = (time) => padding.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
-  const yFor = (value) => padding.top + (1 - ((value - minY) / yRange)) * plotHeight;
+  const yForPrice = (value) => padding.top + (1 - ((value - minY) / yRange)) * priceHeight;
+  const signalYFor = (tone) => {
+    if (tone === "long") return laneTop + laneHeight * 0.15;
+    if (tone === "short") return laneTop + laneHeight * 0.85;
+    return laneTop + laneHeight * 0.5;
+  };
+  const signalValues = samples.map((entry) => signalYFor(entry.tone));
 
   context.clearRect(0, 0, width, height);
   context.fillStyle = "rgba(255, 255, 255, 0.72)";
@@ -1405,7 +1408,7 @@ function renderAdvisoryChart() {
   context.textAlign = "right";
 
   for (let index = 0; index <= 4; index += 1) {
-    const y = padding.top + (plotHeight / 4) * index;
+    const y = padding.top + (priceHeight / 4) * index;
     const value = maxY - (yRange / 4) * index;
     context.beginPath();
     context.moveTo(padding.left, y);
@@ -1414,14 +1417,14 @@ function renderAdvisoryChart() {
     context.fillText(formatPrice(value), padding.left - 10 * scale, y + 4 * scale);
   }
 
-  function drawLine(values, color, dash = []) {
+  function drawLine(values, color, dash = [], yFor = yForPrice) {
     context.beginPath();
     context.strokeStyle = color;
     context.lineWidth = 3 * scale;
     context.setLineDash(dash.map((value) => value * scale));
     values.forEach((value, index) => {
       const x = xFor(times[index]);
-      const y = yFor(value);
+      const y = yFor(value, index);
       if (index === 0) context.moveTo(x, y);
       else context.lineTo(x, y);
     });
@@ -1430,7 +1433,33 @@ function renderAdvisoryChart() {
   }
 
   drawLine(prices, "#11202b");
-  drawLine(advisoryValues, "#006d5b", [10, 7]);
+  drawLine(signalValues, "#006d5b", [10, 7], (value) => value);
+
+  context.strokeStyle = "rgba(17, 32, 43, 0.16)";
+  context.lineWidth = 1.5 * scale;
+  context.beginPath();
+  context.moveTo(padding.left, laneTop - laneGap * 0.5);
+  context.lineTo(width - padding.right, laneTop - laneGap * 0.5);
+  context.stroke();
+
+  const signalRows = [
+    ["Long", "long", "#006d5b"],
+    ["Wait", "wait", "#735f2d"],
+    ["Short", "short", "#8d2d2d"]
+  ];
+  context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
+  signalRows.forEach(([label, tone, color]) => {
+    const y = signalYFor(tone);
+    context.strokeStyle = "rgba(17, 32, 43, 0.08)";
+    context.lineWidth = 1 * scale;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+    context.fillStyle = color;
+    context.textAlign = "right";
+    context.fillText(label, padding.left - 10 * scale, y + 4 * scale);
+  });
 
   context.textAlign = "left";
   context.fillStyle = "#11202b";
@@ -1447,30 +1476,18 @@ function renderAdvisoryChart() {
   samples.forEach((entry, index) => {
     if (index % Math.max(1, Math.floor(samples.length / 80)) !== 0) return;
     const x = xFor(times[index]);
-    const priceY = yFor(prices[index]);
-    const advisoryY = yFor(advisoryValues[index]);
+    const signalY = signalValues[index];
     const color = entry.tone === "short" ? "#8d2d2d" : entry.tone === "long" ? "#006d5b" : "#735f2d";
-
-    if (entry.tone !== "wait") {
-      context.beginPath();
-      context.strokeStyle = color;
-      context.lineWidth = 1.5 * scale;
-      context.setLineDash([3 * scale, 5 * scale]);
-      context.moveTo(x, priceY);
-      context.lineTo(x, advisoryY);
-      context.stroke();
-      context.setLineDash([]);
-    }
 
     context.beginPath();
     context.fillStyle = color;
-    context.arc(x, advisoryY, 5 * scale, 0, Math.PI * 2);
+    context.arc(x, signalY, 5 * scale, 0, Math.PI * 2);
     context.fill();
   });
 
   const latest = samples[samples.length - 1];
   const latestX = xFor(times[samples.length - 1]);
-  const latestY = yFor(advisoryValues[samples.length - 1]);
+  const latestY = signalValues[samples.length - 1];
   const latestText = latest.tone === "short" ? "Short advisory" : latest.tone === "long" ? "Long advisory" : "Wait advisory";
   context.textAlign = latestX > width * 0.72 ? "right" : "left";
   context.fillStyle = latest.tone === "short" ? "#8d2d2d" : latest.tone === "long" ? "#006d5b" : "#735f2d";
