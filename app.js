@@ -198,6 +198,7 @@ const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
+const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
@@ -2064,8 +2065,34 @@ function downloadSharedHistory() {
   sharedHistoryStatusEl.textContent = `${transactionHistory.length} rows exported for GitHub`;
 }
 
+function normalizeHistoryApiUrl(value) {
+  const normalized = String(value || "").trim().replace(/\/$/, "");
+  if (!normalized) return "";
+
+  try {
+    const url = new URL(normalized);
+    const hostname = url.hostname.toLowerCase();
+    const pathname = url.pathname.toLowerCase();
+
+    if (
+      hostname.endsWith("github.io")
+      || pathname.endsWith("/transactions.json")
+      || pathname.endsWith("/index.html")
+    ) {
+      return DEFAULT_HISTORY_API_URL;
+    }
+  } catch (error) {
+    return "";
+  }
+
+  return normalized;
+}
+
 function getHistoryApiUrl() {
-  return window.localStorage.getItem(HISTORY_API_KEY) || "";
+  const stored = window.localStorage.getItem(HISTORY_API_KEY) || DEFAULT_HISTORY_API_URL;
+  const normalized = normalizeHistoryApiUrl(stored);
+  if (normalized !== stored) window.localStorage.setItem(HISTORY_API_KEY, normalized);
+  return normalized;
 }
 
 function hasHistoryBackend() {
@@ -2073,7 +2100,7 @@ function hasHistoryBackend() {
 }
 
 function setHistoryApiUrl(value) {
-  const normalized = value.trim().replace(/\/$/, "");
+  const normalized = normalizeHistoryApiUrl(value);
   if (normalized) {
     window.localStorage.setItem(HISTORY_API_KEY, normalized);
   } else {
