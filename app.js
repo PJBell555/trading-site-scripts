@@ -9,6 +9,7 @@ const commodities = [
 
 const accessGateEl = document.querySelector("#access-gate");
 const accessFormEl = document.querySelector("#access-form");
+const accessEmailEl = document.querySelector("#access-email");
 const accessPasswordEl = document.querySelector("#access-password");
 const accessErrorEl = document.querySelector("#access-error");
 const appShellEl = document.querySelector("#app-shell");
@@ -190,6 +191,8 @@ const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
+const ACCESS_EMAIL_KEY = "atlas-access-email";
+const ACCESS_SESSION_RECORDED_KEY = "atlas-access-session-recorded";
 const ACCESS_PASSWORD_HASH = "55bdd6bb9b1839c8f8e7c3459e61f5537d0691c6b4c8fa827d594708f4d63db2";
 const USER_ROSTER_KEY = "atlas-user-roster-v1";
 const FEATURE_REQUESTS_KEY = "atlas-feature-requests-v1";
@@ -198,7 +201,7 @@ const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
 const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
 const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
 const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
-const ADVISORY_CAPTURE_MS = 60000;
+const ADVISORY_CAPTURE_MS = 120000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
   hour: 60 * 60 * 1000,
@@ -626,6 +629,19 @@ function saveUserRoster() {
   window.localStorage.setItem(USER_ROSTER_KEY, JSON.stringify(userRoster));
 }
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function findRegisteredUserByEmail(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return null;
+  return userRoster.find((user) => (
+    normalizeEmail(user.email) === normalizedEmail
+    && user.enabled !== false
+  )) || null;
+}
+
 function loadUserRoster() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(USER_ROSTER_KEY) || "null");
@@ -767,16 +783,23 @@ function renderUserManagement() {
 }
 
 function markCurrentSessionActive() {
-  const user = userRoster.find((entry) => entry.id === "user-pete") || userRoster[0];
+  if (window.sessionStorage.getItem(ACCESS_SESSION_RECORDED_KEY) === "true") return;
+  const user = findRegisteredUserByEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
   if (!user) return;
 
   user.lastActiveAt = new Date().toISOString();
   user.sessions = Math.max(1, Number(user.sessions || 0) + 1);
   saveUserRoster();
+  recordOpenBrainEvent("login", `${user.name || user.email} logged in`, {
+    userId: user.id,
+    email: user.email,
+    tags: ["login", normalizeEmail(user.email)]
+  });
+  window.sessionStorage.setItem(ACCESS_SESSION_RECORDED_KEY, "true");
 }
 
 function addUser(name, email) {
-  const normalizedEmail = email.trim().toLowerCase();
+  const normalizedEmail = normalizeEmail(email);
   const exists = userRoster.some((user) => String(user.email || "").toLowerCase() === normalizedEmail);
 
   if (!name.trim() || !normalizedEmail || exists) {
@@ -1059,7 +1082,18 @@ function addFeatureRequest() {
 
 async function handleAccessSubmit(event) {
   event.preventDefault();
+  loadUserRoster();
+  const email = normalizeEmail(accessEmailEl.value);
   const password = accessPasswordEl.value.trim();
+  const registeredUser = findRegisteredUserByEmail(email);
+
+  if (!registeredUser) {
+    accessErrorEl.textContent = "Email is not registered for Atlas access.";
+    accessPasswordEl.value = "";
+    accessEmailEl.focus();
+    return;
+  }
+
   const hash = await hashAccessPassword(password);
 
   if (hash !== ACCESS_PASSWORD_HASH) {
@@ -1070,6 +1104,8 @@ async function handleAccessSubmit(event) {
   }
 
   window.sessionStorage.setItem(ACCESS_STATE_KEY, "true");
+  window.sessionStorage.setItem(ACCESS_EMAIL_KEY, email);
+  window.sessionStorage.removeItem(ACCESS_SESSION_RECORDED_KEY);
   showAppShell();
   initializeApp();
 }
@@ -3362,6 +3398,17 @@ featureFormEl.addEventListener("submit", (event) => {
 
 accessFormEl.addEventListener("submit", handleAccessSubmit);
 
+function hasValidAccessSession() {
+  if (window.sessionStorage.getItem(ACCESS_STATE_KEY) !== "true") return false;
+  loadUserRoster();
+  const user = findRegisteredUserByEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
+  if (user) return true;
+
+  window.sessionStorage.removeItem(ACCESS_STATE_KEY);
+  window.sessionStorage.removeItem(ACCESS_EMAIL_KEY);
+  return false;
+}
+
 function initializeApp() {
   if (appStarted) return;
   appStarted = true;
@@ -3392,9 +3439,9 @@ function initializeApp() {
   window.addEventListener("resize", renderAdvisoryChart);
 }
 
-if (window.sessionStorage.getItem(ACCESS_STATE_KEY) === "true") {
+if (hasValidAccessSession()) {
   showAppShell();
   initializeApp();
 } else {
-  accessPasswordEl.focus();
+  accessEmailEl.focus();
 }

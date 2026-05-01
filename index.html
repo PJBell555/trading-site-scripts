@@ -4,17 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=open-brain-1">
+  <link rel="stylesheet" href="./styles.css?v=auth-interval-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="Atlas password access">
     <form class="access-card" id="access-form">
       <p class="eyebrow">Private preview</p>
       <h1>Atlas Access</h1>
-      <p class="lede">Enter the shared password to open the commodities advisor.</p>
+      <p class="lede">Enter your registered email and shared password to open the commodities advisor.</p>
+      <label>
+        Email address
+        <input id="access-email" type="email" autocomplete="email" placeholder="peter@example.com" required>
+      </label>
       <label>
         Password
-        <input id="access-password" type="password" autocomplete="current-password" placeholder="Enter password">
+        <input id="access-password" type="password" autocomplete="current-password" placeholder="Enter password" required>
       </label>
       <button class="access-button" type="submit">Unlock Atlas</button>
       <p class="access-error" id="access-error" role="alert"></p>
@@ -615,6 +619,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=open-brain-1"></script>
+  <script src="./app.js?v=auth-interval-1"></script>
 </body>
 </html>
