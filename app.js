@@ -1123,6 +1123,13 @@ function getCoinbaseOrderId(orderResult) {
     || "-";
 }
 
+function getCoinbaseReturnedProduct(orderResult) {
+  return orderResult?.response?.success_response?.product_id
+    || orderResult?.response?.product_id
+    || orderResult?.request?.product_id
+    || "-";
+}
+
 async function submitCoinbaseSandboxOrder(trade, side, intent) {
   if (!isCoinbaseSandboxEnabled()) return null;
   if (!hasHistoryBackend()) throw new Error("Backend required for Coinbase sandbox");
@@ -1152,6 +1159,8 @@ async function submitCoinbaseSandboxOrder(trade, side, intent) {
     intent,
     orderId: getCoinbaseOrderId(data),
     productId: trade.contract,
+    submittedProductId: trade.contract,
+    returnedProductId: getCoinbaseReturnedProduct(data),
     side,
     sentAt: new Date().toISOString(),
     request: data.request,
@@ -1926,8 +1935,30 @@ function getDisplayPnl(entry) {
   return Number(entry.pnl) || 0;
 }
 
+function getSandboxSubmittedProduct(entry) {
+  return entry.coinbaseSandbox?.submittedProductId
+    || entry.coinbaseSandbox?.productId
+    || entry.coinbaseSandbox?.request?.product_id
+    || entry.contract
+    || "-";
+}
+
+function getSandboxReturnedProduct(entry) {
+  return entry.coinbaseSandbox?.returnedProductId
+    || entry.coinbaseSandbox?.response?.success_response?.product_id
+    || entry.coinbaseSandbox?.response?.product_id
+    || "-";
+}
+
+function getSandboxClientOrderId(entry) {
+  return entry.coinbaseSandbox?.request?.client_order_id
+    || entry.coinbaseSandbox?.response?.success_response?.client_order_id
+    || "-";
+}
+
 function renderTransactionDetail(entry) {
   const detail = getEntryDetail(entry);
+  const hasSandboxOrder = Boolean(entry.coinbaseSandbox?.sandbox);
   const labels = [
     ["Actual entry", Number.isFinite(detail.entryPrice) ? formatPrice(detail.entryPrice) : "-"],
     ["Target entry", Number.isFinite(detail.targetEntryPrice) ? formatPrice(detail.targetEntryPrice) : "-"],
@@ -1947,8 +1978,13 @@ function renderTransactionDetail(entry) {
     ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
     ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],
     ["Time open", Number.isFinite(detail.durationMs) ? formatDuration(detail.durationMs) : entry.pnl === 0 ? "Still open" : "-"],
-    ["Sandbox order", entry.coinbaseSandbox?.sandbox ? entry.coinbaseSandbox.orderId || "Sent" : "-"],
-    ["Sandbox side", entry.coinbaseSandbox?.sandbox ? `${entry.coinbaseSandbox.intent} ${entry.coinbaseSandbox.side}` : "-"],
+    ["Sandbox order id", hasSandboxOrder ? entry.coinbaseSandbox.orderId || "Sent" : "-"],
+    ["Sandbox action", hasSandboxOrder ? `${entry.coinbaseSandbox.intent} ${entry.coinbaseSandbox.side}` : "-"],
+    ["Submitted product", hasSandboxOrder ? getSandboxSubmittedProduct(entry) : "-"],
+    ["Sandbox returned product", hasSandboxOrder ? getSandboxReturnedProduct(entry) : "-"],
+    ["Client order id", hasSandboxOrder ? getSandboxClientOrderId(entry) : "-"],
+    ["Mock response", hasSandboxOrder ? "Yes - Coinbase sandbox returns static test data" : "-"],
+    ["Visible in Coinbase UI", hasSandboxOrder ? "No - stored in this app ledger only" : "-"],
     ["Commodity", entry.commodityName || entry.commodity || "-"],
     ["Note", entry.note || "-"]
   ];
