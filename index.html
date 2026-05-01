@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=auth-interval-1">
+  <link rel="stylesheet" href="./styles.css?v=accuracy-dashboard-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="Atlas password access">
@@ -607,18 +607,58 @@
             </div>
           </div>
         </div>
+        <div class="accuracy-dashboard" aria-label="Advisory accuracy summary">
+          <div class="accuracy-card" id="accuracy-verdict-card">
+            <span class="stat-label">60% test</span>
+            <strong id="accuracy-verdict">Needs data</strong>
+            <p id="accuracy-verdict-copy">Waiting for enough evaluated advisories.</p>
+          </div>
+          <div class="accuracy-card">
+            <span class="stat-label">High conviction accuracy</span>
+            <strong id="accuracy-high-conviction">-</strong>
+            <p id="accuracy-high-conviction-count">0 calls above 60</p>
+          </div>
+          <div class="accuracy-card">
+            <span class="stat-label">All evaluated calls</span>
+            <strong id="accuracy-all-calls">-</strong>
+            <p id="accuracy-all-count">0 evaluated</p>
+          </div>
+          <div class="accuracy-card">
+            <span class="stat-label">Average follow-through</span>
+            <strong id="accuracy-average-move">-</strong>
+            <p id="accuracy-evaluation-window">Evaluating next samples</p>
+          </div>
+        </div>
+        <div class="accuracy-breakdown" aria-label="Recent advisory outcomes">
+          <div class="accuracy-bars" id="accuracy-bars"></div>
+          <div class="history-wrap accuracy-table-wrap">
+            <table class="history-table accuracy-table">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Signal</th>
+                  <th>Conviction</th>
+                  <th>Then</th>
+                  <th>After</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody id="accuracy-outcomes"></tbody>
+            </table>
+          </div>
+        </div>
         <div class="chart-shell">
           <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
         </div>
         <div class="chart-legend" aria-label="Chart legend">
           <span><i class="price-line"></i>Actual price</span>
           <span><i class="advisory-line"></i>Advisory lane</span>
-          <span>Signal lane shows long, wait, and short separately below the price chart.</span>
+          <span>Use the scorecard for the 60% question; use the chart to inspect timing.</span>
         </div>
       </section>
     </main>
   </div>
 
-  <script src="./app.js?v=auth-interval-1"></script>
+  <script src="./app.js?v=accuracy-dashboard-1"></script>
 </body>
 </html>

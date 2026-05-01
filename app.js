@@ -103,6 +103,17 @@ const advisoryHorizonFiltersEl = document.querySelector("#advisory-horizon-filte
 const advisoryPeriodFiltersEl = document.querySelector("#advisory-period-filters");
 const syncAdvisoryHistoryEl = document.querySelector("#sync-advisory-history");
 const advisorySampleCountEl = document.querySelector("#advisory-sample-count");
+const accuracyVerdictCardEl = document.querySelector("#accuracy-verdict-card");
+const accuracyVerdictEl = document.querySelector("#accuracy-verdict");
+const accuracyVerdictCopyEl = document.querySelector("#accuracy-verdict-copy");
+const accuracyHighConvictionEl = document.querySelector("#accuracy-high-conviction");
+const accuracyHighConvictionCountEl = document.querySelector("#accuracy-high-conviction-count");
+const accuracyAllCallsEl = document.querySelector("#accuracy-all-calls");
+const accuracyAllCountEl = document.querySelector("#accuracy-all-count");
+const accuracyAverageMoveEl = document.querySelector("#accuracy-average-move");
+const accuracyEvaluationWindowEl = document.querySelector("#accuracy-evaluation-window");
+const accuracyBarsEl = document.querySelector("#accuracy-bars");
+const accuracyOutcomesEl = document.querySelector("#accuracy-outcomes");
 const advisoryChartEl = document.querySelector("#advisory-chart");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
@@ -210,6 +221,12 @@ const ADVISORY_PERIODS = {
   month: 31 * 24 * 60 * 60 * 1000,
   year: 366 * 24 * 60 * 60 * 1000
 };
+const ADVISORY_EVALUATION_WINDOWS = {
+  intraday: 10 * 60 * 1000,
+  swing: 60 * 60 * 1000,
+  position: 4 * 60 * 60 * 1000
+};
+const HIGH_CONVICTION_THRESHOLD = 60;
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -642,18 +659,46 @@ function findRegisteredUserByEmail(email) {
   )) || null;
 }
 
+function normalizeUserRecord(user, fallback = {}) {
+  const email = normalizeEmail(user?.email || fallback.email);
+  if (!email) return null;
+
+  return {
+    id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
+    name: String(user?.name || fallback.name || email.split("@")[0] || "Unnamed user").trim(),
+    email,
+    createdAt: getTransactionDate(user?.createdAt || fallback.createdAt || new Date()).toISOString(),
+    lastActiveAt: user?.lastActiveAt || fallback.lastActiveAt || null,
+    sessions: Math.max(0, Number(user?.sessions ?? fallback.sessions ?? 0) || 0),
+    enabled: user?.enabled === false ? false : fallback.enabled !== false
+  };
+}
+
 function loadUserRoster() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(USER_ROSTER_KEY) || "null");
-    const defaultUsers = getDefaultUsers();
-    const users = Array.isArray(stored) && stored.length ? stored : defaultUsers;
-    const knownEmails = new Set(users.map((user) => String(user.email || "").toLowerCase()));
-    defaultUsers.forEach((user) => {
-      if (!knownEmails.has(String(user.email || "").toLowerCase())) users.push(user);
+    const usersByEmail = new Map();
+
+    [...(Array.isArray(stored) ? stored : []), ...getDefaultUsers()].forEach((user) => {
+      const normalized = normalizeUserRecord(user);
+      if (!normalized) return;
+      if (!usersByEmail.has(normalized.email)) {
+        usersByEmail.set(normalized.email, normalized);
+        return;
+      }
+
+      usersByEmail.set(normalized.email, {
+        ...normalized,
+        ...usersByEmail.get(normalized.email),
+        enabled: usersByEmail.get(normalized.email).enabled !== false
+      });
     });
-    userRoster.splice(0, userRoster.length, ...users);
+
+    userRoster.splice(0, userRoster.length, ...Array.from(usersByEmail.values()));
+    saveUserRoster();
   } catch (error) {
-    userRoster.splice(0, userRoster.length, ...getDefaultUsers());
+    userRoster.splice(0, userRoster.length, ...getDefaultUsers().map((user) => normalizeUserRecord(user)).filter(Boolean));
+    saveUserRoster();
   }
 }
 
@@ -701,6 +746,8 @@ function getFilteredUsers() {
 }
 
 function renderUserManagement() {
+  if (!userRoster.length) loadUserRoster();
+
   const todayStart = new Date();
   todayStart.setHours(0, 0, 0, 0);
   const weekStart = new Date();
@@ -2292,6 +2339,164 @@ function getFilteredAdvisorySamples() {
   ));
 }
 
+function formatPercent(value) {
+  if (!Number.isFinite(value)) return "-";
+  return `${Math.round(value)}%`;
+}
+
+function getAdvisoryEvaluationWindow() {
+  return ADVISORY_EVALUATION_WINDOWS[advisoryHorizonFilter] || ADVISORY_EVALUATION_WINDOWS.intraday;
+}
+
+function getCorrectnessThreshold(price) {
+  return Math.max(0.05, Math.abs(Number(price) || 0) * 0.0005);
+}
+
+function evaluateAdvisorySamples(samples) {
+  const sorted = [...samples].sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+  const evaluationWindow = getAdvisoryEvaluationWindow();
+
+  return sorted.map((entry, index) => {
+    const entryTime = new Date(entry.time || 0).getTime();
+    const future = sorted.find((candidate, candidateIndex) => (
+      candidateIndex > index
+      && new Date(candidate.time || 0).getTime() - entryTime >= evaluationWindow
+    )) || sorted[index + 1];
+
+    if (!future) return null;
+
+    const startPrice = Number(entry.price);
+    const endPrice = Number(future.price);
+    if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
+
+    const move = endPrice - startPrice;
+    const threshold = getCorrectnessThreshold(startPrice);
+    let correct = false;
+
+    if (entry.tone === "long") correct = move > threshold;
+    else if (entry.tone === "short") correct = move < -threshold;
+    else correct = Math.abs(move) <= threshold;
+
+    return {
+      entry,
+      future,
+      startPrice,
+      endPrice,
+      move,
+      correct,
+      highConviction: Number(entry.conviction) >= HIGH_CONVICTION_THRESHOLD
+    };
+  }).filter(Boolean);
+}
+
+function summarizeEvaluations(evaluations, predicate = () => true) {
+  const selected = evaluations.filter(predicate);
+  const correct = selected.filter((item) => item.correct).length;
+  const averageMove = selected.length
+    ? selected.reduce((total, item) => total + item.move, 0) / selected.length
+    : 0;
+
+  return {
+    count: selected.length,
+    correct,
+    accuracy: selected.length ? (correct / selected.length) * 100 : NaN,
+    averageMove
+  };
+}
+
+function renderAccuracyBars(evaluations) {
+  const tones = [
+    { id: "long", label: "Long" },
+    { id: "wait", label: "Wait" },
+    { id: "short", label: "Short" }
+  ];
+
+  accuracyBarsEl.innerHTML = "";
+  tones.forEach(({ id, label }) => {
+    const summary = summarizeEvaluations(evaluations, (item) => item.entry.tone === id);
+    const row = document.createElement("div");
+    const text = document.createElement("span");
+    const track = document.createElement("div");
+    const fill = document.createElement("i");
+    const value = document.createElement("strong");
+    const width = Number.isFinite(summary.accuracy) ? Math.max(4, summary.accuracy) : 0;
+
+    row.className = "accuracy-bar-row";
+    row.dataset.tone = id;
+    text.textContent = label;
+    track.className = "accuracy-bar-track";
+    fill.style.width = `${width}%`;
+    value.textContent = summary.count ? `${formatPercent(summary.accuracy)} / ${summary.count}` : "No calls";
+    track.append(fill);
+    row.append(text, track, value);
+    accuracyBarsEl.append(row);
+  });
+}
+
+function renderAccuracyOutcomes(evaluations) {
+  accuracyOutcomesEl.innerHTML = "";
+
+  if (!evaluations.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.textContent = "No evaluated outcomes yet. More snapshots are needed after each advisory.";
+    row.append(cell);
+    accuracyOutcomesEl.append(row);
+    return;
+  }
+
+  evaluations.slice(-8).reverse().forEach((item) => {
+    const row = document.createElement("tr");
+    row.dataset.result = item.correct ? "correct" : "wrong";
+    [
+      formatTradeTime(item.entry.time),
+      item.entry.label || item.entry.tone,
+      `${Math.round(Number(item.entry.conviction) || 0)}%`,
+      formatPrice(item.startPrice),
+      `${formatPrice(item.endPrice)} (${item.move >= 0 ? "+" : ""}${formatPrice(item.move)})`,
+      item.correct ? "Correct" : "Wrong"
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+    accuracyOutcomesEl.append(row);
+  });
+}
+
+function renderAdvisoryAccuracy(samples) {
+  const evaluations = evaluateAdvisorySamples(samples);
+  const allSummary = summarizeEvaluations(evaluations);
+  const highSummary = summarizeEvaluations(evaluations, (item) => item.highConviction);
+  const averageAbsMove = evaluations.length
+    ? evaluations.reduce((total, item) => total + Math.abs(item.move), 0) / evaluations.length
+    : NaN;
+  const windowMinutes = Math.round(getAdvisoryEvaluationWindow() / 60000);
+  const sampleFloor = 10;
+  const isReady = highSummary.count >= sampleFloor && highSummary.accuracy >= 60;
+
+  accuracyVerdictCardEl.dataset.ready = String(isReady);
+  accuracyVerdictEl.textContent = highSummary.count < sampleFloor
+    ? "Needs more calls"
+    : isReady
+      ? "Passing"
+      : "Below 60%";
+  accuracyVerdictCopyEl.textContent = highSummary.count < sampleFloor
+    ? `Need ${sampleFloor - highSummary.count} more high-conviction calls above ${HIGH_CONVICTION_THRESHOLD}.`
+    : isReady
+      ? "High-conviction calls are above the 60% target."
+      : "High-conviction calls are not reliable enough yet.";
+  accuracyHighConvictionEl.textContent = formatPercent(highSummary.accuracy);
+  accuracyHighConvictionCountEl.textContent = `${highSummary.correct} of ${highSummary.count} calls above ${HIGH_CONVICTION_THRESHOLD}`;
+  accuracyAllCallsEl.textContent = formatPercent(allSummary.accuracy);
+  accuracyAllCountEl.textContent = `${allSummary.correct} of ${allSummary.count} evaluated`;
+  accuracyAverageMoveEl.textContent = Number.isFinite(averageAbsMove) ? formatPrice(averageAbsMove) : "-";
+  accuracyEvaluationWindowEl.textContent = `Each call judged about ${windowMinutes} min later`;
+  renderAccuracyBars(evaluations);
+  renderAccuracyOutcomes(evaluations);
+}
+
 function drawChartMessage(context, canvas, message) {
   context.clearRect(0, 0, canvas.width, canvas.height);
   context.fillStyle = "#56646e";
@@ -2313,6 +2518,7 @@ function renderAdvisoryChart() {
   const context = advisoryChartEl.getContext("2d");
   const samples = getFilteredAdvisorySamples();
   advisorySampleCountEl.textContent = `${samples.length} sample${samples.length === 1 ? "" : "s"}`;
+  renderAdvisoryAccuracy(samples);
 
   if (!samples.length) {
     drawChartMessage(context, advisoryChartEl, "No advisory samples in this window yet");

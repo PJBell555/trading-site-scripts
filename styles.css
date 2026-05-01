@@ -1027,6 +1027,105 @@ select {
   width: 100%;
 }
 
+.accuracy-dashboard {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.accuracy-card {
+  padding: 14px 16px;
+  background: rgba(255, 255, 255, 0.64);
+  border: 1px solid rgba(17, 32, 43, 0.08);
+  border-radius: 8px;
+}
+
+.accuracy-card strong,
+.accuracy-card p {
+  display: block;
+}
+
+.accuracy-card strong {
+  margin-top: 4px;
+  font-size: 1.35rem;
+}
+
+.accuracy-card p {
+  margin: 6px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.accuracy-card[data-ready="true"] {
+  border-color: rgba(0, 109, 91, 0.28);
+  background: rgba(0, 109, 91, 0.1);
+}
+
+.accuracy-card[data-ready="false"] {
+  border-color: rgba(207, 106, 50, 0.22);
+  background: rgba(207, 106, 50, 0.08);
+}
+
+.accuracy-breakdown {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+}
+
+.accuracy-bars {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+  padding: 14px;
+  background: rgba(255, 255, 255, 0.58);
+  border: 1px solid rgba(17, 32, 43, 0.08);
+  border-radius: 8px;
+}
+
+.accuracy-bar-row {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: 54px 1fr auto;
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.accuracy-bar-track {
+  height: 12px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(17, 32, 43, 0.09);
+}
+
+.accuracy-bar-track i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--warm);
+}
+
+.accuracy-bar-row[data-tone="long"] .accuracy-bar-track i {
+  background: var(--accent);
+}
+
+.accuracy-bar-row[data-tone="short"] .accuracy-bar-track i {
+  background: var(--danger);
+}
+
+.accuracy-table {
+  min-width: 700px;
+}
+
+.accuracy-table tbody tr[data-result="correct"] td:last-child {
+  color: var(--accent-strong);
+}
+
+.accuracy-table tbody tr[data-result="wrong"] td:last-child {
+  color: var(--danger);
+}
+
 .chart-legend {
   align-items: center;
   color: var(--muted);
@@ -1190,6 +1289,8 @@ ol {
   .second-opinion-actions,
   .open-brain-grid,
   .open-brain-pipeline,
+  .accuracy-dashboard,
+  .accuracy-breakdown,
   .user-stat-grid,
   .user-add-form,
   .user-search-row,
