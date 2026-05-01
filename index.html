@@ -7,7 +7,21 @@
   <link rel="stylesheet" href="./styles.css?v=remote-ledger-1">
 </head>
 <body>
-  <div class="shell">
+  <section class="access-gate" id="access-gate" aria-label="Atlas password access">
+    <form class="access-card" id="access-form">
+      <p class="eyebrow">Private preview</p>
+      <h1>Atlas Access</h1>
+      <p class="lede">Enter the shared password to open the commodities advisor.</p>
+      <label>
+        Password
+        <input id="access-password" type="password" autocomplete="current-password" placeholder="Enter password">
+      </label>
+      <button class="access-button" type="submit">Unlock Atlas</button>
+      <p class="access-error" id="access-error" role="alert"></p>
+    </form>
+  </section>
+
+  <div class="shell app-shell" id="app-shell" hidden>
     <header class="hero">
       <div class="hero-copy">
         <p class="eyebrow">Coinbase futures decision support</p>
@@ -39,8 +53,115 @@
       </span>
     </section>
 
+    <nav class="app-menu" aria-label="Atlas sections">
+      <button class="menu-button" type="button" data-section-target="advisories" data-active="true">Advisories</button>
+      <button class="menu-button" type="button" data-section-target="trading">Trading</button>
+      <button class="menu-button" type="button" data-section-target="features">Feature Requests</button>
+      <button class="menu-button" type="button" data-section-target="users">Users</button>
+    </nav>
+
+    <section class="band user-management" data-app-section="users" aria-label="User management">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Access roster</p>
+          <h2>User Management</h2>
+          <p>View and manage simple Atlas user accounts.</p>
+        </div>
+        <span class="shared-status" id="user-management-status">Local roster</span>
+      </div>
+      <div class="user-stat-grid" aria-label="User statistics">
+        <div class="user-stat-card" data-tone="users">
+          <span class="user-stat-icon">U</span>
+          <strong id="user-total-count">0</strong>
+          <span>Total Users</span>
+        </div>
+        <div class="user-stat-card" data-tone="active">
+          <span class="user-stat-icon">A</span>
+          <strong id="user-active-count">0</strong>
+          <span>Active Today</span>
+        </div>
+        <div class="user-stat-card" data-tone="new">
+          <span class="user-stat-icon">N</span>
+          <strong id="user-new-count">0</strong>
+          <span>New This Week</span>
+        </div>
+      </div>
+      <form class="user-add-form" id="user-add-form">
+        <label>
+          Name
+          <input id="user-name-input" type="text" autocomplete="name" placeholder="Pete Hall">
+        </label>
+        <label>
+          Email
+          <input id="user-email-input" type="email" autocomplete="email" placeholder="pete@example.com">
+        </label>
+        <button class="filter-button" type="submit">Add user</button>
+      </form>
+      <div class="user-search-row">
+        <input id="user-search-input" type="search" placeholder="Search by email or name...">
+        <button class="access-button user-search-button" id="user-search-button" type="button">Search</button>
+      </div>
+      <div class="history-wrap">
+        <table class="history-table user-table">
+          <thead>
+            <tr>
+              <th>User</th>
+              <th>Created</th>
+              <th>Last Active</th>
+              <th>Sessions</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="user-table-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="band feature-requests" data-app-section="features" aria-label="Feature requests and bugs">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Product backlog</p>
+          <h2>Feature Requests & Bugs</h2>
+          <p>Submit ideas, report bugs, vote on requests, and track progress.</p>
+        </div>
+        <span class="shared-status" id="feature-request-status">Local board</span>
+      </div>
+      <div class="feature-toolbar">
+        <div class="filter-row" id="feature-type-filters">
+          <button class="filter-button" type="button" data-feature-type="all" data-active="true">All</button>
+          <button class="filter-button" type="button" data-feature-type="feature">Features</button>
+          <button class="filter-button" type="button" data-feature-type="bug">Bugs</button>
+        </div>
+        <button class="access-button feature-new-button" type="button" id="feature-new-button">+ New Request</button>
+      </div>
+      <form class="feature-form" id="feature-form" hidden>
+        <label>
+          Title
+          <input id="feature-title-input" type="text" placeholder="Training / instructional video">
+        </label>
+        <label>
+          Type
+          <select id="feature-type-input">
+            <option value="feature">Feature</option>
+            <option value="bug">Bug</option>
+          </select>
+        </label>
+        <label>
+          Tag
+          <input id="feature-tag-input" type="text" placeholder="trading">
+        </label>
+        <label class="feature-description-field">
+          Description
+          <textarea id="feature-description-input" rows="3" placeholder="Describe the request or problem..."></textarea>
+        </label>
+        <button class="filter-button" type="submit">Submit request</button>
+      </form>
+      <div class="feature-board" id="feature-board" aria-label="Feature request board"></div>
+    </section>
+
     <main class="layout">
-      <section class="band intro">
+      <section class="band intro" data-app-section="advisories">
         <div>
           <h2>Where to start</h2>
           <p>
@@ -50,7 +171,7 @@
         <div class="commodity-strip" id="commodity-strip" aria-label="Supported commodities"></div>
       </section>
 
-      <section class="band workspace">
+      <section class="band workspace" data-app-section="advisories">
         <div class="panel controls">
           <div class="panel-head">
             <h2 id="inputs-title">Advisor inputs: Oil</h2>
@@ -175,7 +296,7 @@
         </div>
       </section>
 
-      <section class="band roadmap">
+      <section class="band roadmap" data-app-section="trading">
         <div>
           <h2>Paper trading system</h2>
           <div class="paper-grid">
@@ -323,7 +444,7 @@
         </div>
       </section>
 
-      <section class="band advisory-lab">
+      <section class="band advisory-lab" data-app-section="advisories">
         <div class="section-heading">
           <div>
             <p class="eyebrow">Advisor learning lab</p>
@@ -376,6 +497,6 @@
     </main>
   </div>
 
-  <script src="./app.js?v=advisory-chart-1"></script>
+  <script src="./app.js?v=front-gate-1"></script>
 </body>
 </html>

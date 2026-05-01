@@ -7,6 +7,32 @@ const commodities = [
   { id: "platinum", name: "Platinum", family: "Metals" }
 ];
 
+const accessGateEl = document.querySelector("#access-gate");
+const accessFormEl = document.querySelector("#access-form");
+const accessPasswordEl = document.querySelector("#access-password");
+const accessErrorEl = document.querySelector("#access-error");
+const appShellEl = document.querySelector("#app-shell");
+const menuButtons = document.querySelectorAll("[data-section-target]");
+const appSections = document.querySelectorAll("[data-app-section]");
+const userManagementStatusEl = document.querySelector("#user-management-status");
+const userTotalCountEl = document.querySelector("#user-total-count");
+const userActiveCountEl = document.querySelector("#user-active-count");
+const userNewCountEl = document.querySelector("#user-new-count");
+const userAddFormEl = document.querySelector("#user-add-form");
+const userNameInputEl = document.querySelector("#user-name-input");
+const userEmailInputEl = document.querySelector("#user-email-input");
+const userSearchInputEl = document.querySelector("#user-search-input");
+const userSearchButtonEl = document.querySelector("#user-search-button");
+const userTableBodyEl = document.querySelector("#user-table-body");
+const featureRequestStatusEl = document.querySelector("#feature-request-status");
+const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
+const featureNewButtonEl = document.querySelector("#feature-new-button");
+const featureFormEl = document.querySelector("#feature-form");
+const featureTitleInputEl = document.querySelector("#feature-title-input");
+const featureTypeInputEl = document.querySelector("#feature-type-input");
+const featureTagInputEl = document.querySelector("#feature-tag-input");
+const featureDescriptionInputEl = document.querySelector("#feature-description-input");
+const featureBoardEl = document.querySelector("#feature-board");
 const commoditySelect = document.querySelector("#commodity");
 const commodityStrip = document.querySelector("#commodity-strip");
 const inputsTitle = document.querySelector("#inputs-title");
@@ -131,6 +157,10 @@ const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
+const ACCESS_STATE_KEY = "atlas-access-unlocked";
+const ACCESS_PASSWORD_HASH = "55bdd6bb9b1839c8f8e7c3459e61f5537d0691c6b4c8fa827d594708f4d63db2";
+const USER_ROSTER_KEY = "atlas-user-roster-v1";
+const FEATURE_REQUESTS_KEY = "atlas-feature-requests-v1";
 const ADVISORY_CAPTURE_MS = 60000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -161,7 +191,491 @@ let advisoryCommodityFilter = "oil";
 let advisoryHorizonFilter = "intraday";
 let advisoryPeriodFilter = "hour";
 let lastAdvisorySnapshotKey = "";
+let appStarted = false;
+let userSearchQuery = "";
+let activeSection = "advisories";
+let featureTypeFilter = "all";
+const userRoster = [];
+const featureRequests = [];
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
+
+async function hashAccessPassword(value) {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function showAppShell() {
+  accessGateEl.hidden = true;
+  appShellEl.hidden = false;
+}
+
+function setActiveSection(section) {
+  activeSection = section;
+  menuButtons.forEach((button) => {
+    button.dataset.active = String(button.dataset.sectionTarget === section);
+  });
+  appSections.forEach((sectionEl) => {
+    sectionEl.hidden = sectionEl.dataset.appSection !== section;
+  });
+  if (section === "advisories") renderAdvisoryChart();
+}
+
+function getDefaultUsers() {
+  const now = new Date();
+  const minutesAgo = (minutes) => new Date(now.getTime() - minutes * 60000).toISOString();
+  const daysAgo = (days) => new Date(now.getTime() - days * 86400000).toISOString();
+
+  return [
+    {
+      id: "user-peter-bell",
+      name: "Peter Bell",
+      email: "peter@pjbell.com",
+      createdAt: "2026-02-02T12:00:00.000Z",
+      lastActiveAt: minutesAgo(10),
+      sessions: 23,
+      enabled: true
+    },
+    {
+      id: "user-alex-pensotti",
+      name: "Alex Pensotti",
+      email: "alexpensotti@gmail.com",
+      createdAt: "2026-03-15T12:00:00.000Z",
+      lastActiveAt: daysAgo(24),
+      sessions: 4,
+      enabled: true
+    },
+    {
+      id: "user-hunts-hewett",
+      name: "Hunts Hewett",
+      email: "hunts@fastmail.com",
+      createdAt: "2026-03-10T12:00:00.000Z",
+      lastActiveAt: daysAgo(21),
+      sessions: 3,
+      enabled: true
+    },
+    {
+      id: "user-motochristo-roberts",
+      name: "Christopher Roberts",
+      email: "motochristo@gmail.com",
+      createdAt: "2026-03-10T12:00:00.000Z",
+      lastActiveAt: daysAgo(62),
+      sessions: 1,
+      enabled: true
+    },
+    {
+      id: "user-eric-ramirez",
+      name: "Eric Ramirez",
+      email: "eric@coquest.com",
+      createdAt: "2026-02-06T12:00:00.000Z",
+      lastActiveAt: daysAgo(60),
+      sessions: 0,
+      enabled: true
+    },
+    {
+      id: "user-dennis-weinmann",
+      name: "Dennis Weinmann",
+      email: "dennis@coquest.com",
+      createdAt: "2026-02-05T12:00:00.000Z",
+      lastActiveAt: daysAgo(62),
+      sessions: 3,
+      enabled: true
+    },
+    {
+      id: "user-d2-openclaw",
+      name: "D2 OpenClaw",
+      email: "aretwo3000@gmail.com",
+      createdAt: "2026-02-04T12:00:00.000Z",
+      lastActiveAt: null,
+      sessions: 0,
+      enabled: true
+    },
+    {
+      id: "user-ai4ses-roberts",
+      name: "Christopher Roberts",
+      email: "ai4ses@gmail.com",
+      createdAt: "2026-02-02T12:00:00.000Z",
+      lastActiveAt: daysAgo(2),
+      sessions: 12,
+      enabled: true
+    }
+  ];
+}
+
+function saveUserRoster() {
+  window.localStorage.setItem(USER_ROSTER_KEY, JSON.stringify(userRoster));
+}
+
+function loadUserRoster() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(USER_ROSTER_KEY) || "null");
+    const defaultUsers = getDefaultUsers();
+    const users = Array.isArray(stored) && stored.length ? stored : defaultUsers;
+    const knownEmails = new Set(users.map((user) => String(user.email || "").toLowerCase()));
+    defaultUsers.forEach((user) => {
+      if (!knownEmails.has(String(user.email || "").toLowerCase())) users.push(user);
+    });
+    userRoster.splice(0, userRoster.length, ...users);
+  } catch (error) {
+    userRoster.splice(0, userRoster.length, ...getDefaultUsers());
+  }
+}
+
+function formatUserDate(value) {
+  const date = getTransactionDate(value);
+  return new Intl.DateTimeFormat("en-US", {
+    month: "numeric",
+    day: "numeric",
+    year: "numeric"
+  }).format(date);
+}
+
+function formatRelativeDate(value) {
+  if (!value) return "Never";
+
+  const ms = Date.now() - getTransactionDate(value).getTime();
+  const minutes = Math.max(0, Math.round(ms / 60000));
+  if (minutes < 2) return "just now";
+  if (minutes < 60) return `${minutes} minutes ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  const days = Math.round(hours / 24);
+  if (days < 31) return `${days} day${days === 1 ? "" : "s"} ago`;
+  const months = Math.round(days / 30);
+  return `about ${months} month${months === 1 ? "" : "s"} ago`;
+}
+
+function getUserInitials(user) {
+  const name = String(user.name || user.email || "U").trim();
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("") || "U";
+}
+
+function getFilteredUsers() {
+  const query = userSearchQuery.trim().toLowerCase();
+  if (!query) return userRoster;
+
+  return userRoster.filter((user) => (
+    String(user.name || "").toLowerCase().includes(query)
+    || String(user.email || "").toLowerCase().includes(query)
+  ));
+}
+
+function renderUserManagement() {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - 7);
+  const activeToday = userRoster.filter((user) => user.enabled !== false && getTransactionDate(user.lastActiveAt) >= todayStart);
+  const newThisWeek = userRoster.filter((user) => getTransactionDate(user.createdAt) >= weekStart);
+  const filteredUsers = getFilteredUsers();
+
+  userTotalCountEl.textContent = String(userRoster.length);
+  userActiveCountEl.textContent = String(activeToday.length);
+  userNewCountEl.textContent = String(newThisWeek.length);
+  userManagementStatusEl.textContent = `${filteredUsers.length} visible`;
+  userTableBodyEl.innerHTML = "";
+
+  if (!filteredUsers.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 6;
+    cell.textContent = "No users match the current search.";
+    row.append(cell);
+    userTableBodyEl.append(row);
+    return;
+  }
+
+  filteredUsers.forEach((user) => {
+    const row = document.createElement("tr");
+    const profileCell = document.createElement("td");
+    const profile = document.createElement("div");
+    const avatar = document.createElement("span");
+    const profileText = document.createElement("div");
+    const name = document.createElement("strong");
+    const email = document.createElement("span");
+    const status = document.createElement("span");
+    const actionCell = document.createElement("td");
+    const action = document.createElement("button");
+
+    profile.className = "user-profile";
+    avatar.className = "user-avatar";
+    avatar.textContent = getUserInitials(user);
+    name.textContent = user.name || "Unnamed user";
+    email.textContent = user.email || "-";
+    profileText.append(name, email);
+    profile.append(avatar, profileText);
+    profileCell.append(profile);
+
+    status.className = "user-status";
+    status.dataset.disabled = String(user.enabled === false);
+    status.textContent = user.enabled === false ? "Disabled" : "Active";
+
+    action.type = "button";
+    action.className = "filter-button";
+    action.textContent = user.enabled === false ? "Enable" : "Disable";
+    action.addEventListener("click", () => {
+      user.enabled = user.enabled === false;
+      saveUserRoster();
+      renderUserManagement();
+    });
+    actionCell.append(action);
+
+    [
+      profileCell,
+      formatUserDate(user.createdAt),
+      formatRelativeDate(user.lastActiveAt),
+      String(Number(user.sessions) || 0),
+      status,
+      actionCell
+    ].forEach((value) => {
+      if (value instanceof HTMLElement) {
+        row.append(value);
+        return;
+      }
+      const cell = document.createElement("td");
+      if (value instanceof Node) cell.append(value);
+      else cell.textContent = value;
+      row.append(cell);
+    });
+
+    userTableBodyEl.append(row);
+  });
+}
+
+function markCurrentSessionActive() {
+  const user = userRoster.find((entry) => entry.id === "user-pete") || userRoster[0];
+  if (!user) return;
+
+  user.lastActiveAt = new Date().toISOString();
+  user.sessions = Math.max(1, Number(user.sessions || 0) + 1);
+  saveUserRoster();
+}
+
+function addUser(name, email) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const exists = userRoster.some((user) => String(user.email || "").toLowerCase() === normalizedEmail);
+
+  if (!name.trim() || !normalizedEmail || exists) {
+    userManagementStatusEl.textContent = exists ? "User already exists" : "Name and email required";
+    return;
+  }
+
+  userRoster.unshift({
+    id: `user-${Date.now()}`,
+    name: name.trim(),
+    email: normalizedEmail,
+    createdAt: new Date().toISOString(),
+    lastActiveAt: new Date().toISOString(),
+    sessions: 0,
+    enabled: true
+  });
+  saveUserRoster();
+  userNameInputEl.value = "";
+  userEmailInputEl.value = "";
+  renderUserManagement();
+}
+
+function getDefaultFeatureRequests() {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "feature-training-video",
+      title: "Training / Instructional video",
+      description: "Spin up a video on how the system works so we can get users onboarded quickly.",
+      type: "feature",
+      tag: "ui",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-auto-research",
+      title: "Auto Research",
+      description: "Download a copy of Auto Research and set up the problem workflow.",
+      type: "feature",
+      tag: "trading",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-more-markets",
+      title: "Different markets like stocks",
+      description: "Add views into different markets like stocks and other tradable assets.",
+      type: "feature",
+      tag: "trading",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    }
+  ];
+}
+
+function saveFeatureRequests() {
+  window.localStorage.setItem(FEATURE_REQUESTS_KEY, JSON.stringify(featureRequests));
+}
+
+function loadFeatureRequests() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(FEATURE_REQUESTS_KEY) || "null");
+    const requests = Array.isArray(stored) && stored.length ? stored : getDefaultFeatureRequests();
+    featureRequests.splice(0, featureRequests.length, ...requests);
+  } catch (error) {
+    featureRequests.splice(0, featureRequests.length, ...getDefaultFeatureRequests());
+  }
+}
+
+function getFilteredFeatureRequests(status) {
+  return featureRequests.filter((request) => (
+    request.status === status
+    && (featureTypeFilter === "all" || request.type === featureTypeFilter)
+  ));
+}
+
+function renderFeatureTypeFilters() {
+  featureTypeFiltersEl.querySelectorAll("[data-feature-type]").forEach((button) => {
+    const active = button.dataset.featureType === featureTypeFilter;
+    button.dataset.active = String(active);
+    const label = button.dataset.featureType === "all" ? "All" : button.dataset.featureType === "bug" ? "Bugs" : "Features";
+    button.textContent = `${active ? "✓ " : ""}${label}`;
+  });
+}
+
+function getNextFeatureStatus(status) {
+  if (status === "submitted") return "accepted";
+  if (status === "accepted") return "in-progress";
+  if (status === "in-progress") return "done";
+  return "submitted";
+}
+
+function renderFeatureRequests() {
+  const columns = [
+    { id: "submitted", name: "Submitted" },
+    { id: "accepted", name: "Accepted" },
+    { id: "in-progress", name: "In Progress" },
+    { id: "done", name: "Done" }
+  ];
+  const visibleCount = featureRequests.filter((request) => (
+    featureTypeFilter === "all" || request.type === featureTypeFilter
+  )).length;
+
+  renderFeatureTypeFilters();
+  featureRequestStatusEl.textContent = `${visibleCount} visible`;
+  featureBoardEl.innerHTML = "";
+
+  columns.forEach((column) => {
+    const items = getFilteredFeatureRequests(column.id);
+    const columnEl = document.createElement("section");
+    const header = document.createElement("header");
+    const title = document.createElement("h3");
+    const count = document.createElement("span");
+
+    columnEl.className = "feature-column";
+    title.textContent = column.name;
+    count.className = "feature-count";
+    count.textContent = String(items.length);
+    header.append(title, count);
+    columnEl.append(header);
+
+    if (!items.length) {
+      const empty = document.createElement("div");
+      empty.className = "feature-empty";
+      empty.textContent = "No items";
+      columnEl.append(empty);
+    }
+
+    items.forEach((request) => {
+      const card = document.createElement("article");
+      const vote = document.createElement("button");
+      const titleEl = document.createElement("h4");
+      const description = document.createElement("p");
+      const meta = document.createElement("div");
+      const tag = document.createElement("span");
+      const age = document.createElement("span");
+      const move = document.createElement("button");
+
+      card.className = "feature-card";
+      vote.type = "button";
+      vote.className = "feature-vote";
+      vote.textContent = `^ ${Number(request.votes) || 0}`;
+      vote.addEventListener("click", () => {
+        request.votes = (Number(request.votes) || 0) + 1;
+        saveFeatureRequests();
+        renderFeatureRequests();
+      });
+      titleEl.textContent = request.title;
+      description.textContent = request.description;
+      tag.className = "feature-tag";
+      tag.textContent = request.tag || request.type;
+      age.textContent = formatRelativeDate(request.createdAt);
+      move.type = "button";
+      move.className = "filter-button";
+      move.textContent = column.id === "done" ? "Reopen" : "Move";
+      move.addEventListener("click", () => {
+        request.status = getNextFeatureStatus(request.status);
+        saveFeatureRequests();
+        renderFeatureRequests();
+      });
+      meta.className = "feature-meta";
+      meta.append(tag, age, document.createTextNode(request.author || "Peter"), move);
+      card.append(vote, titleEl, description, meta);
+      columnEl.append(card);
+    });
+
+    featureBoardEl.append(columnEl);
+  });
+}
+
+function addFeatureRequest() {
+  const title = featureTitleInputEl.value.trim();
+  const description = featureDescriptionInputEl.value.trim();
+  if (!title || !description) {
+    featureRequestStatusEl.textContent = "Title and description required";
+    return;
+  }
+
+  featureRequests.unshift({
+    id: `feature-${Date.now()}`,
+    title,
+    description,
+    type: featureTypeInputEl.value,
+    tag: featureTagInputEl.value.trim() || featureTypeInputEl.value,
+    status: "submitted",
+    votes: 0,
+    author: "Peter",
+    createdAt: new Date().toISOString()
+  });
+  featureFormEl.reset();
+  featureFormEl.hidden = true;
+  saveFeatureRequests();
+  renderFeatureRequests();
+}
+
+async function handleAccessSubmit(event) {
+  event.preventDefault();
+  const password = accessPasswordEl.value.trim();
+  const hash = await hashAccessPassword(password);
+
+  if (hash !== ACCESS_PASSWORD_HASH) {
+    accessErrorEl.textContent = "Password does not match.";
+    accessPasswordEl.value = "";
+    accessPasswordEl.focus();
+    return;
+  }
+
+  window.sessionStorage.setItem(ACCESS_STATE_KEY, "true");
+  showAppShell();
+  initializeApp();
+}
 
 for (const commodity of commodities) {
   const option = document.createElement("option");
@@ -2355,17 +2869,66 @@ coinbaseSandboxEnabledEl.addEventListener("change", () => {
   saveSharedSettings();
   calculateSignal();
 });
+menuButtons.forEach((button) => {
+  button.addEventListener("click", () => setActiveSection(button.dataset.sectionTarget));
+});
+userAddFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addUser(userNameInputEl.value, userEmailInputEl.value);
+});
+userSearchInputEl.addEventListener("input", () => {
+  userSearchQuery = userSearchInputEl.value;
+  renderUserManagement();
+});
+userSearchButtonEl.addEventListener("click", () => {
+  userSearchQuery = userSearchInputEl.value;
+  renderUserManagement();
+});
+featureTypeFiltersEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-feature-type]");
+  if (!button) return;
+  featureTypeFilter = button.dataset.featureType;
+  renderFeatureRequests();
+});
+featureNewButtonEl.addEventListener("click", () => {
+  featureFormEl.hidden = !featureFormEl.hidden;
+  if (!featureFormEl.hidden) featureTitleInputEl.focus();
+});
+featureFormEl.addEventListener("submit", (event) => {
+  event.preventDefault();
+  addFeatureRequest();
+});
 
-loadPaperState();
-initializeHistoryApiControls();
-renderHistoryFilterButtons();
-renderPeriodFilterButtons();
-renderAdvisoryFilterButtons();
-calculateSignal();
-loadSharedSettings();
-loadSharedTransactionHistory();
-loadSharedAdvisoryHistory();
-connectCoinbaseWebSocket(commoditySelect.value);
-refreshSelectedCoinbasePrice();
-window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
-window.addEventListener("resize", renderAdvisoryChart);
+accessFormEl.addEventListener("submit", handleAccessSubmit);
+
+function initializeApp() {
+  if (appStarted) return;
+  appStarted = true;
+
+  loadPaperState();
+  loadUserRoster();
+  loadFeatureRequests();
+  markCurrentSessionActive();
+  renderUserManagement();
+  renderFeatureRequests();
+  setActiveSection(activeSection);
+  initializeHistoryApiControls();
+  renderHistoryFilterButtons();
+  renderPeriodFilterButtons();
+  renderAdvisoryFilterButtons();
+  calculateSignal();
+  loadSharedSettings();
+  loadSharedTransactionHistory();
+  loadSharedAdvisoryHistory();
+  connectCoinbaseWebSocket(commoditySelect.value);
+  refreshSelectedCoinbasePrice();
+  window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
+  window.addEventListener("resize", renderAdvisoryChart);
+}
+
+if (window.sessionStorage.getItem(ACCESS_STATE_KEY) === "true") {
+  showAppShell();
+  initializeApp();
+} else {
+  accessPasswordEl.focus();
+}
