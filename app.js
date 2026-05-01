@@ -523,6 +523,32 @@ function getLossStreak(closedTrades) {
   return streak;
 }
 
+function getConsecutiveLosingCloses() {
+  const losses = [];
+  const closedTrades = transactionHistory
+    .filter(isClosingTransaction)
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+
+  for (const trade of closedTrades) {
+    if (getDisplayPnl(trade) >= 0) break;
+    losses.push(trade);
+  }
+
+  return losses;
+}
+
+function getNextMartingaleStepFromHistory() {
+  const losingCloses = getConsecutiveLosingCloses();
+  if (!losingCloses.length) return 1;
+
+  const highestLosingStep = losingCloses.reduce((highest, entry) => (
+    Math.max(highest, Number(entry.step) || 1)
+  ), 1);
+
+  if (highestLosingStep >= MARTINGALE_MAX_STEP) return 1;
+  return Math.max(1, Math.min(MARTINGALE_MAX_STEP, highestLosingStep + 1));
+}
+
 function getKarpathyLoop(side) {
   const closedTrades = getClosedPaperTrades();
   const sideTrades = side ? closedTrades.filter((entry) => entry.side === side) : [];
@@ -960,11 +986,7 @@ function rebuildPaperStateFromHistory() {
   const closedEntries = transactionHistory.filter(isClosingTransaction);
   paperEquity = PAPER_START_EQUITY + closedEntries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
 
-  if (!latestClosed || getDisplayPnl(latestClosed) >= 0 || Number(latestClosed.step) >= MARTINGALE_MAX_STEP) {
-    martingaleStep = 1;
-  } else {
-    martingaleStep = Math.max(1, Math.min(MARTINGALE_MAX_STEP, Number(latestClosed.step || 1) + 1));
-  }
+  martingaleStep = latestClosed ? getNextMartingaleStepFromHistory() : 1;
 }
 
 function getTradePnl(trade, exitPrice) {
@@ -1630,47 +1652,46 @@ async function closePaperTrade(commodity, exitPrice, reason) {
     return;
   }
 
-  recordTransaction({
-    tradeId: trade.id,
-    commodity,
-    commodityName: trade.commodityName,
-    action: reason,
-    side: trade.side,
-    step: trade.martingaleStep,
-    contract: trade.contract,
-    price: exitPrice,
-    entryPrice: trade.entryPrice,
-    targetEntryPrice: trade.targetEntryPrice,
-    targetPrice: trade.targetPrice,
-    stopPrice: trade.stopPrice,
-    contractMultiplier: trade.contractMultiplier,
-    contracts: trade.contracts,
-    marginRequirement: trade.marginRequirement,
-    notionalValue: trade.notionalValue,
-    openFee: trade.openFee,
-    closeFee,
-    estimatedExitFee: trade.estimatedExitFee,
-    totalEstimatedFees: totalFees,
-    feePerContractSide: trade.feePerContractSide,
-    feeLabel: trade.feeLabel,
-    coinbaseSandbox: sandboxOrder,
-    grossPnl,
-    netPnl: pnl,
-    exitPrice,
-    openedAt: trade.openedAt,
-    closedAt,
-    durationMs: closedAt - new Date(trade.openedAt),
-    capital: trade.capital,
-    pnl,
-    note: `${trade.commodityName} ${trade.side} closed from ${formatPrice(trade.entryPrice)}`
-  }).finally(() => clearPaperActionPending(commodity));
-
-  if (pnl >= 0 || trade.martingaleStep >= MARTINGALE_MAX_STEP) {
-    martingaleStep = 1;
-  } else {
-    martingaleStep = trade.martingaleStep + 1;
+  try {
+    await recordTransaction({
+      tradeId: trade.id,
+      commodity,
+      commodityName: trade.commodityName,
+      action: reason,
+      side: trade.side,
+      step: trade.martingaleStep,
+      contract: trade.contract,
+      price: exitPrice,
+      entryPrice: trade.entryPrice,
+      targetEntryPrice: trade.targetEntryPrice,
+      targetPrice: trade.targetPrice,
+      stopPrice: trade.stopPrice,
+      contractMultiplier: trade.contractMultiplier,
+      contracts: trade.contracts,
+      marginRequirement: trade.marginRequirement,
+      notionalValue: trade.notionalValue,
+      openFee: trade.openFee,
+      closeFee,
+      estimatedExitFee: trade.estimatedExitFee,
+      totalEstimatedFees: totalFees,
+      feePerContractSide: trade.feePerContractSide,
+      feeLabel: trade.feeLabel,
+      coinbaseSandbox: sandboxOrder,
+      grossPnl,
+      netPnl: pnl,
+      exitPrice,
+      openedAt: trade.openedAt,
+      closedAt,
+      durationMs: closedAt - new Date(trade.openedAt),
+      capital: trade.capital,
+      pnl,
+      note: `${trade.commodityName} ${trade.side} closed from ${formatPrice(trade.entryPrice)}`
+    });
+    martingaleStep = getNextMartingaleStepFromHistory();
+    savePaperState();
+  } finally {
+    clearPaperActionPending(commodity);
   }
-  savePaperState();
 }
 
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
