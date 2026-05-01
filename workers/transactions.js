@@ -1,6 +1,7 @@
 const DEFAULT_BRANCH = "main";
 const DEFAULT_HISTORY_PATH = "transactions.json";
 const DEFAULT_BACKUP_DIR = "backups";
+const DEFAULT_SETTINGS_PATH = "settings.json";
 const COINBASE_SANDBOX_BASE_URL = "https://api-sandbox.coinbase.com/api/v3/brokerage";
 
 function corsHeaders(origin) {
@@ -212,6 +213,14 @@ async function getMasterFile(env) {
   return { file, payload: decodeContent(file.content) };
 }
 
+function defaultSettingsPayload() {
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-github-shared-settings",
+    coinbaseSandboxEnabled: false
+  };
+}
+
 async function getFileIfExists(env, path) {
   const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
 
@@ -221,6 +230,17 @@ async function getFileIfExists(env, path) {
     if (/not found/i.test(error.message)) return null;
     throw error;
   }
+}
+
+async function getSettingsFile(env) {
+  const settingsPath = env.SETTINGS_PATH || DEFAULT_SETTINGS_PATH;
+  const file = await getFileIfExists(env, settingsPath);
+
+  return {
+    file,
+    path: settingsPath,
+    payload: file ? decodeContent(file.content) : defaultSettingsPayload()
+  };
 }
 
 async function saveJsonFile(env, path, payload, message, sha = null) {
@@ -275,6 +295,16 @@ async function saveDailyBackup(env, payload) {
   };
 }
 
+async function saveSettingsFile(env, file, path, payload) {
+  return saveJsonFile(
+    env,
+    path,
+    payload,
+    "Update shared app settings",
+    file?.sha
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = getAllowedOrigin(request, env);
@@ -295,6 +325,32 @@ export default {
         return jsonResponse({
           sandbox: true,
           ...sandboxOrder
+        }, 200, origin);
+      }
+
+      if (url.pathname === "/settings") {
+        if (request.method === "GET") {
+          const { payload } = await getSettingsFile(env);
+          return jsonResponse(payload, 200, origin);
+        }
+
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const { file, path, payload } = await getSettingsFile(env);
+        const settings = {
+          ...payload,
+          generatedAt: new Date().toISOString(),
+          source: "cloudflare-github-shared-settings",
+          coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled)
+        };
+        const result = await saveSettingsFile(env, file, path, settings);
+
+        return jsonResponse({
+          commit: result.commit?.sha,
+          settings
         }, 200, origin);
       }
 

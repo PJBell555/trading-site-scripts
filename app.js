@@ -1037,6 +1037,10 @@ function getCoinbaseSandboxOrderUrl() {
   return `${getHistoryApiUrl()}/coinbase/sandbox/orders`;
 }
 
+function getSharedSettingsUrl() {
+  return `${getHistoryApiUrl()}/settings`;
+}
+
 function getCoinbaseOrderId(orderResult) {
   return orderResult?.response?.success_response?.order_id
     || orderResult?.response?.order_id
@@ -1078,6 +1082,51 @@ async function submitCoinbaseSandboxOrder(trade, side, intent) {
     request: data.request,
     response: data.response
   };
+}
+
+async function loadSharedSettings(manual = false) {
+  if (!hasHistoryBackend()) return false;
+
+  try {
+    const response = await fetch(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("settings unavailable");
+
+    const settings = await response.json();
+    setCoinbaseSandboxEnabled(Boolean(settings.coinbaseSandboxEnabled));
+    coinbaseSandboxStatusEl.textContent = settings.coinbaseSandboxEnabled ? "Sandbox armed" : "Off";
+    return true;
+  } catch (error) {
+    if (manual) coinbaseSandboxStatusEl.textContent = "Settings sync failed";
+    return false;
+  }
+}
+
+async function saveSharedSettings() {
+  if (!hasHistoryBackend()) {
+    coinbaseSandboxStatusEl.textContent = "Backend required";
+    return false;
+  }
+
+  try {
+    coinbaseSandboxStatusEl.textContent = "Saving setting";
+    const response = await fetch(getSharedSettingsUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        coinbaseSandboxEnabled: isCoinbaseSandboxEnabled()
+      })
+    });
+    if (!response.ok) throw new Error("settings save failed");
+
+    const data = await response.json();
+    const enabled = Boolean(data?.settings?.coinbaseSandboxEnabled);
+    setCoinbaseSandboxEnabled(enabled);
+    coinbaseSandboxStatusEl.textContent = enabled ? "Sandbox armed" : "Off";
+    return true;
+  } catch (error) {
+    coinbaseSandboxStatusEl.textContent = "Settings save failed";
+    return false;
+  }
 }
 
 async function saveSharedTransactionHistory() {
@@ -1863,21 +1912,24 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
 });
 saveHistoryApiEl.addEventListener("click", () => {
   setHistoryApiUrl(historyApiUrlEl.value);
+  loadSharedSettings(true);
   loadSharedTransactionHistory(true);
 });
 historyApiUrlEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     setHistoryApiUrl(historyApiUrlEl.value);
+    loadSharedSettings(true);
     loadSharedTransactionHistory(true);
   }
 });
 syncHistoryEl.addEventListener("click", () => {
-  saveSharedTransactionHistory().then(() => loadSharedTransactionHistory(true));
+  loadSharedSettings(true).then(() => saveSharedTransactionHistory()).then(() => loadSharedTransactionHistory(true));
 });
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 coinbaseSandboxEnabledEl.addEventListener("change", () => {
   setCoinbaseSandboxEnabled(coinbaseSandboxEnabledEl.checked);
+  saveSharedSettings();
   calculateSignal();
 });
 
@@ -1886,6 +1938,7 @@ initializeHistoryApiControls();
 renderHistoryFilterButtons();
 renderPeriodFilterButtons();
 calculateSignal();
+loadSharedSettings();
 loadSharedTransactionHistory();
 connectCoinbaseWebSocket(commoditySelect.value);
 refreshSelectedCoinbasePrice();
