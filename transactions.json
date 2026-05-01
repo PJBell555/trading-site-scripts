@@ -1,6 +1,6 @@
 {
-  "generatedAt": "2026-04-30T22:58:43.707Z",
-  "source": "manual-ledger-cleanup",
+  "generatedAt": "2026-05-01T00:01:31.915Z",
+  "source": "cloudflare-github-master-paper-trading-ledger",
   "transactions": [
     {
       "id": 97,
@@ -100,7 +100,5 @@
       "closedAt": null,
       "sharedKey": "1|BUY|NOL-18MAY26-CDE|2026-04-30T20:28:44.072Z|105.4150"
     }
-  ],
-  "cleaned": true,
-  "removed": 384
+  ]
 }
