@@ -8,6 +8,7 @@ This project uses a Cloudflare Worker to make `transactions.json` the shared mas
 - `POST` merges browser trades into the master ledger and writes it back to GitHub.
 - `POST /coinbase/sandbox/orders` forwards mock market orders to Coinbase's sandbox endpoint.
 - `GET/POST /settings` shares cross-device app settings such as the Coinbase sandbox toggle.
+- `GET/POST /advisories` stores one-minute advisory/price samples for the charting lab.
 - Every successful `POST` also writes a date-stamped backup like `backups/transactions-2026-04-30.json`.
 - The browser never sees the GitHub token.
 
@@ -37,6 +38,7 @@ GITHUB_BRANCH = "main"
 HISTORY_PATH = "transactions.json"
 BACKUP_DIR = "backups"
 SETTINGS_PATH = "settings.json"
+ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 ```
 

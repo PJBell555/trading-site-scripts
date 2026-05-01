@@ -322,9 +322,60 @@
           </div>
         </div>
       </section>
+
+      <section class="band advisory-lab">
+        <div class="section-heading">
+          <div>
+            <p class="eyebrow">Advisor learning lab</p>
+            <h2>Advisory trajectory</h2>
+          </div>
+          <span class="shared-status" id="advisory-history-status">Waiting for backend</span>
+        </div>
+        <div class="ledger-toolbar" aria-label="Advisory chart filters">
+          <div>
+            <span class="stat-label">Commodity</span>
+            <div id="advisory-commodity-filters" class="filter-row">
+              <button class="filter-button" type="button" data-advisory-commodity="oil" data-active="true"><span class="check">✓</span>Oil</button>
+            </div>
+          </div>
+          <div>
+            <span class="stat-label">Advisory</span>
+            <div id="advisory-horizon-filters" class="filter-row">
+              <button class="filter-button" type="button" data-advisory-horizon="intraday" data-active="true"><span class="check">✓</span>Intraday</button>
+              <button class="filter-button" type="button" data-advisory-horizon="swing"><span class="check"></span>Swing</button>
+              <button class="filter-button" type="button" data-advisory-horizon="position"><span class="check"></span>Position</button>
+            </div>
+          </div>
+          <div>
+            <span class="stat-label">Window</span>
+            <div id="advisory-period-filters" class="filter-row">
+              <button class="filter-button" type="button" data-advisory-period="hour" data-active="true">✓ Hour</button>
+              <button class="filter-button" type="button" data-advisory-period="day">Day</button>
+              <button class="filter-button" type="button" data-advisory-period="week">Week</button>
+              <button class="filter-button" type="button" data-advisory-period="month">Month</button>
+              <button class="filter-button" type="button" data-advisory-period="year">Year</button>
+            </div>
+          </div>
+          <div>
+            <span class="stat-label">Dataset</span>
+            <div class="filter-row">
+              <button class="filter-button" type="button" id="sync-advisory-history">Sync chart</button>
+              <span class="shared-status" id="advisory-sample-count">0 samples</span>
+            </div>
+          </div>
+        </div>
+        <div class="chart-shell">
+          <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
+        </div>
+        <div class="chart-legend" aria-label="Chart legend">
+          <span><i class="price-line"></i>Actual price</span>
+          <span><i class="advisory-line"></i>Advisory path</span>
+          <span>Advisory plots above price for long, on price for wait, and below price for short.</span>
+        </div>
+      </section>
     </main>
   </div>
 
-  <script src="./app.js?v=shared-settings-1"></script>
+  <script src="./app.js?v=advisory-chart-1"></script>
 </body>
 </html>

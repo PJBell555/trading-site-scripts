@@ -2,6 +2,8 @@ const DEFAULT_BRANCH = "main";
 const DEFAULT_HISTORY_PATH = "transactions.json";
 const DEFAULT_BACKUP_DIR = "backups";
 const DEFAULT_SETTINGS_PATH = "settings.json";
+const DEFAULT_ADVISORY_PATH = "advisory-snapshots.json";
+const MAX_ADVISORY_SNAPSHOTS = 20000;
 const COINBASE_SANDBOX_BASE_URL = "https://api-sandbox.coinbase.com/api/v3/brokerage";
 
 function corsHeaders(origin) {
@@ -112,6 +114,56 @@ function mergeTransactions(existing = [], incoming = []) {
   });
 
   return deduped.sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0));
+}
+
+function getAdvisorySnapshotKey(entry) {
+  if (entry.snapshotKey) return entry.snapshotKey;
+
+  const time = new Date(entry.time || Date.now());
+  const minute = Math.floor(time.getTime() / 60000);
+  return [
+    entry.commodity || "commodity",
+    entry.horizon || "horizon",
+    minute
+  ].join("|");
+}
+
+function normalizeAdvisorySnapshot(entry) {
+  const price = Number(entry.price);
+  const conviction = Number(entry.conviction);
+
+  if (!entry || !Number.isFinite(price) || !Number.isFinite(conviction)) return null;
+
+  const normalized = {
+    snapshotKey: getAdvisorySnapshotKey(entry),
+    time: entry.time || new Date().toISOString(),
+    commodity: entry.commodity || "oil",
+    commodityName: entry.commodityName || entry.commodity || "Oil",
+    horizon: entry.horizon || "intraday",
+    price,
+    priceSource: entry.priceSource || "Unknown",
+    bounded: Number(entry.bounded) || 0,
+    conviction,
+    tone: ["long", "short", "wait"].includes(entry.tone) ? entry.tone : "wait",
+    label: entry.label || "Wait",
+    action: entry.action || "No trade"
+  };
+
+  return normalized;
+}
+
+function mergeAdvisorySnapshots(existing = [], incoming = []) {
+  const byKey = new Map();
+
+  [...existing, ...incoming].forEach((entry) => {
+    const normalized = normalizeAdvisorySnapshot(entry);
+    if (!normalized) return;
+    byKey.set(normalized.snapshotKey, normalized);
+  });
+
+  return Array.from(byKey.values())
+    .sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0))
+    .slice(0, MAX_ADVISORY_SNAPSHOTS);
 }
 
 function compactPayload(payload = {}) {
@@ -243,6 +295,21 @@ async function getSettingsFile(env) {
   };
 }
 
+async function getAdvisoryFile(env) {
+  const advisoryPath = env.ADVISORY_PATH || DEFAULT_ADVISORY_PATH;
+  const file = await getFileIfExists(env, advisoryPath);
+
+  return {
+    file,
+    path: advisoryPath,
+    payload: file ? decodeContent(file.content) : {
+      generatedAt: new Date().toISOString(),
+      source: "cloudflare-github-advisory-snapshots",
+      snapshots: []
+    }
+  };
+}
+
 async function saveJsonFile(env, path, payload, message, sha = null) {
   const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
 
@@ -305,6 +372,16 @@ async function saveSettingsFile(env, file, path, payload) {
   );
 }
 
+async function saveAdvisoryFile(env, file, path, payload) {
+  return saveJsonFile(
+    env,
+    path,
+    payload,
+    `Sync advisory snapshots (${payload.snapshots.length} samples)`,
+    file?.sha
+  );
+}
+
 export default {
   async fetch(request, env) {
     const origin = getAllowedOrigin(request, env);
@@ -351,6 +428,33 @@ export default {
         return jsonResponse({
           commit: result.commit?.sha,
           settings
+        }, 200, origin);
+      }
+
+      if (url.pathname === "/advisories") {
+        if (request.method === "GET") {
+          const { payload } = await getAdvisoryFile(env);
+          return jsonResponse(payload, 200, origin);
+        }
+
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const { file, path, payload } = await getAdvisoryFile(env);
+        const incoming = Array.isArray(body.snapshots) ? body.snapshots : [];
+        const updatedPayload = {
+          generatedAt: new Date().toISOString(),
+          source: "cloudflare-github-advisory-snapshots",
+          snapshots: mergeAdvisorySnapshots(payload.snapshots, incoming)
+        };
+        const result = await saveAdvisoryFile(env, file, path, updatedPayload);
+
+        return jsonResponse({
+          commit: result.commit?.sha,
+          merged: updatedPayload.snapshots.length,
+          snapshots: updatedPayload.snapshots
         }, 200, origin);
       }
 

@@ -53,6 +53,13 @@ const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
 const coinbaseSandboxEnabledEl = document.querySelector("#coinbase-sandbox-enabled");
 const transactionHistoryEl = document.querySelector("#transaction-history");
+const advisoryHistoryStatusEl = document.querySelector("#advisory-history-status");
+const advisoryCommodityFiltersEl = document.querySelector("#advisory-commodity-filters");
+const advisoryHorizonFiltersEl = document.querySelector("#advisory-horizon-filters");
+const advisoryPeriodFiltersEl = document.querySelector("#advisory-period-filters");
+const syncAdvisoryHistoryEl = document.querySelector("#sync-advisory-history");
+const advisorySampleCountEl = document.querySelector("#advisory-sample-count");
+const advisoryChartEl = document.querySelector("#advisory-chart");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
 
@@ -123,10 +130,20 @@ const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
+const ADVISORY_CAPTURE_MS = 60000;
+const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
+const ADVISORY_PERIODS = {
+  hour: 60 * 60 * 1000,
+  day: 24 * 60 * 60 * 1000,
+  week: 7 * 24 * 60 * 60 * 1000,
+  month: 31 * 24 * 60 * 60 * 1000,
+  year: 366 * 24 * 60 * 60 * 1000
+};
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
 const transactionHistory = [];
+const advisoryHistory = [];
 const pendingPaperActions = new Set();
 let paperEquity = PAPER_START_EQUITY;
 let martingaleStep = 1;
@@ -139,6 +156,10 @@ let activePriceSocketReconnectTimer = null;
 let historyCommodityFilter = "all";
 let historyPeriodFilter = "all";
 let expandedTransactionId = null;
+let advisoryCommodityFilter = "oil";
+let advisoryHorizonFilter = "intraday";
+let advisoryPeriodFilter = "hour";
+let lastAdvisorySnapshotKey = "";
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 
 for (const commodity of commodities) {
@@ -206,6 +227,38 @@ function renderPeriodFilterButtons() {
     const active = button.dataset.period === historyPeriodFilter;
     button.dataset.active = String(active);
     button.textContent = `${active ? "✓ " : ""}${button.dataset.period === "all" ? "All time" : button.dataset.period[0].toUpperCase() + button.dataset.period.slice(1)}`;
+  });
+}
+
+function renderAdvisoryFilterButtons() {
+  advisoryCommodityFiltersEl.innerHTML = "";
+
+  commodities.forEach(({ id, name }) => {
+    const button = document.createElement("button");
+    const check = document.createElement("span");
+
+    button.type = "button";
+    button.className = "filter-button";
+    button.dataset.advisoryCommodity = id;
+    button.dataset.active = String(advisoryCommodityFilter === id);
+    check.className = "check";
+    check.textContent = advisoryCommodityFilter === id ? "✓" : "";
+    button.append(check, document.createTextNode(name));
+    advisoryCommodityFiltersEl.append(button);
+  });
+
+  advisoryHorizonFiltersEl.querySelectorAll("[data-advisory-horizon]").forEach((button) => {
+    const horizon = button.dataset.advisoryHorizon;
+    const active = horizon === advisoryHorizonFilter;
+    button.dataset.active = String(active);
+    button.textContent = `${active ? "✓ " : ""}${horizon[0].toUpperCase()}${horizon.slice(1)}`;
+  });
+
+  advisoryPeriodFiltersEl.querySelectorAll("[data-advisory-period]").forEach((button) => {
+    const period = button.dataset.advisoryPeriod;
+    const active = period === advisoryPeriodFilter;
+    button.dataset.active = String(active);
+    button.textContent = `${active ? "✓ " : ""}${period[0].toUpperCase()}${period.slice(1)}`;
   });
 }
 
@@ -1129,6 +1182,243 @@ async function saveSharedSettings() {
   }
 }
 
+function getAdvisoryHistoryUrl() {
+  return `${getHistoryApiUrl()}/advisories`;
+}
+
+function mergeAdvisoryHistory(entries = []) {
+  const byKey = new Map(advisoryHistory.map((entry) => [entry.snapshotKey, entry]));
+
+  entries.forEach((entry) => {
+    const price = Number(entry.price);
+    const conviction = Number(entry.conviction);
+    if (!entry.snapshotKey || !Number.isFinite(price) || !Number.isFinite(conviction)) return;
+    byKey.set(entry.snapshotKey, {
+      ...entry,
+      price,
+      conviction,
+      bounded: Number(entry.bounded) || 0
+    });
+  });
+
+  advisoryHistory.splice(
+    0,
+    advisoryHistory.length,
+    ...Array.from(byKey.values()).sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0))
+  );
+}
+
+async function loadSharedAdvisoryHistory(manual = false) {
+  if (!hasHistoryBackend()) {
+    advisoryHistoryStatusEl.textContent = "Backend required";
+    renderAdvisoryChart();
+    return false;
+  }
+
+  try {
+    advisoryHistoryStatusEl.textContent = "Syncing advisory chart";
+    const response = await fetch(`${getAdvisoryHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("advisory history unavailable");
+
+    const data = await response.json();
+    mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
+    advisoryHistoryStatusEl.textContent = `Chart synced ${advisoryHistory.length} sample${advisoryHistory.length === 1 ? "" : "s"}`;
+    renderAdvisoryChart();
+    return true;
+  } catch (error) {
+    advisoryHistoryStatusEl.textContent = manual ? "Chart sync failed" : "Chart backend offline";
+    renderAdvisoryChart();
+    return false;
+  }
+}
+
+async function saveSharedAdvisorySnapshots(snapshots) {
+  if (!hasHistoryBackend() || !snapshots.length) return false;
+
+  try {
+    advisoryHistoryStatusEl.textContent = "Saving advisory sample";
+    const response = await fetch(getAdvisoryHistoryUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ snapshots })
+    });
+    if (!response.ok) throw new Error("advisory save failed");
+
+    const data = await response.json();
+    mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : snapshots);
+    advisoryHistoryStatusEl.textContent = `Chart saved ${advisoryHistory.length} samples`;
+    renderAdvisoryChart();
+    return true;
+  } catch (error) {
+    advisoryHistoryStatusEl.textContent = "Chart save failed";
+    return false;
+  }
+}
+
+function getAdvisorySnapshotKey(commodity, horizon, time) {
+  const minute = Math.floor(new Date(time).getTime() / ADVISORY_CAPTURE_MS);
+  return `${commodity}|${horizon}|${minute}`;
+}
+
+function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSource) {
+  const signals = { ...baseSignals, horizon: horizonWeight[horizon] };
+  const signal = scoreCommodity(commodity, signals);
+  const time = new Date();
+
+  return {
+    snapshotKey: getAdvisorySnapshotKey(commodity, horizon, time),
+    time: time.toISOString(),
+    commodity,
+    commodityName: commodities.find(({ id }) => id === commodity)?.name || commodity,
+    horizon,
+    price,
+    priceSource,
+    bounded: signal.bounded,
+    conviction: signal.conviction,
+    tone: signal.tone,
+    label: signal.label,
+    action: signal.action
+  };
+}
+
+function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
+  if (!latestPrices.has(commodity) || !hasHistoryBackend()) return;
+
+  const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
+  const batchKey = `${commodity}|${minute}`;
+  if (batchKey === lastAdvisorySnapshotKey) return;
+  lastAdvisorySnapshotKey = batchKey;
+
+  const snapshots = ADVISORY_HORIZONS.map((horizon) => (
+    buildAdvisorySnapshot(commodity, horizon, baseSignals, tradePlan.livePrice, tradePlan.priceSource)
+  ));
+  mergeAdvisoryHistory(snapshots);
+  renderAdvisoryChart();
+  saveSharedAdvisorySnapshots(snapshots);
+}
+
+function getAdvisoryPeriodStart() {
+  const ms = ADVISORY_PERIODS[advisoryPeriodFilter] || ADVISORY_PERIODS.hour;
+  return Date.now() - ms;
+}
+
+function getFilteredAdvisorySamples() {
+  const start = getAdvisoryPeriodStart();
+  return advisoryHistory.filter((entry) => (
+    entry.commodity === advisoryCommodityFilter
+    && entry.horizon === advisoryHorizonFilter
+    && new Date(entry.time || 0).getTime() >= start
+  ));
+}
+
+function drawChartMessage(context, canvas, message) {
+  context.clearRect(0, 0, canvas.width, canvas.height);
+  context.fillStyle = "#56646e";
+  context.font = "700 28px Aptos, Segoe UI, sans-serif";
+  context.textAlign = "center";
+  context.fillText(message, canvas.width / 2, canvas.height / 2);
+}
+
+function renderAdvisoryChart() {
+  if (!advisoryChartEl) return;
+
+  const rect = advisoryChartEl.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const width = Math.max(640, Math.round((rect.width || 900) * scale));
+  const height = Math.max(320, Math.round((rect.height || 360) * scale));
+  advisoryChartEl.width = width;
+  advisoryChartEl.height = height;
+
+  const context = advisoryChartEl.getContext("2d");
+  const samples = getFilteredAdvisorySamples();
+  advisorySampleCountEl.textContent = `${samples.length} sample${samples.length === 1 ? "" : "s"}`;
+
+  if (!samples.length) {
+    drawChartMessage(context, advisoryChartEl, "No advisory samples in this window yet");
+    return;
+  }
+
+  const padding = { top: 42 * scale, right: 42 * scale, bottom: 58 * scale, left: 72 * scale };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const times = samples.map((entry) => new Date(entry.time).getTime());
+  const prices = samples.map((entry) => entry.price);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const priceRange = Math.max(maxPrice - minPrice, Math.max(maxPrice * 0.01, 1));
+  const advisoryOffset = priceRange * 0.18;
+  const advisoryValues = samples.map((entry) => {
+    if (entry.tone === "long") return entry.price + advisoryOffset * (entry.conviction / 100);
+    if (entry.tone === "short") return entry.price - advisoryOffset * (entry.conviction / 100);
+    return entry.price;
+  });
+  const allValues = prices.concat(advisoryValues);
+  const minY = Math.min(...allValues) - priceRange * 0.12;
+  const maxY = Math.max(...allValues) + priceRange * 0.12;
+  const yRange = Math.max(maxY - minY, 1);
+  const xFor = (time) => padding.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
+  const yFor = (value) => padding.top + (1 - ((value - minY) / yRange)) * plotHeight;
+
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "rgba(255, 255, 255, 0.72)";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = "rgba(17, 32, 43, 0.12)";
+  context.lineWidth = 1 * scale;
+  context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
+  context.fillStyle = "#56646e";
+  context.textAlign = "right";
+
+  for (let index = 0; index <= 4; index += 1) {
+    const y = padding.top + (plotHeight / 4) * index;
+    const value = maxY - (yRange / 4) * index;
+    context.beginPath();
+    context.moveTo(padding.left, y);
+    context.lineTo(width - padding.right, y);
+    context.stroke();
+    context.fillText(formatPrice(value), padding.left - 10 * scale, y + 4 * scale);
+  }
+
+  function drawLine(values, color, dash = []) {
+    context.beginPath();
+    context.strokeStyle = color;
+    context.lineWidth = 3 * scale;
+    context.setLineDash(dash.map((value) => value * scale));
+    values.forEach((value, index) => {
+      const x = xFor(times[index]);
+      const y = yFor(value);
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+    context.setLineDash([]);
+  }
+
+  drawLine(prices, "#11202b");
+  drawLine(advisoryValues, "#006d5b", [8, 6]);
+
+  context.textAlign = "left";
+  context.fillStyle = "#11202b";
+  context.font = `700 ${15 * scale}px Aptos, Segoe UI, sans-serif`;
+  const title = `${commodities.find(({ id }) => id === advisoryCommodityFilter)?.name || "Commodity"} ${advisoryHorizonFilter} advisory`;
+  context.fillText(title, padding.left, 24 * scale);
+
+  context.fillStyle = "#56646e";
+  context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
+  context.fillText(formatTradeTime(new Date(minTime)), padding.left, height - 24 * scale);
+  context.textAlign = "right";
+  context.fillText(formatTradeTime(new Date(maxTime)), width - padding.right, height - 24 * scale);
+
+  samples.forEach((entry, index) => {
+    if (index % Math.max(1, Math.floor(samples.length / 80)) !== 0) return;
+    context.beginPath();
+    context.fillStyle = entry.tone === "short" ? "#8d2d2d" : entry.tone === "long" ? "#006d5b" : "#735f2d";
+    context.arc(xFor(times[index]), yFor(advisoryValues[index]), 3.5 * scale, 0, Math.PI * 2);
+    context.fill();
+  });
+}
+
 async function saveSharedTransactionHistory() {
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) {
@@ -1883,6 +2173,7 @@ function calculateSignal() {
   executePaperTrading(commodity, commodityMeta, primarySignal, tradePlan);
   renderKarpathyLoop(primarySignal, tradePlan);
   renderPaperTrading(commodity, primarySignal, tradePlan);
+  maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
 }
 
 [
@@ -1910,20 +2201,50 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
   expandedTransactionId = null;
   calculateSignal();
 });
+advisoryCommodityFiltersEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-advisory-commodity]");
+  if (!button) return;
+
+  advisoryCommodityFilter = button.dataset.advisoryCommodity;
+  renderAdvisoryFilterButtons();
+  renderAdvisoryChart();
+});
+advisoryHorizonFiltersEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-advisory-horizon]");
+  if (!button) return;
+
+  advisoryHorizonFilter = button.dataset.advisoryHorizon;
+  renderAdvisoryFilterButtons();
+  renderAdvisoryChart();
+});
+advisoryPeriodFiltersEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-advisory-period]");
+  if (!button) return;
+
+  advisoryPeriodFilter = button.dataset.advisoryPeriod;
+  renderAdvisoryFilterButtons();
+  renderAdvisoryChart();
+});
+syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(true));
 saveHistoryApiEl.addEventListener("click", () => {
   setHistoryApiUrl(historyApiUrlEl.value);
   loadSharedSettings(true);
   loadSharedTransactionHistory(true);
+  loadSharedAdvisoryHistory(true);
 });
 historyApiUrlEl.addEventListener("keydown", (event) => {
   if (event.key === "Enter") {
     setHistoryApiUrl(historyApiUrlEl.value);
     loadSharedSettings(true);
     loadSharedTransactionHistory(true);
+    loadSharedAdvisoryHistory(true);
   }
 });
 syncHistoryEl.addEventListener("click", () => {
-  loadSharedSettings(true).then(() => saveSharedTransactionHistory()).then(() => loadSharedTransactionHistory(true));
+  loadSharedSettings(true)
+    .then(() => saveSharedTransactionHistory())
+    .then(() => loadSharedTransactionHistory(true))
+    .then(() => loadSharedAdvisoryHistory(true));
 });
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
@@ -1937,9 +2258,12 @@ loadPaperState();
 initializeHistoryApiControls();
 renderHistoryFilterButtons();
 renderPeriodFilterButtons();
+renderAdvisoryFilterButtons();
 calculateSignal();
 loadSharedSettings();
 loadSharedTransactionHistory();
+loadSharedAdvisoryHistory();
 connectCoinbaseWebSocket(commoditySelect.value);
 refreshSelectedCoinbasePrice();
 window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
+window.addEventListener("resize", renderAdvisoryChart);
