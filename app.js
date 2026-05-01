@@ -516,6 +516,72 @@ function getDefaultFeatureRequests() {
       votes: 0,
       author: "Peter",
       createdAt: now
+    },
+    {
+      id: "feature-version-control-git",
+      title: "Version control with GIT",
+      description: "Set up a version control system that saves a snapshot of the project as changes are made.",
+      type: "feature",
+      tag: "ai",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-cme-data-feed",
+      title: "Data feed / implement CME data",
+      description: "Integrate API keys from CME provided by Coquest so the app can get real market data.",
+      type: "feature",
+      tag: "data",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-auto-implement-requests",
+      title: "Auto implement new feature requests",
+      description: "Automatically pick up new feature requests and move them into an implementation workflow.",
+      type: "feature",
+      tag: "ai",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-open-brain-video",
+      title: "Open Brain",
+      description: "Add the Open Brain reference video and download workflow into the product research backlog.",
+      type: "feature",
+      tag: "trading",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "feature-browser-tab-logo",
+      title: "Browser Tab to Display ComHedge Logo",
+      description: "Add the ComHedge logo to the browser tab so users can recognize the app quickly.",
+      type: "feature",
+      tag: "ui",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
+    },
+    {
+      id: "bug-screenshot-paste",
+      title: "Add screen shot paste to bug report",
+      description: "Add screenshot paste ability to the bug report so users can show what they are seeing.",
+      type: "bug",
+      tag: "ui",
+      status: "submitted",
+      votes: 0,
+      author: "Peter",
+      createdAt: now
     }
   ];
 }
@@ -527,7 +593,12 @@ function saveFeatureRequests() {
 function loadFeatureRequests() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(FEATURE_REQUESTS_KEY) || "null");
-    const requests = Array.isArray(stored) && stored.length ? stored : getDefaultFeatureRequests();
+    const defaultRequests = getDefaultFeatureRequests();
+    const requests = Array.isArray(stored) && stored.length ? stored : defaultRequests;
+    const knownIds = new Set(requests.map((request) => request.id));
+    defaultRequests.forEach((request) => {
+      if (!knownIds.has(request.id)) requests.push(request);
+    });
     featureRequests.splice(0, featureRequests.length, ...requests);
   } catch (error) {
     featureRequests.splice(0, featureRequests.length, ...getDefaultFeatureRequests());
