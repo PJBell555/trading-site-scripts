@@ -1402,29 +1402,29 @@ ol {
   display: flex;
   flex-direction: column;
   flex-wrap: nowrap;
-  gap: 8px;
+  gap: 10px;
   margin: 0;
   padding: 38px 20px 24px;
 }
 
 .menu-group {
   align-items: center;
-  color: #7f92b2;
+  color: #93b4e8;
   display: flex;
-  font-size: 1rem;
+  font-size: 0.82rem;
   font-weight: 900;
   gap: 12px;
-  letter-spacing: 0;
-  margin: 8px 0 10px;
-  text-transform: none;
+  letter-spacing: 0.12em;
+  margin: 8px 0 2px;
+  text-transform: uppercase;
 }
 
-.menu-group::after {
+.menu-group::before {
   border: 1px solid currentColor;
   border-width: 1px 1px 0 0;
   content: "";
   height: 7px;
-  transform: rotate(-45deg) translateY(2px);
+  transform: rotate(135deg) translateY(-1px);
   width: 7px;
 }
 
@@ -1441,19 +1441,11 @@ ol {
 }
 
 .menu-tree {
-  border-left: 0;
+  border-left: 1px solid rgba(148, 163, 184, 0.24);
   display: grid;
-  gap: 12px;
-  margin: 0 0 18px;
-  padding-left: 20px;
-}
-
-.menu-primary {
-  border-top: 1px solid rgba(148, 163, 184, 0.16);
-  display: grid;
-  gap: 10px;
-  margin-top: 12px;
-  padding-top: 18px;
+  gap: 8px;
+  margin: 0 0 22px 18px;
+  padding-left: 16px;
 }
 
 .menu-button {
@@ -1463,43 +1455,26 @@ ol {
   border-radius: 7px;
   color: #b8c7df;
   display: flex;
-  gap: 14px;
   justify-content: flex-start;
-  min-height: 36px;
-  padding: 6px 8px;
+  min-height: 48px;
+  padding: 9px 14px;
   position: relative;
   width: 100%;
 }
 
 .menu-button::before {
-  display: none;
+  background: rgba(148, 163, 184, 0.32);
+  content: "";
+  display: block;
+  height: 1px;
+  left: -16px;
+  position: absolute;
+  top: 50%;
+  width: 12px;
 }
 
 .menu-button span {
-  align-items: center;
-  color: #7ea8e8;
-  display: inline-grid;
-  font-size: 0.68rem;
-  font-weight: 900;
-  height: 24px;
-  place-items: center;
-  width: 24px;
-}
-
-.menu-section-button {
-  color: #bfdbfe;
-  font-size: 1rem;
-  font-weight: 900;
-  min-height: 48px;
-  padding: 9px 0;
-}
-
-.menu-section-button span {
-  border: 1px solid rgba(147, 197, 253, 0.25);
-  border-radius: 6px;
-  color: #93c5fd;
-  height: 28px;
-  width: 28px;
+  display: none;
 }
 
 .menu-button:hover,
@@ -1511,6 +1486,10 @@ ol {
 
 .menu-button[data-active="true"] {
   color: #fff;
+}
+
+.menu-button[data-active="true"]::before {
+  background: #60a5fa;
 }
 
 .app-main {
