@@ -286,7 +286,9 @@ function defaultSettingsPayload() {
   return {
     generatedAt: new Date().toISOString(),
     source: "cloudflare-github-shared-settings",
-    coinbaseSandboxEnabled: false
+    coinbaseSandboxEnabled: false,
+    users: [],
+    userProfiles: {}
   };
 }
 
@@ -438,7 +440,11 @@ export default {
           ...payload,
           generatedAt: new Date().toISOString(),
           source: "cloudflare-github-shared-settings",
-          coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled)
+          coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled),
+          users: Array.isArray(body.users) ? body.users : payload.users || [],
+          userProfiles: body.userProfiles && typeof body.userProfiles === "object" && !Array.isArray(body.userProfiles)
+            ? body.userProfiles
+            : payload.userProfiles || {}
         };
         const result = await saveSettingsFile(env, file, path, settings);
 

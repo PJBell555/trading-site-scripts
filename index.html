@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Atlas Commodities Advisor</title>
-  <link rel="stylesheet" href="./styles.css?v=editable-paper-risk-1">
+  <title>ComHedge 2</title>
+  <link rel="stylesheet" href="./styles.css?v=comhedge-profile-shell-1">
 </head>
 <body>
-  <section class="access-gate" id="access-gate" aria-label="Atlas password access">
+  <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
     <form class="access-card" id="access-form">
       <p class="eyebrow">Private preview</p>
-      <h1>Atlas Access</h1>
+      <h1>ComHedge 2 Access</h1>
       <p class="lede">Enter your registered email and shared password to open the commodities advisor.</p>
       <label>
         Email address
@@ -20,58 +20,71 @@
         Password
         <input id="access-password" type="password" autocomplete="current-password" placeholder="Enter password" required>
       </label>
-      <button class="access-button" type="submit">Unlock Atlas</button>
+      <button class="access-button" type="submit">Unlock ComHedge 2</button>
       <p class="access-error" id="access-error" role="alert"></p>
     </form>
   </section>
 
   <div class="shell app-shell" id="app-shell" hidden>
-    <header class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Coinbase futures decision support</p>
-        <h1>Trade Energy and Metals on Coinbase</h1>
-        <p class="lede">
-          Start with an oil-first directional advisor for Coinbase commodity futures, then layer in live data once the logic earns trust.
-        </p>
+    <aside class="side-nav" aria-label="ComHedge 2 navigation">
+      <div class="brand-lockup">
+        <span class="brand-mark">CH</span>
+        <strong>ComHedge 2</strong>
       </div>
-      <div class="hero-stats" aria-label="Commodity coverage">
-        <div>
-          <span class="stat-label">Commodity contracts</span>
-          <strong id="contract-count">6</strong>
+      <nav class="app-menu" aria-label="ComHedge 2 sections">
+        <span class="menu-group">Strategy</span>
+        <div class="menu-tree">
+          <button class="menu-button" type="button" data-section-target="advisories" data-active="true"><span>A</span>Advisories</button>
+          <button class="menu-button" type="button" data-section-target="second-opinion"><span>2</span>Second Opinion</button>
+          <button class="menu-button" type="button" data-section-target="open-brain"><span>B</span>Open Brain</button>
         </div>
-        <div>
-          <span class="stat-label">Primary model</span>
-          <strong id="primary-model-stat">ChatGPT 5.5</strong>
+        <span class="menu-group">Trading</span>
+        <div class="menu-tree">
+          <button class="menu-button" type="button" data-section-target="trading"><span>T</span>Paper Trades</button>
+          <button class="menu-button" type="button" data-section-target="features"><span>F</span>Feature Requests</button>
+          <button class="menu-button" type="button" data-section-target="users"><span>U</span>Users</button>
         </div>
-        <div>
-          <span class="stat-label">Mode</span>
-          <strong>Advisory</strong>
-        </div>
-      </div>
-    </header>
+      </nav>
+    </aside>
 
-    <section class="notice" aria-label="Disclaimer">
-      <strong>Important:</strong>
-      <span>
-        Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
-      </span>
-    </section>
+    <div class="app-main">
+      <header class="hero">
+        <div class="hero-copy">
+          <p class="eyebrow">Coinbase futures decision support</p>
+          <h1>Trade Energy and Metals on Coinbase</h1>
+          <p class="lede">
+            Start with an oil-first directional advisor for Coinbase commodity futures, then layer in live data once the logic earns trust.
+          </p>
+        </div>
+        <div class="hero-stats" aria-label="Commodity coverage">
+          <div>
+            <span class="stat-label">Commodity contracts</span>
+            <strong id="contract-count">6</strong>
+          </div>
+          <div>
+            <span class="stat-label">Primary model</span>
+            <strong id="primary-model-stat">ChatGPT 5.5</strong>
+          </div>
+          <div>
+            <span class="stat-label">Mode</span>
+            <strong>Advisory</strong>
+          </div>
+        </div>
+      </header>
 
-    <nav class="app-menu" aria-label="Atlas sections">
-      <button class="menu-button" type="button" data-section-target="advisories" data-active="true">Advisories</button>
-      <button class="menu-button" type="button" data-section-target="second-opinion">Second Opinion</button>
-      <button class="menu-button" type="button" data-section-target="open-brain">Open Brain</button>
-      <button class="menu-button" type="button" data-section-target="trading">Trading</button>
-      <button class="menu-button" type="button" data-section-target="features">Feature Requests</button>
-      <button class="menu-button" type="button" data-section-target="users">Users</button>
-    </nav>
+      <section class="notice" aria-label="Disclaimer">
+        <strong>Important:</strong>
+        <span>
+          Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
+        </span>
+      </section>
 
     <section class="band user-management" data-app-section="users" aria-label="User management">
       <div class="section-heading">
         <div>
           <p class="eyebrow">Access roster</p>
           <h2>User Management</h2>
-          <p>View and manage simple Atlas user accounts.</p>
+          <p>View and manage simple ComHedge 2 user accounts.</p>
         </div>
         <span class="shared-status" id="user-management-status">Local roster</span>
       </div>
@@ -115,6 +128,8 @@
               <th>Created</th>
               <th>Last Active</th>
               <th>Sessions</th>
+              <th>Equity</th>
+              <th>Risk</th>
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -244,7 +259,7 @@
         <div>
           <span class="stat-label">Memory endpoint</span>
           <div class="filter-row">
-            <input class="backend-input" id="open-brain-endpoint" type="url" placeholder="Future MCP or memory API URL">
+            <input class="backend-input" id="open-brain-endpoint" type="url" list="backend-url-options" placeholder="Future MCP or memory API URL">
             <button class="filter-button" type="button" id="save-open-brain-endpoint">Save endpoint</button>
           </div>
         </div>
@@ -521,7 +536,7 @@
             <div>
               <span class="stat-label">Backend API</span>
               <div class="filter-row">
-                <input class="backend-input" id="history-api-url" type="url" placeholder="Backend URL">
+                <input class="backend-input" id="history-api-url" type="url" list="backend-url-options" placeholder="Backend URL">
                 <button class="filter-button" type="button" id="save-history-api">Save API</button>
                 <button class="filter-button" type="button" id="sync-history">Sync now</button>
                 <button class="filter-button" type="button" id="clean-history">Clean ledger</button>
@@ -620,14 +635,22 @@
         </div>
         <div class="accuracy-dashboard" aria-label="Advisory accuracy summary">
           <div class="accuracy-card" id="accuracy-verdict-card">
-            <span class="stat-label">60% test</span>
+            <span class="stat-label">Threshold test</span>
             <strong id="accuracy-verdict">Needs data</strong>
             <p id="accuracy-verdict-copy">Waiting for enough evaluated advisories.</p>
           </div>
           <div class="accuracy-card">
-            <span class="stat-label">High conviction accuracy</span>
+            <label class="paper-edit-field">
+              <span class="stat-label">Advisory score threshold</span>
+              <input id="advisory-score-threshold" type="number" min="0" max="100" step="1" value="60">
+            </label>
+            <strong id="accuracy-threshold-display">60+</strong>
+            <p>Score is conviction, not historical accuracy.</p>
+          </div>
+          <div class="accuracy-card">
+            <span class="stat-label">Qualified accuracy</span>
             <strong id="accuracy-high-conviction">-</strong>
-            <p id="accuracy-high-conviction-count">0 calls above 60</p>
+            <p id="accuracy-high-conviction-count">0 calls at or above threshold</p>
           </div>
           <div class="accuracy-card">
             <span class="stat-label">All evaluated calls</span>
@@ -648,7 +671,7 @@
                 <tr>
                   <th>Time</th>
                   <th>Signal</th>
-                  <th>Conviction</th>
+                  <th>Advisory score</th>
                   <th>Then</th>
                   <th>After</th>
                   <th>Result</th>
@@ -668,8 +691,14 @@
         </div>
       </section>
     </main>
+    </div>
   </div>
 
-  <script src="./app.js?v=editable-paper-risk-1"></script>
+  <datalist id="backend-url-options">
+    <option value="https://trading-site-scripts.peter-bell54.workers.dev">Cloudflare Worker backend</option>
+    <option value="https://pjbell555.github.io/trading-site-scripts/">GitHub Pages app only</option>
+  </datalist>
+
+  <script src="./app.js?v=comhedge-profile-shell-1"></script>
 </body>
 </html>

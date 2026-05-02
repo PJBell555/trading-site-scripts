@@ -110,6 +110,8 @@ const advisorySampleCountEl = document.querySelector("#advisory-sample-count");
 const accuracyVerdictCardEl = document.querySelector("#accuracy-verdict-card");
 const accuracyVerdictEl = document.querySelector("#accuracy-verdict");
 const accuracyVerdictCopyEl = document.querySelector("#accuracy-verdict-copy");
+const advisoryScoreThresholdEl = document.querySelector("#advisory-score-threshold");
+const accuracyThresholdDisplayEl = document.querySelector("#accuracy-threshold-display");
 const accuracyHighConvictionEl = document.querySelector("#accuracy-high-conviction");
 const accuracyHighConvictionCountEl = document.querySelector("#accuracy-high-conviction-count");
 const accuracyAllCallsEl = document.querySelector("#accuracy-all-calls");
@@ -218,6 +220,7 @@ const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
 const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
 const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
 const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
+const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const ADVISORY_CAPTURE_MS = 120000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -232,7 +235,7 @@ const ADVISORY_EVALUATION_WINDOWS = {
   swing: 60 * 60 * 1000,
   position: 4 * 60 * 60 * 1000
 };
-const HIGH_CONVICTION_THRESHOLD = 60;
+const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -261,6 +264,7 @@ let userSearchQuery = "";
 let activeSection = "advisories";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
+let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
 let lastPrimarySignal = null;
 let lastTradePlan = null;
 let lastCommodityMeta = commodities[0];
@@ -293,6 +297,10 @@ function setActiveSection(section) {
   if (section === "advisories") renderAdvisoryChart();
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
+  if (section === "users") {
+    userSearchQuery = userSearchInputEl.value;
+    renderUserManagement();
+  }
 }
 
 function loadOpenBrainMemory() {
@@ -670,6 +678,8 @@ function findRegisteredUserByEmail(email) {
 function normalizeUserRecord(user, fallback = {}) {
   const email = normalizeEmail(user?.email || fallback.email);
   if (!email) return null;
+  const profileEquity = Number(user?.paperBaseEquity ?? fallback.paperBaseEquity ?? PAPER_START_EQUITY);
+  const profileRiskPct = Number(user?.paperRiskPct ?? fallback.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT);
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -678,6 +688,8 @@ function normalizeUserRecord(user, fallback = {}) {
     createdAt: getTransactionDate(user?.createdAt || fallback.createdAt || new Date()).toISOString(),
     lastActiveAt: user?.lastActiveAt || fallback.lastActiveAt || null,
     sessions: Math.max(0, Number(user?.sessions ?? fallback.sessions ?? 0) || 0),
+    paperBaseEquity: Number.isFinite(profileEquity) ? Math.max(0, profileEquity) : PAPER_START_EQUITY,
+    paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
     enabled: user?.enabled === false ? false : fallback.enabled !== false
   };
 }
@@ -708,6 +720,136 @@ function loadUserRoster() {
     userRoster.splice(0, userRoster.length, ...getDefaultUsers().map((user) => normalizeUserRecord(user)).filter(Boolean));
     saveUserRoster();
   }
+}
+
+function getCurrentAccessEmail() {
+  return normalizeEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
+}
+
+function getCurrentUserProfile() {
+  return findRegisteredUserByEmail(getCurrentAccessEmail());
+}
+
+function recomputePaperEquityFromBase() {
+  const closedPnl = getClosedPaperTrades().reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  paperEquity = paperBaseEquity + closedPnl;
+}
+
+function applyCurrentUserPaperSettings() {
+  const user = getCurrentUserProfile();
+  if (!user) return false;
+
+  paperBaseEquity = Number.isFinite(Number(user.paperBaseEquity))
+    ? Math.max(0, Number(user.paperBaseEquity))
+    : PAPER_START_EQUITY;
+  paperRiskPct = Number.isFinite(Number(user.paperRiskPct))
+    ? clamp(Number(user.paperRiskPct), 0.1, 25)
+    : PAPER_DEFAULT_RISK_PCT;
+  recomputePaperEquityFromBase();
+  syncPaperInputs();
+  return true;
+}
+
+function saveCurrentUserPaperSettings() {
+  const user = getCurrentUserProfile();
+  if (!user) return false;
+
+  user.paperBaseEquity = paperBaseEquity;
+  user.paperRiskPct = paperRiskPct;
+  saveUserRoster();
+  renderUserManagement();
+  return true;
+}
+
+function getSharedUserProfilesPayload() {
+  return userRoster.reduce((profiles, user) => {
+    profiles[user.email] = {
+      paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
+      paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT
+    };
+    return profiles;
+  }, {});
+}
+
+function getSharedUsersPayload() {
+  return userRoster.map((user) => normalizeUserRecord(user)).filter(Boolean);
+}
+
+function mergeUserRecords(existing, incoming) {
+  const existingLastActive = existing.lastActiveAt ? getTransactionDate(existing.lastActiveAt).getTime() : 0;
+  const incomingLastActive = incoming.lastActiveAt ? getTransactionDate(incoming.lastActiveAt).getTime() : 0;
+
+  return {
+    ...existing,
+    ...incoming,
+    id: existing.id || incoming.id,
+    createdAt: existing.createdAt && getTransactionDate(existing.createdAt) < getTransactionDate(incoming.createdAt)
+      ? existing.createdAt
+      : incoming.createdAt,
+    lastActiveAt: incomingLastActive > existingLastActive ? incoming.lastActiveAt : existing.lastActiveAt,
+    sessions: Math.max(Number(existing.sessions) || 0, Number(incoming.sessions) || 0),
+    paperBaseEquity: Number.isFinite(Number(incoming.paperBaseEquity))
+      ? Number(incoming.paperBaseEquity)
+      : existing.paperBaseEquity,
+    paperRiskPct: Number.isFinite(Number(incoming.paperRiskPct))
+      ? Number(incoming.paperRiskPct)
+      : existing.paperRiskPct,
+    enabled: incoming.enabled !== false
+  };
+}
+
+function mergeSharedUsers(users) {
+  if (!Array.isArray(users)) return false;
+
+  const usersByEmail = new Map(userRoster.map((user) => [normalizeEmail(user.email), user]));
+  let changed = false;
+
+  users.forEach((user) => {
+    const normalized = normalizeUserRecord(user);
+    if (!normalized) return;
+
+    const existing = usersByEmail.get(normalized.email);
+    if (!existing) {
+      usersByEmail.set(normalized.email, normalized);
+      changed = true;
+      return;
+    }
+
+    const merged = mergeUserRecords(existing, normalized);
+    if (JSON.stringify(merged) !== JSON.stringify(existing)) changed = true;
+    usersByEmail.set(normalized.email, merged);
+  });
+
+  if (changed) {
+    userRoster.splice(0, userRoster.length, ...Array.from(usersByEmail.values()));
+    saveUserRoster();
+  }
+
+  return changed;
+}
+
+function mergeSharedUserProfiles(profiles) {
+  if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return false;
+
+  let changed = false;
+  userRoster.forEach((user) => {
+    const profile = profiles[normalizeEmail(user.email)];
+    if (!profile || typeof profile !== "object") return;
+
+    const profileEquity = Number(profile.paperBaseEquity);
+    const profileRiskPct = Number(profile.paperRiskPct);
+    if (Number.isFinite(profileEquity)) {
+      user.paperBaseEquity = Math.max(0, profileEquity);
+      changed = true;
+    }
+    if (Number.isFinite(profileRiskPct)) {
+      user.paperRiskPct = clamp(profileRiskPct, 0.1, 25);
+      changed = true;
+    }
+  });
+
+  if (changed) saveUserRoster();
+  return changed;
 }
 
 function formatUserDate(value) {
@@ -773,7 +915,7 @@ function renderUserManagement() {
   if (!filteredUsers.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 8;
     cell.textContent = "No users match the current search.";
     row.append(cell);
     userTableBodyEl.append(row);
@@ -811,6 +953,7 @@ function renderUserManagement() {
     action.addEventListener("click", () => {
       user.enabled = user.enabled === false;
       saveUserRoster();
+      saveSharedSettings();
       renderUserManagement();
     });
     actionCell.append(action);
@@ -820,6 +963,8 @@ function renderUserManagement() {
       formatUserDate(user.createdAt),
       formatRelativeDate(user.lastActiveAt),
       String(Number(user.sessions) || 0),
+      formatMoney(user.paperBaseEquity ?? PAPER_START_EQUITY),
+      `${Number(user.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT).toFixed(2).replace(/\.?0+$/, "")}%`,
       status,
       actionCell
     ].forEach((value) => {
@@ -869,9 +1014,12 @@ function addUser(name, email) {
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
     sessions: 0,
+    paperBaseEquity: PAPER_START_EQUITY,
+    paperRiskPct: PAPER_DEFAULT_RISK_PCT,
     enabled: true
   });
   saveUserRoster();
+  saveSharedSettings();
   userNameInputEl.value = "";
   userEmailInputEl.value = "";
   renderUserManagement();
@@ -1143,7 +1291,7 @@ async function handleAccessSubmit(event) {
   const registeredUser = findRegisteredUserByEmail(email);
 
   if (!registeredUser) {
-    accessErrorEl.textContent = "Email is not registered for Atlas access.";
+    accessErrorEl.textContent = "Email is not registered for ComHedge 2 access.";
     accessPasswordEl.value = "";
     accessEmailEl.focus();
     return;
@@ -2040,7 +2188,9 @@ function updatePaperEquitySetting() {
   const closedPnl = getClosedPaperTrades().reduce((total, entry) => total + getDisplayPnl(entry), 0);
   paperBaseEquity = value;
   paperEquity = paperBaseEquity + closedPnl;
+  saveCurrentUserPaperSettings();
   savePaperState();
+  saveSharedSettings();
   calculateSignal();
 }
 
@@ -2053,7 +2203,9 @@ function updatePaperRiskSetting() {
 
   paperRiskPct = clamp(value, 0.1, 25);
   paperRiskInputEl.value = String(Math.round(paperRiskPct * 100) / 100);
+  saveCurrentUserPaperSettings();
   savePaperState();
+  saveSharedSettings();
   calculateSignal();
 }
 
@@ -2254,6 +2406,13 @@ async function loadSharedSettings(manual = false) {
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
+    const usersChanged = mergeSharedUsers(settings.users);
+    const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
+    if (usersChanged || profilesChanged) {
+      applyCurrentUserPaperSettings();
+      renderUserManagement();
+      calculateSignal();
+    }
     setCoinbaseSandboxEnabled(Boolean(settings.coinbaseSandboxEnabled));
     coinbaseSandboxStatusEl.textContent = settings.coinbaseSandboxEnabled ? "Sandbox armed" : "Off";
     return true;
@@ -2275,7 +2434,9 @@ async function saveSharedSettings() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        coinbaseSandboxEnabled: isCoinbaseSandboxEnabled()
+        coinbaseSandboxEnabled: isCoinbaseSandboxEnabled(),
+        users: getSharedUsersPayload(),
+        userProfiles: getSharedUserProfilesPayload()
       })
     });
     if (!response.ok) throw new Error("settings save failed");
@@ -2427,6 +2588,26 @@ function formatPercent(value) {
   return `${Math.round(value)}%`;
 }
 
+function loadAdvisoryScoreThreshold() {
+  const stored = Number(window.localStorage.getItem(ADVISORY_SCORE_THRESHOLD_KEY));
+  advisoryScoreThreshold = Number.isFinite(stored)
+    ? clamp(Math.round(stored), 0, 100)
+    : DEFAULT_ADVISORY_SCORE_THRESHOLD;
+  advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
+  accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+}
+
+function saveAdvisoryScoreThreshold() {
+  const value = Number(advisoryScoreThresholdEl.value);
+  advisoryScoreThreshold = Number.isFinite(value)
+    ? clamp(Math.round(value), 0, 100)
+    : DEFAULT_ADVISORY_SCORE_THRESHOLD;
+  window.localStorage.setItem(ADVISORY_SCORE_THRESHOLD_KEY, String(advisoryScoreThreshold));
+  advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
+  accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+  renderAdvisoryChart();
+}
+
 function getAdvisoryEvaluationWindow() {
   return ADVISORY_EVALUATION_WINDOWS[advisoryHorizonFilter] || ADVISORY_EVALUATION_WINDOWS.intraday;
 }
@@ -2467,7 +2648,7 @@ function evaluateAdvisorySamples(samples) {
       endPrice,
       move,
       correct,
-      highConviction: Number(entry.conviction) >= HIGH_CONVICTION_THRESHOLD
+      qualified: Number(entry.conviction) >= advisoryScoreThreshold
     };
   }).filter(Boolean);
 }
@@ -2535,7 +2716,7 @@ function renderAccuracyOutcomes(evaluations) {
     [
       formatTradeTime(item.entry.time),
       item.entry.label || item.entry.tone,
-      `${Math.round(Number(item.entry.conviction) || 0)}%`,
+      `${Math.round(Number(item.entry.conviction) || 0)}${item.qualified ? " qualified" : ""}`,
       formatPrice(item.startPrice),
       `${formatPrice(item.endPrice)} (${item.move >= 0 ? "+" : ""}${formatPrice(item.move)})`,
       item.correct ? "Correct" : "Wrong"
@@ -2551,27 +2732,28 @@ function renderAccuracyOutcomes(evaluations) {
 function renderAdvisoryAccuracy(samples) {
   const evaluations = evaluateAdvisorySamples(samples);
   const allSummary = summarizeEvaluations(evaluations);
-  const highSummary = summarizeEvaluations(evaluations, (item) => item.highConviction);
+  const qualifiedSummary = summarizeEvaluations(evaluations, (item) => item.qualified);
   const averageAbsMove = evaluations.length
     ? evaluations.reduce((total, item) => total + Math.abs(item.move), 0) / evaluations.length
     : NaN;
   const windowMinutes = Math.round(getAdvisoryEvaluationWindow() / 60000);
   const sampleFloor = 10;
-  const isReady = highSummary.count >= sampleFloor && highSummary.accuracy >= 60;
+  const isReady = qualifiedSummary.count >= sampleFloor && qualifiedSummary.accuracy >= 60;
 
   accuracyVerdictCardEl.dataset.ready = String(isReady);
-  accuracyVerdictEl.textContent = highSummary.count < sampleFloor
+  accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+  accuracyVerdictEl.textContent = qualifiedSummary.count < sampleFloor
     ? "Needs more calls"
     : isReady
       ? "Passing"
       : "Below 60%";
-  accuracyVerdictCopyEl.textContent = highSummary.count < sampleFloor
-    ? `Need ${sampleFloor - highSummary.count} more high-conviction calls above ${HIGH_CONVICTION_THRESHOLD}.`
+  accuracyVerdictCopyEl.textContent = qualifiedSummary.count < sampleFloor
+    ? `Need ${sampleFloor - qualifiedSummary.count} more evaluated calls with score ${advisoryScoreThreshold}+.`
     : isReady
-      ? "High-conviction calls are above the 60% target."
-      : "High-conviction calls are not reliable enough yet.";
-  accuracyHighConvictionEl.textContent = formatPercent(highSummary.accuracy);
-  accuracyHighConvictionCountEl.textContent = `${highSummary.correct} of ${highSummary.count} calls above ${HIGH_CONVICTION_THRESHOLD}`;
+      ? "Qualified calls are above the 60% accuracy target."
+      : "Qualified calls are not reliable enough yet.";
+  accuracyHighConvictionEl.textContent = formatPercent(qualifiedSummary.accuracy);
+  accuracyHighConvictionCountEl.textContent = `${qualifiedSummary.correct} of ${qualifiedSummary.count} calls with score ${advisoryScoreThreshold}+`;
   accuracyAllCallsEl.textContent = formatPercent(allSummary.accuracy);
   accuracyAllCountEl.textContent = `${allSummary.correct} of ${allSummary.count} evaluated`;
   accuracyAverageMoveEl.textContent = Number.isFinite(averageAbsMove) ? formatPrice(averageAbsMove) : "-";
@@ -3256,6 +3438,15 @@ function getEntryDetail(entry) {
     ? ((entry.side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice) * contractMultiplier * contracts)
     : NaN));
   const netPnl = Number(entry.netPnl ?? closingEntry?.netPnl ?? (Number(entry.pnl) || (Number.isFinite(grossPnl) ? grossPnl - totalFees : NaN)));
+  const priceMove = Number.isFinite(entryPrice) && Number.isFinite(exitPrice)
+    ? (entry.side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice)
+    : NaN;
+  const marginReturn = Number.isFinite(netPnl) && Number.isFinite(capital) && capital > 0
+    ? (netPnl / capital) * 100
+    : NaN;
+  const notionalReturn = Number.isFinite(netPnl) && Number.isFinite(notionalValue) && notionalValue > 0
+    ? (netPnl / notionalValue) * 100
+    : NaN;
   const openedAt = entry.openedAt
     ? new Date(entry.openedAt)
     : openingEntry?.openedAt ? new Date(openingEntry.openedAt)
@@ -3286,8 +3477,11 @@ function getEntryDetail(entry) {
     closeFee,
     totalFees,
     feeLabel,
+    priceMove,
     grossPnl,
     netPnl: Number.isFinite(netPnl) ? netPnl : Number(entry.pnl) || 0,
+    marginReturn,
+    notionalReturn,
     openedAt,
     closedAt,
     durationMs
@@ -3339,8 +3533,11 @@ function renderTransactionDetail(entry) {
     ["Open fee", Number.isFinite(detail.openFee) ? formatMoney(detail.openFee) : "-"],
     ["Close fee", Number.isFinite(detail.closeFee) ? formatMoney(detail.closeFee) : "-"],
     ["Total fees", Number.isFinite(detail.totalFees) ? formatMoney(detail.totalFees) : "-"],
+    ["Price move x multiplier", Number.isFinite(detail.priceMove) ? `${formatSignedMoney(detail.priceMove)} x ${detail.contractMultiplier} x ${detail.contracts}` : "-"],
     ["Gross P/L", Number.isFinite(detail.grossPnl) ? formatSignedMoney(detail.grossPnl) : "-"],
     ["Net P/L", Number.isFinite(detail.netPnl) ? formatSignedMoney(detail.netPnl) : "-"],
+    ["Return on margin", Number.isFinite(detail.marginReturn) ? `${detail.marginReturn >= 0 ? "+" : ""}${detail.marginReturn.toFixed(1)}%` : "-"],
+    ["Return on notional", Number.isFinite(detail.notionalReturn) ? `${detail.notionalReturn >= 0 ? "+" : ""}${detail.notionalReturn.toFixed(2)}%` : "-"],
     ["Fee model", detail.feeLabel],
     ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
     ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],
@@ -3669,6 +3866,7 @@ advisoryPeriodFiltersEl.addEventListener("click", (event) => {
   renderAdvisoryChart();
 });
 syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(true));
+advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
 saveHistoryApiEl.addEventListener("click", () => {
   setHistoryApiUrl(historyApiUrlEl.value);
   loadSharedSettings(true);
@@ -3783,10 +3981,12 @@ function initializeApp() {
   if (appStarted) return;
   appStarted = true;
 
+  loadUserRoster();
   loadPaperState();
+  applyCurrentUserPaperSettings();
   loadModelSettings();
   loadOpenBrainMemory();
-  loadUserRoster();
+  loadAdvisoryScoreThreshold();
   loadFeatureRequests();
   markCurrentSessionActive();
   renderPrimaryModelSelector();
