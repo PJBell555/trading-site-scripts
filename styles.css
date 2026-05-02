@@ -1443,9 +1443,9 @@ ol {
 .menu-tree {
   border-left: 1px solid rgba(148, 163, 184, 0.24);
   display: grid;
-  gap: 8px;
-  margin: 0 0 22px 18px;
-  padding-left: 16px;
+  gap: 18px;
+  margin: 0 0 22px 22px;
+  padding-left: 28px;
 }
 
 .menu-button {
@@ -1455,9 +1455,10 @@ ol {
   border-radius: 7px;
   color: #b8c7df;
   display: flex;
+  gap: 22px;
   justify-content: flex-start;
-  min-height: 48px;
-  padding: 9px 14px;
+  min-height: 56px;
+  padding: 10px 16px;
   position: relative;
   width: 100%;
 }
@@ -1467,14 +1468,19 @@ ol {
   content: "";
   display: block;
   height: 1px;
-  left: -16px;
+  left: -29px;
   position: absolute;
   top: 50%;
-  width: 12px;
+  width: 23px;
 }
 
 .menu-button span {
-  display: none;
+  color: #7fb2ff;
+  display: inline-block;
+  flex: 0 0 28px;
+  font-size: 0.98rem;
+  font-weight: 900;
+  text-align: center;
 }
 
 .menu-button:hover,
@@ -1490,6 +1496,7 @@ ol {
 
 .menu-button[data-active="true"]::before {
   background: #60a5fa;
+  height: 2px;
 }
 
 .app-main {
