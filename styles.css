@@ -220,9 +220,36 @@ body {
   width: 40px;
 }
 
+.user-avatar img {
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
 .user-profile strong,
 .user-profile span {
   display: block;
+}
+
+.user-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.photo-upload-button {
+  align-items: center;
+  display: inline-flex;
+}
+
+.photo-upload-button input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
 }
 
 .user-status {
@@ -464,9 +491,9 @@ body {
   grid-template-columns: minmax(180px, 1fr) 160px 160px auto;
   align-items: end;
   padding: 14px;
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.28);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.58);
+  background: #0f172a;
 }
 
 .feature-form label {
@@ -478,7 +505,15 @@ body {
 .feature-form input,
 .feature-form select,
 .feature-form textarea {
+  background: #081225;
+  border: 1px solid rgba(147, 197, 253, 0.28);
+  color: #f8fafc;
   width: 100%;
+}
+
+.feature-form input::placeholder,
+.feature-form textarea::placeholder {
+  color: #8aa2c5;
 }
 
 .feature-description-field {
@@ -1317,7 +1352,7 @@ ol {
   align-items: start;
   display: grid;
   gap: 0;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 300px minmax(0, 1fr);
   margin: 0;
   min-height: 100vh;
   padding: 0;
@@ -1340,7 +1375,7 @@ ol {
   display: flex;
   gap: 12px;
   min-height: 58px;
-  padding: 0 20px;
+  padding: 0 22px;
 }
 
 .brand-lockup strong {
@@ -1367,75 +1402,104 @@ ol {
   display: flex;
   flex-direction: column;
   flex-wrap: nowrap;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
-  padding: 36px 18px 24px;
+  padding: 38px 20px 24px;
 }
 
 .menu-group {
   align-items: center;
   color: #7f92b2;
   display: flex;
-  font-size: 0.75rem;
+  font-size: 1rem;
   font-weight: 900;
-  gap: 8px;
-  letter-spacing: 0.12em;
-  margin: 18px 8px 4px;
-  text-transform: uppercase;
+  gap: 12px;
+  letter-spacing: 0;
+  margin: 8px 0 10px;
+  text-transform: none;
 }
 
-.menu-group::before {
-  border: 1px solid rgba(147, 197, 253, 0.42);
-  border-width: 0 1px 1px 0;
+.menu-group::after {
+  border: 1px solid currentColor;
+  border-width: 1px 1px 0 0;
   content: "";
-  display: inline-block;
   height: 7px;
-  transform: rotate(45deg) translateY(-2px);
+  transform: rotate(-45deg) translateY(2px);
   width: 7px;
 }
 
+.menu-group-icon {
+  align-items: center;
+  border: 1px solid rgba(147, 197, 253, 0.32);
+  border-radius: 999px;
+  color: #93c5fd;
+  display: inline-grid;
+  font-size: 0.72rem;
+  height: 24px;
+  place-items: center;
+  width: 24px;
+}
+
 .menu-tree {
-  border-left: 1px solid rgba(148, 163, 184, 0.22);
+  border-left: 0;
   display: grid;
-  gap: 4px;
-  margin-left: 15px;
-  padding-left: 12px;
+  gap: 12px;
+  margin: 0 0 18px;
+  padding-left: 20px;
+}
+
+.menu-primary {
+  border-top: 1px solid rgba(148, 163, 184, 0.16);
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 18px;
 }
 
 .menu-button {
   align-items: center;
   background: transparent;
   border: 1px solid transparent;
-  border-radius: 6px;
+  border-radius: 7px;
   color: #b8c7df;
   display: flex;
-  gap: 12px;
+  gap: 14px;
   justify-content: flex-start;
-  min-height: 38px;
-  padding: 7px 10px;
+  min-height: 36px;
+  padding: 6px 8px;
   position: relative;
   width: 100%;
 }
 
 .menu-button::before {
-  background: rgba(148, 163, 184, 0.32);
-  content: "";
-  height: 1px;
-  left: -13px;
-  position: absolute;
-  top: 50%;
-  width: 10px;
+  display: none;
 }
 
 .menu-button span {
   align-items: center;
   color: #7ea8e8;
   display: inline-grid;
-  font-size: 0.78rem;
+  font-size: 0.68rem;
   font-weight: 900;
   height: 24px;
   place-items: center;
   width: 24px;
+}
+
+.menu-section-button {
+  color: #bfdbfe;
+  font-size: 1rem;
+  font-weight: 900;
+  min-height: 48px;
+  padding: 9px 0;
+}
+
+.menu-section-button span {
+  border: 1px solid rgba(147, 197, 253, 0.25);
+  border-radius: 6px;
+  color: #93c5fd;
+  height: 28px;
+  width: 28px;
 }
 
 .menu-button:hover,
@@ -1445,8 +1509,8 @@ ol {
   color: #fff;
 }
 
-.menu-button[data-active="true"]::before {
-  background: #60a5fa;
+.menu-button[data-active="true"] {
+  color: #fff;
 }
 
 .app-main {

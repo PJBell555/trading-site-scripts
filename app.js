@@ -286,6 +286,16 @@ function showAppShell() {
   appShellEl.hidden = false;
 }
 
+function showUserManagement() {
+  loadUserRoster();
+  userSearchQuery = userSearchInputEl.value.trim();
+  renderUserManagement();
+  window.requestAnimationFrame(() => {
+    userSearchQuery = userSearchInputEl.value.trim();
+    renderUserManagement();
+  });
+}
+
 function setActiveSection(section) {
   activeSection = section;
   menuButtons.forEach((button) => {
@@ -297,10 +307,7 @@ function setActiveSection(section) {
   if (section === "advisories") renderAdvisoryChart();
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
-  if (section === "users") {
-    userSearchQuery = userSearchInputEl.value;
-    renderUserManagement();
-  }
+  if (section === "users") showUserManagement();
 }
 
 function loadOpenBrainMemory() {
@@ -680,6 +687,7 @@ function normalizeUserRecord(user, fallback = {}) {
   if (!email) return null;
   const profileEquity = Number(user?.paperBaseEquity ?? fallback.paperBaseEquity ?? PAPER_START_EQUITY);
   const profileRiskPct = Number(user?.paperRiskPct ?? fallback.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT);
+  const avatarDataUrl = String(user?.avatarDataUrl || fallback.avatarDataUrl || "");
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -690,6 +698,7 @@ function normalizeUserRecord(user, fallback = {}) {
     sessions: Math.max(0, Number(user?.sessions ?? fallback.sessions ?? 0) || 0),
     paperBaseEquity: Number.isFinite(profileEquity) ? Math.max(0, profileEquity) : PAPER_START_EQUITY,
     paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
+    avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
     enabled: user?.enabled === false ? false : fallback.enabled !== false
   };
 }
@@ -794,6 +803,7 @@ function mergeUserRecords(existing, incoming) {
     paperRiskPct: Number.isFinite(Number(incoming.paperRiskPct))
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
+    avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
     enabled: incoming.enabled !== false
   };
 }
@@ -885,6 +895,48 @@ function getUserInitials(user) {
     .join("") || "U";
 }
 
+function resizeUserPhoto(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !file.type.startsWith("image/")) {
+      reject(new Error("Choose an image file"));
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.addEventListener("error", () => reject(new Error("Could not read image")));
+    reader.addEventListener("load", () => {
+      const image = new Image();
+      image.addEventListener("error", () => reject(new Error("Could not load image")));
+      image.addEventListener("load", () => {
+        const size = 128;
+        const canvas = document.createElement("canvas");
+        const context = canvas.getContext("2d");
+        const sourceSize = Math.min(image.naturalWidth, image.naturalHeight);
+        const sourceX = (image.naturalWidth - sourceSize) / 2;
+        const sourceY = (image.naturalHeight - sourceSize) / 2;
+
+        canvas.width = size;
+        canvas.height = size;
+        context.drawImage(image, sourceX, sourceY, sourceSize, sourceSize, 0, 0, size, size);
+        resolve(canvas.toDataURL("image/jpeg", 0.82));
+      });
+      image.src = reader.result;
+    });
+    reader.readAsDataURL(file);
+  });
+}
+
+async function updateUserPhoto(user, file) {
+  try {
+    user.avatarDataUrl = await resizeUserPhoto(file);
+    saveUserRoster();
+    await saveSharedSettings();
+    renderUserManagement();
+  } catch (error) {
+    userManagementStatusEl.textContent = error.message || "Photo upload failed";
+  }
+}
+
 function getFilteredUsers() {
   const query = userSearchQuery.trim().toLowerCase();
   if (!query) return userRoster;
@@ -927,16 +979,28 @@ function renderUserManagement() {
     const profileCell = document.createElement("td");
     const profile = document.createElement("div");
     const avatar = document.createElement("span");
+    const avatarImage = document.createElement("img");
     const profileText = document.createElement("div");
     const name = document.createElement("strong");
     const email = document.createElement("span");
     const status = document.createElement("span");
     const actionCell = document.createElement("td");
+    const actions = document.createElement("div");
+    const photoLabel = document.createElement("label");
+    const photoInput = document.createElement("input");
+    const photoText = document.createElement("span");
+    const clearPhoto = document.createElement("button");
     const action = document.createElement("button");
 
     profile.className = "user-profile";
     avatar.className = "user-avatar";
-    avatar.textContent = getUserInitials(user);
+    if (user.avatarDataUrl) {
+      avatarImage.alt = "";
+      avatarImage.src = user.avatarDataUrl;
+      avatar.append(avatarImage);
+    } else {
+      avatar.textContent = getUserInitials(user);
+    }
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
     profileText.append(name, email);
@@ -947,6 +1011,29 @@ function renderUserManagement() {
     status.dataset.disabled = String(user.enabled === false);
     status.textContent = user.enabled === false ? "Disabled" : "Active";
 
+    actions.className = "user-actions";
+    photoLabel.className = "filter-button photo-upload-button";
+    photoInput.type = "file";
+    photoInput.accept = "image/*";
+    photoInput.addEventListener("change", () => {
+      const [file] = photoInput.files || [];
+      if (file) updateUserPhoto(user, file);
+      photoInput.value = "";
+    });
+    photoText.textContent = user.avatarDataUrl ? "Change photo" : "Add photo";
+    photoLabel.append(photoInput, photoText);
+
+    clearPhoto.type = "button";
+    clearPhoto.className = "filter-button";
+    clearPhoto.textContent = "Clear photo";
+    clearPhoto.hidden = !user.avatarDataUrl;
+    clearPhoto.addEventListener("click", () => {
+      user.avatarDataUrl = "";
+      saveUserRoster();
+      saveSharedSettings();
+      renderUserManagement();
+    });
+
     action.type = "button";
     action.className = "filter-button";
     action.textContent = user.enabled === false ? "Enable" : "Disable";
@@ -956,7 +1043,8 @@ function renderUserManagement() {
       saveSharedSettings();
       renderUserManagement();
     });
-    actionCell.append(action);
+    actions.append(photoLabel, clearPhoto, action);
+    actionCell.append(actions);
 
     [
       profileCell,
@@ -3934,8 +4022,10 @@ captureOpenBrainAdvisoryEl.addEventListener("click", () => {
   openBrainStatusEl.textContent = event ? "Advisory captured" : "No advisory to capture";
 });
 exportOpenBrainMemoryEl.addEventListener("click", downloadOpenBrainMemory);
-menuButtons.forEach((button) => {
-  button.addEventListener("click", () => setActiveSection(button.dataset.sectionTarget));
+appShellEl.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-section-target]");
+  if (!button || !appShellEl.contains(button)) return;
+  setActiveSection(button.dataset.sectionTarget);
 });
 userAddFormEl.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -3992,7 +4082,7 @@ function initializeApp() {
   renderPrimaryModelSelector();
   renderSecondOpinionControls();
   renderOpenBrainMemory();
-  renderUserManagement();
+  showUserManagement();
   renderFeatureRequests();
   setActiveSection(activeSection);
   initializeHistoryApiControls();
