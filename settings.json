@@ -1,5 +1,144 @@
 {
-  "generatedAt": "2026-05-02T04:10:45.950Z",
+  "generatedAt": "2026-05-02T04:23:31.228Z",
   "source": "cloudflare-github-shared-settings",
-  "coinbaseSandboxEnabled": true
+  "coinbaseSandboxEnabled": true,
+  "users": [
+    {
+      "id": "user-1777673695845",
+      "name": "Peter Hall",
+      "email": "pete@petehall.com",
+      "createdAt": "2026-05-01T22:14:55.845Z",
+      "lastActiveAt": "2026-05-01T22:14:55.845Z",
+      "sessions": 0,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-peter-bell",
+      "name": "Peter Bell",
+      "email": "peter@pjbell.com",
+      "createdAt": "2026-02-02T12:00:00.000Z",
+      "lastActiveAt": "2026-05-02T04:19:40.177Z",
+      "sessions": 34,
+      "paperBaseEquity": 1000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-alex-pensotti",
+      "name": "Alex Pensotti",
+      "email": "alexpensotti@gmail.com",
+      "createdAt": "2026-03-15T12:00:00.000Z",
+      "lastActiveAt": "2026-04-07T21:32:22.591Z",
+      "sessions": 4,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-hunts-hewett",
+      "name": "Hunts Hewett",
+      "email": "hunts@fastmail.com",
+      "createdAt": "2026-03-10T12:00:00.000Z",
+      "lastActiveAt": "2026-04-10T21:32:22.591Z",
+      "sessions": 3,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-motochristo-roberts",
+      "name": "Christopher Roberts",
+      "email": "motochristo@gmail.com",
+      "createdAt": "2026-03-10T12:00:00.000Z",
+      "lastActiveAt": "2026-02-28T21:32:22.591Z",
+      "sessions": 1,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-eric-ramirez",
+      "name": "Eric Ramirez",
+      "email": "eric@coquest.com",
+      "createdAt": "2026-02-06T12:00:00.000Z",
+      "lastActiveAt": "2026-03-02T21:32:22.591Z",
+      "sessions": 0,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-dennis-weinmann",
+      "name": "Dennis Weinmann",
+      "email": "dennis@coquest.com",
+      "createdAt": "2026-02-05T12:00:00.000Z",
+      "lastActiveAt": "2026-02-28T21:32:22.591Z",
+      "sessions": 3,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-d2-openclaw",
+      "name": "D2 OpenClaw",
+      "email": "aretwo3000@gmail.com",
+      "createdAt": "2026-02-04T12:00:00.000Z",
+      "lastActiveAt": null,
+      "sessions": 0,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    },
+    {
+      "id": "user-ai4ses-roberts",
+      "name": "Christopher Roberts",
+      "email": "ai4ses@gmail.com",
+      "createdAt": "2026-02-02T12:00:00.000Z",
+      "lastActiveAt": "2026-04-29T21:32:22.591Z",
+      "sessions": 12,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "enabled": true
+    }
+  ],
+  "userProfiles": {
+    "pete@petehall.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "peter@pjbell.com": {
+      "paperBaseEquity": 1000,
+      "paperRiskPct": 0.75
+    },
+    "alexpensotti@gmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "hunts@fastmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "motochristo@gmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "eric@coquest.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "dennis@coquest.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "aretwo3000@gmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "ai4ses@gmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    }
+  }
 }
