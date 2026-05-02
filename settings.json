@@ -1,26 +1,14 @@
 {
-  "generatedAt": "2026-05-02T04:44:18.530Z",
+  "generatedAt": "2026-05-02T14:35:26.236Z",
   "source": "cloudflare-github-shared-settings",
   "coinbaseSandboxEnabled": true,
   "users": [
-    {
-      "id": "user-1777673695845",
-      "name": "Peter Hall",
-      "email": "pete@petehall.com",
-      "createdAt": "2026-05-01T22:14:55.845Z",
-      "lastActiveAt": "2026-05-01T22:14:55.845Z",
-      "sessions": 0,
-      "paperBaseEquity": 100000,
-      "paperRiskPct": 0.75,
-      "avatarDataUrl": "",
-      "enabled": true
-    },
     {
       "id": "user-peter-bell",
       "name": "Peter Bell",
       "email": "peter@pjbell.com",
       "createdAt": "2026-02-02T12:00:00.000Z",
-      "lastActiveAt": "2026-05-02T04:43:14.880Z",
+      "lastActiveAt": "2026-05-02T14:34:41.085Z",
       "sessions": 40,
       "paperBaseEquity": 1000,
       "paperRiskPct": 0.75,
@@ -32,7 +20,7 @@
       "name": "Alex Pensotti",
       "email": "alexpensotti@gmail.com",
       "createdAt": "2026-03-15T12:00:00.000Z",
-      "lastActiveAt": "2026-04-07T21:32:22.591Z",
+      "lastActiveAt": "2026-04-07T21:54:23.331Z",
       "sessions": 4,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -44,7 +32,7 @@
       "name": "Hunts Hewett",
       "email": "hunts@fastmail.com",
       "createdAt": "2026-03-10T12:00:00.000Z",
-      "lastActiveAt": "2026-04-10T21:32:22.591Z",
+      "lastActiveAt": "2026-04-10T21:54:23.331Z",
       "sessions": 3,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -56,7 +44,7 @@
       "name": "Christopher Roberts",
       "email": "motochristo@gmail.com",
       "createdAt": "2026-03-10T12:00:00.000Z",
-      "lastActiveAt": "2026-02-28T21:32:22.591Z",
+      "lastActiveAt": "2026-02-28T21:54:23.331Z",
       "sessions": 1,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -68,7 +56,7 @@
       "name": "Eric Ramirez",
       "email": "eric@coquest.com",
       "createdAt": "2026-02-06T12:00:00.000Z",
-      "lastActiveAt": "2026-03-02T21:32:22.591Z",
+      "lastActiveAt": "2026-03-02T21:54:23.331Z",
       "sessions": 0,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -80,7 +68,7 @@
       "name": "Dennis Weinmann",
       "email": "dennis@coquest.com",
       "createdAt": "2026-02-05T12:00:00.000Z",
-      "lastActiveAt": "2026-02-28T21:32:22.591Z",
+      "lastActiveAt": "2026-02-28T21:54:23.331Z",
       "sessions": 3,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -104,8 +92,20 @@
       "name": "Christopher Roberts",
       "email": "ai4ses@gmail.com",
       "createdAt": "2026-02-02T12:00:00.000Z",
-      "lastActiveAt": "2026-04-29T21:32:22.591Z",
+      "lastActiveAt": "2026-04-29T21:54:23.331Z",
       "sessions": 12,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "avatarDataUrl": "",
+      "enabled": true
+    },
+    {
+      "id": "user-1777673695845",
+      "name": "Peter Hall",
+      "email": "pete@petehall.com",
+      "createdAt": "2026-05-01T22:14:55.845Z",
+      "lastActiveAt": "2026-05-01T22:14:55.845Z",
+      "sessions": 0,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
       "avatarDataUrl": "",
@@ -113,10 +113,6 @@
     }
   ],
   "userProfiles": {
-    "pete@petehall.com": {
-      "paperBaseEquity": 100000,
-      "paperRiskPct": 0.75
-    },
     "peter@pjbell.com": {
       "paperBaseEquity": 1000,
       "paperRiskPct": 0.75
@@ -146,6 +142,10 @@
       "paperRiskPct": 0.75
     },
     "ai4ses@gmail.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75
+    },
+    "pete@petehall.com": {
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75
     }
