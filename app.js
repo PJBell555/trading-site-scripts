@@ -2724,10 +2724,10 @@ async function loadSharedSettings(manual = false) {
     if (usersChanged || profilesChanged) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
-      calculateSignal();
     }
     setCoinbaseSandboxEnabled(Boolean(settings.coinbaseSandboxEnabled));
     coinbaseSandboxStatusEl.textContent = settings.coinbaseSandboxEnabled ? "Sandbox armed" : "Off";
+    calculateSignal();
     return true;
   } catch (error) {
     if (manual) coinbaseSandboxStatusEl.textContent = "Settings sync failed";
@@ -3339,6 +3339,15 @@ async function autoSyncTransactionHistory() {
   }
 
   return loadSharedTransactionHistory(false);
+}
+
+async function initializeBackendState() {
+  await loadSharedSettings();
+  const loadedHistory = await autoSyncTransactionHistory();
+  await loadSharedAdvisoryHistory();
+  calculateSignal();
+  closeOnlyPaperSweep();
+  return loadedHistory;
 }
 
 async function recordTransaction(entry) {
@@ -4355,9 +4364,7 @@ function initializeApp() {
   renderPeriodFilterButtons();
   renderAdvisoryFilterButtons();
   calculateSignal();
-  loadSharedSettings();
-  autoSyncTransactionHistory();
-  loadSharedAdvisoryHistory();
+  initializeBackendState();
   connectCoinbaseWebSocket(commoditySelect.value);
   refreshSelectedCoinbasePrice();
   window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
