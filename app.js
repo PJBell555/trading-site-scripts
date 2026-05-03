@@ -14,6 +14,7 @@ const accessPasswordEl = document.querySelector("#access-password");
 const accessErrorEl = document.querySelector("#access-error");
 const appShellEl = document.querySelector("#app-shell");
 const heroEl = document.querySelector("header.hero");
+const noticeEl = document.querySelector(".notice");
 const menuButtons = document.querySelectorAll("[data-section-target]");
 const appSections = document.querySelectorAll("[data-app-section]");
 const userManagementStatusEl = document.querySelector("#user-management-status");
@@ -27,6 +28,7 @@ const userSearchInputEl = document.querySelector("#user-search-input");
 const userSearchButtonEl = document.querySelector("#user-search-button");
 const userTableBodyEl = document.querySelector("#user-table-body");
 const selectedUserProfileEl = document.querySelector("#selected-user-profile");
+const userStatCards = Array.from(document.querySelectorAll("[data-user-list-filter]"));
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -264,9 +266,10 @@ let advisoryPeriodFilter = "hour";
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
+let userListFilter = "all";
 let expandedUserEmail = "";
 let editingUserEmail = "";
-let activeSection = "advisories";
+let activeSection = "home";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
@@ -320,6 +323,7 @@ function showUserManagement(resetSearch = false) {
 
 function setActiveSection(section) {
   activeSection = section;
+  appShellEl.dataset.activeSection = section;
   menuButtons.forEach((button) => {
     button.dataset.active = String(button.dataset.sectionTarget === section);
   });
@@ -327,8 +331,8 @@ function setActiveSection(section) {
     sectionEl.hidden = sectionEl.dataset.appSection !== section;
   });
 
-  // The hero is for "Advisories" only.
-  if (heroEl) heroEl.hidden = section !== "advisories";
+  if (heroEl) heroEl.hidden = section !== "home";
+  if (noticeEl) noticeEl.hidden = section !== "home";
   if (section === "advisories") renderAdvisoryChart();
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
@@ -1338,14 +1342,38 @@ function createUserProfilePanel(user) {
   return wrapper;
 }
 
+function getUserBuckets() {
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const weekStart = new Date();
+  weekStart.setDate(weekStart.getDate() - 7);
+
+  return {
+    activeToday: userRoster.filter((user) => user.enabled !== false && getTransactionDate(user.lastActiveAt) >= todayStart),
+    newThisWeek: userRoster.filter((user) => getTransactionDate(user.createdAt) >= weekStart)
+  };
+}
+
 function getFilteredUsers() {
   const query = userSearchQuery.trim().toLowerCase();
-  if (!query) return userRoster;
+  const { activeToday, newThisWeek } = getUserBuckets();
+  let users = userRoster;
 
-  return userRoster.filter((user) => (
+  if (userListFilter === "active") users = activeToday;
+  if (userListFilter === "new") users = newThisWeek;
+
+  if (!query) return users;
+
+  return users.filter((user) => (
     String(user.name || "").toLowerCase().includes(query)
     || String(user.email || "").toLowerCase().includes(query)
   ));
+}
+
+function renderUserListFilterButtons() {
+  userStatCards.forEach((card) => {
+    card.dataset.active = String(card.dataset.userListFilter === userListFilter);
+  });
 }
 
 function toggleExpandedUser(user) {
@@ -1353,6 +1381,11 @@ function toggleExpandedUser(user) {
   expandedUserEmail = expandedUserEmail === emailKey ? "" : emailKey;
   editingUserEmail = "";
   renderUserManagement();
+  if (expandedUserEmail) {
+    window.requestAnimationFrame(() => {
+      selectedUserProfileEl.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
 }
 
 function renderSelectedUserProfile() {
@@ -1367,18 +1400,19 @@ function renderSelectedUserProfile() {
 function renderUserManagement() {
   if (!userRoster.length) loadUserRoster();
 
-  const todayStart = new Date();
-  todayStart.setHours(0, 0, 0, 0);
-  const weekStart = new Date();
-  weekStart.setDate(weekStart.getDate() - 7);
-  const activeToday = userRoster.filter((user) => user.enabled !== false && getTransactionDate(user.lastActiveAt) >= todayStart);
-  const newThisWeek = userRoster.filter((user) => getTransactionDate(user.createdAt) >= weekStart);
+  const { activeToday, newThisWeek } = getUserBuckets();
   const filteredUsers = getFilteredUsers();
+  const filterLabel = userListFilter === "active"
+    ? "active today"
+    : userListFilter === "new"
+      ? "new this week"
+      : "visible";
 
   userTotalCountEl.textContent = String(userRoster.length);
   userActiveCountEl.textContent = String(activeToday.length);
   userNewCountEl.textContent = String(newThisWeek.length);
-  userManagementStatusEl.textContent = `${filteredUsers.length} visible`;
+  userManagementStatusEl.textContent = `${filteredUsers.length} ${filterLabel}`;
+  renderUserListFilterButtons();
   userTableBodyEl.innerHTML = "";
 
   if (!filteredUsers.length) {
@@ -2607,6 +2641,19 @@ function getTradeLifecycleKey(entry) {
   ].join("|");
 }
 
+function getTransactionConviction(entry) {
+  const stored = Number(entry?.conviction);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+
+  const noteMatch = String(entry?.note || "").match(/opened at\s+(\d+(?:\.\d+)?)\s+conviction/i);
+  if (noteMatch) {
+    const parsed = Number(noteMatch[1]);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return 0;
+}
+
 function tradeFromOpeningEntry(entry) {
   const config = marketConfig[entry.commodity];
   const contracts = Number(entry.contracts) > 0 ? entry.contracts : 1;
@@ -2636,7 +2683,7 @@ function tradeFromOpeningEntry(entry) {
     totalEstimatedFees: Number(entry.totalEstimatedFees) || openFee + estimatedExitFee,
     feePerContractSide: Number(entry.feePerContractSide) || getFeePerContractSide(config),
     feeLabel: entry.feeLabel,
-    conviction: Number(entry.conviction) || 0,
+    conviction: getTransactionConviction(entry),
     openedAt: entry.openedAt ? new Date(entry.openedAt) : new Date(entry.time)
   };
 }
@@ -2806,7 +2853,7 @@ function hasHistoryBackend() {
 
 function initializeHistoryApiControls() {
   sharedHistoryStatusEl.textContent = "Backend auto-sync ready";
-  setCoinbaseSandboxEnabled(isCoinbaseSandboxEnabled());
+  setCoinbaseSandboxEnabled(true);
 }
 
 function getMasterHistoryUrl() {
@@ -2814,13 +2861,15 @@ function getMasterHistoryUrl() {
 }
 
 function isCoinbaseSandboxEnabled() {
-  return window.localStorage.getItem(COINBASE_SANDBOX_KEY) === "true";
+  return window.localStorage.getItem(COINBASE_SANDBOX_KEY) !== "false";
 }
 
 function setCoinbaseSandboxEnabled(enabled) {
-  window.localStorage.setItem(COINBASE_SANDBOX_KEY, String(Boolean(enabled)));
-  coinbaseSandboxEnabledEl.checked = Boolean(enabled);
-  coinbaseSandboxStatusEl.textContent = enabled ? "Sandbox armed" : "Off";
+  const sandboxEnabled = true;
+  window.localStorage.setItem(COINBASE_SANDBOX_KEY, String(sandboxEnabled));
+  coinbaseSandboxEnabledEl.checked = sandboxEnabled;
+  coinbaseSandboxEnabledEl.disabled = true;
+  coinbaseSandboxStatusEl.textContent = "Sandbox armed";
 }
 
 function getCoinbaseSandboxOrderUrl() {
@@ -2899,8 +2948,7 @@ async function loadSharedSettings(manual = false) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
     }
-    setCoinbaseSandboxEnabled(Boolean(settings.coinbaseSandboxEnabled));
-    coinbaseSandboxStatusEl.textContent = settings.coinbaseSandboxEnabled ? "Sandbox armed" : "Off";
+    setCoinbaseSandboxEnabled(true);
     calculateSignal();
     return true;
   } catch (error) {
@@ -2931,9 +2979,7 @@ async function saveSharedSettings() {
     if (!response.ok) throw new Error("settings save failed");
 
     const data = await response.json();
-    const enabled = Boolean(data?.settings?.coinbaseSandboxEnabled);
-    setCoinbaseSandboxEnabled(enabled);
-    coinbaseSandboxStatusEl.textContent = enabled ? "Sandbox armed" : "Off";
+    setCoinbaseSandboxEnabled(true);
     return true;
   } catch (error) {
     coinbaseSandboxStatusEl.textContent = "Settings save failed";
@@ -3069,11 +3115,44 @@ function getAdvisoryPeriodStart() {
 
 function getFilteredAdvisorySamples() {
   const start = getAdvisoryPeriodStart();
-  return advisoryHistory.filter((entry) => (
+  const snapshotSamples = advisoryHistory.filter((entry) => (
     entry.commodity === advisoryCommodityFilter
     && entry.horizon === advisoryHorizonFilter
     && new Date(entry.time || 0).getTime() >= start
   ));
+  if (advisoryHorizonFilter !== "intraday") return snapshotSamples;
+
+  const byKey = new Map(snapshotSamples.map((entry) => [entry.snapshotKey, entry]));
+  transactionHistory
+    .filter((entry) => (
+      isOpeningTransaction(entry)
+      && entry.commodity === advisoryCommodityFilter
+      && getTransactionDate(entry.time).getTime() >= start
+    ))
+    .forEach((entry) => {
+      const side = entry.side;
+      const tone = side === "short" ? "short" : side === "long" ? "long" : "wait";
+      const price = Number(entry.entryPrice ?? entry.price);
+      const conviction = getTransactionConviction(entry);
+      if (!Number.isFinite(price)) return;
+
+      byKey.set(`paper|${entry.sharedKey || getTransactionKey(entry)}`, {
+        snapshotKey: `paper|${entry.sharedKey || getTransactionKey(entry)}`,
+        time: getTransactionDate(entry.time).toISOString(),
+        commodity: entry.commodity,
+        commodityName: entry.commodityName,
+        horizon: "intraday",
+        price,
+        priceSource: "Paper trade ledger",
+        bounded: conviction,
+        conviction,
+        tone,
+        label: `Paper ${tone}`,
+        action: entry.action
+      });
+    });
+
+  return Array.from(byKey.values()).sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
 }
 
 function getPaperTradeAdvisoryEvaluations() {
@@ -3081,7 +3160,7 @@ function getPaperTradeAdvisoryEvaluations() {
 
   const start = getAdvisoryPeriodStart();
 
-  return getUserScopedTransactions()
+  return transactionHistory
     .filter((entry) => (
       isClosingTransaction(entry)
       && entry.commodity === advisoryCommodityFilter
@@ -3094,7 +3173,7 @@ function getPaperTradeAdvisoryEvaluations() {
       const tone = side === "short" ? "short" : side === "long" ? "long" : "wait";
       const startPrice = Number(detail.entryPrice);
       const endPrice = Number(detail.exitPrice);
-      const conviction = Number(openingEntry?.conviction ?? entry.conviction ?? 0);
+      const conviction = getTransactionConviction(openingEntry) || getTransactionConviction(entry);
       const netPnl = getDisplayPnl(entry);
 
       if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
@@ -3308,7 +3387,7 @@ function renderAdvisoryAccuracy(samples) {
 
 function drawChartMessage(context, canvas, message) {
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#56646e";
+  context.fillStyle = "#94a3b8";
   context.font = "700 28px Aptos, Segoe UI, sans-serif";
   context.textAlign = "center";
   context.fillText(message, canvas.width / 2, canvas.height / 2);
@@ -3361,12 +3440,12 @@ function renderAdvisoryChart() {
   const signalValues = samples.map((entry) => signalYFor(entry.tone));
 
   context.clearRect(0, 0, width, height);
-  context.fillStyle = "rgba(255, 255, 255, 0.72)";
+  context.fillStyle = "#111827";
   context.fillRect(0, 0, width, height);
-  context.strokeStyle = "rgba(17, 32, 43, 0.12)";
+  context.strokeStyle = "rgba(148, 163, 184, 0.18)";
   context.lineWidth = 1 * scale;
   context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
-  context.fillStyle = "#56646e";
+  context.fillStyle = "#94a3b8";
   context.textAlign = "right";
 
   for (let index = 0; index <= 4; index += 1) {
@@ -3394,10 +3473,10 @@ function renderAdvisoryChart() {
     context.setLineDash([]);
   }
 
-  drawLine(prices, "#11202b");
-  drawLine(signalValues, "#006d5b", [10, 7], (value) => value);
+  drawLine(prices, "#dbeafe");
+  drawLine(signalValues, "#22d3a6", [10, 7], (value) => value);
 
-  context.strokeStyle = "rgba(17, 32, 43, 0.16)";
+  context.strokeStyle = "rgba(148, 163, 184, 0.28)";
   context.lineWidth = 1.5 * scale;
   context.beginPath();
   context.moveTo(padding.left, laneTop - laneGap * 0.5);
@@ -3405,14 +3484,14 @@ function renderAdvisoryChart() {
   context.stroke();
 
   const signalRows = [
-    ["Long", "long", "#006d5b"],
-    ["Wait", "wait", "#735f2d"],
-    ["Short", "short", "#8d2d2d"]
+    ["Long", "long", "#22d3a6"],
+    ["Wait", "wait", "#f4c152"],
+    ["Short", "short", "#fb7185"]
   ];
   context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
   signalRows.forEach(([label, tone, color]) => {
     const y = signalYFor(tone);
-    context.strokeStyle = "rgba(17, 32, 43, 0.08)";
+    context.strokeStyle = "rgba(148, 163, 184, 0.14)";
     context.lineWidth = 1 * scale;
     context.beginPath();
     context.moveTo(padding.left, y);
@@ -3424,12 +3503,12 @@ function renderAdvisoryChart() {
   });
 
   context.textAlign = "left";
-  context.fillStyle = "#11202b";
+  context.fillStyle = "#f8fafc";
   context.font = `700 ${15 * scale}px Aptos, Segoe UI, sans-serif`;
   const title = `${commodities.find(({ id }) => id === advisoryCommodityFilter)?.name || "Commodity"} ${advisoryHorizonFilter} advisory`;
   context.fillText(title, padding.left, 24 * scale);
 
-  context.fillStyle = "#56646e";
+  context.fillStyle = "#94a3b8";
   context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
   context.fillText(formatTradeTime(new Date(minTime)), padding.left, height - 24 * scale);
   context.textAlign = "right";
@@ -3439,7 +3518,7 @@ function renderAdvisoryChart() {
     if (index % Math.max(1, Math.floor(samples.length / 80)) !== 0) return;
     const x = xFor(times[index]);
     const signalY = signalValues[index];
-    const color = entry.tone === "short" ? "#8d2d2d" : entry.tone === "long" ? "#006d5b" : "#735f2d";
+    const color = entry.tone === "short" ? "#fb7185" : entry.tone === "long" ? "#22d3a6" : "#f4c152";
 
     context.beginPath();
     context.fillStyle = color;
@@ -3452,7 +3531,7 @@ function renderAdvisoryChart() {
   const latestY = signalValues[samples.length - 1];
   const latestText = latest.tone === "short" ? "Short advisory" : latest.tone === "long" ? "Long advisory" : "Wait advisory";
   context.textAlign = latestX > width * 0.72 ? "right" : "left";
-  context.fillStyle = latest.tone === "short" ? "#8d2d2d" : latest.tone === "long" ? "#006d5b" : "#735f2d";
+  context.fillStyle = latest.tone === "short" ? "#fb7185" : latest.tone === "long" ? "#22d3a6" : "#f4c152";
   context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
   context.fillText(latestText, latestX + (latestX > width * 0.72 ? -10 : 10) * scale, latestY - 10 * scale);
 }
@@ -4491,7 +4570,7 @@ exportHistoryEl.addEventListener("click", downloadSharedHistory);
 paperEquityInputEl.addEventListener("change", updatePaperEquitySetting);
 paperRiskInputEl.addEventListener("change", updatePaperRiskSetting);
 coinbaseSandboxEnabledEl.addEventListener("change", () => {
-  setCoinbaseSandboxEnabled(coinbaseSandboxEnabledEl.checked);
+  setCoinbaseSandboxEnabled(true);
   saveSharedSettings();
   calculateSignal();
 });
@@ -4549,6 +4628,14 @@ userSearchInputEl.addEventListener("input", () => {
 userSearchButtonEl.addEventListener("click", () => {
   userSearchQuery = userSearchInputEl.value;
   renderUserManagement();
+});
+userStatCards.forEach((card) => {
+  card.addEventListener("click", () => {
+    userListFilter = card.dataset.userListFilter || "all";
+    expandedUserEmail = "";
+    editingUserEmail = "";
+    renderUserManagement();
+  });
 });
 featureTypeFiltersEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-feature-type]");

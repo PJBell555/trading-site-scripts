@@ -119,6 +119,11 @@ body {
   display: none;
 }
 
+.app-shell:not([data-active-section="home"]) .hero,
+.app-shell:not([data-active-section="home"]) .notice {
+  display: none;
+}
+
 .user-stat-grid {
   display: grid;
   gap: 14px;
@@ -127,13 +132,26 @@ body {
 
 .user-stat-card {
   align-items: center;
+  color: var(--ink);
+  cursor: pointer;
   display: grid;
+  font: inherit;
   grid-template-columns: auto 1fr;
   gap: 2px 14px;
   padding: 18px;
   background: rgba(255, 255, 255, 0.58);
   border: 1px solid rgba(17, 32, 43, 0.08);
   border-radius: 8px;
+}
+
+.user-stat-card:hover,
+.user-stat-card[data-active="true"] {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(96, 165, 250, 0.4);
+}
+
+.user-stat-card[data-active="true"] {
+  box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.18);
 }
 
 .user-stat-card strong {
@@ -306,6 +324,7 @@ body {
   border-top: 1px solid var(--line);
   display: grid;
   gap: 18px;
+  margin: 18px 0;
   padding-top: 20px;
 }
 
@@ -1102,7 +1121,7 @@ ul {
 
 .workspace {
   display: grid;
-  grid-template-columns: minmax(280px, 420px) 1fr;
+  grid-template-columns: minmax(240px, 380px) minmax(0, 1fr);
   gap: 18px;
 }
 
@@ -1284,7 +1303,7 @@ select {
 
 .ledger-toolbar {
   display: grid;
-  grid-template-columns: 1.4fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 14px;
   margin: 14px 0;
 }
@@ -1357,6 +1376,11 @@ select {
   accent-color: var(--accent);
 }
 
+.toggle-control:has(input:disabled) {
+  cursor: default;
+  opacity: 0.9;
+}
+
 .ledger-totals {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1395,8 +1419,8 @@ select {
 }
 
 .chart-shell {
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: #111827;
+  border: 1px solid rgba(96, 165, 250, 0.24);
   border-radius: 8px;
   min-height: 300px;
   overflow: hidden;
@@ -1412,7 +1436,7 @@ select {
 .accuracy-dashboard {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .accuracy-card {
@@ -1452,7 +1476,7 @@ select {
 .accuracy-breakdown {
   display: grid;
   gap: 12px;
-  grid-template-columns: minmax(260px, 0.8fr) minmax(0, 1.2fr);
+  grid-template-columns: minmax(240px, 0.7fr) minmax(0, 1.3fr);
 }
 
 .accuracy-bars {
@@ -1658,7 +1682,7 @@ ol {
   align-items: start;
   display: grid;
   gap: 0;
-  grid-template-columns: 300px minmax(0, 1fr);
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
   margin: 0;
   min-height: 100vh;
   padding: 0;
@@ -1677,11 +1701,23 @@ ol {
 
 .brand-lockup {
   align-items: center;
+  background: transparent;
   border-bottom: 1px solid var(--line);
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  cursor: pointer;
   display: flex;
+  font: inherit;
   gap: 12px;
   min-height: 58px;
   padding: 0 22px;
+  text-align: left;
+  width: 100%;
+}
+
+.brand-lockup:hover {
+  background: rgba(59, 130, 246, 0.08);
 }
 
 .brand-lockup strong {
@@ -1710,7 +1746,7 @@ ol {
   flex-wrap: nowrap;
   gap: 10px;
   margin: 0;
-  padding: 38px 20px 24px;
+  padding: 30px 16px 24px;
 }
 
 .menu-group {
@@ -1749,9 +1785,9 @@ ol {
 .menu-tree {
   border-left: 1px solid rgba(148, 163, 184, 0.24);
   display: grid;
-  gap: 18px;
-  margin: 0 0 22px 22px;
-  padding-left: 28px;
+  gap: 14px;
+  margin: 0 0 20px 18px;
+  padding-left: 24px;
 }
 
 .menu-button {
@@ -1761,10 +1797,10 @@ ol {
   border-radius: 7px;
   color: #b8c7df;
   display: flex;
-  gap: 22px;
+  gap: 18px;
   justify-content: flex-start;
-  min-height: 56px;
-  padding: 10px 16px;
+  min-height: 50px;
+  padding: 9px 14px;
   position: relative;
   width: 100%;
 }
@@ -1774,10 +1810,10 @@ ol {
   content: "";
   display: block;
   height: 1px;
-  left: -29px;
+  left: -25px;
   position: absolute;
   top: 50%;
-  width: 23px;
+  width: 19px;
 }
 
 .menu-button span {
@@ -1821,7 +1857,7 @@ ol {
 
 .app-main {
   min-width: 0;
-  padding: 28px 28px 44px;
+  padding: 22px 22px 40px;
 }
 
 .app-main .hero,
@@ -1835,7 +1871,7 @@ ol {
 
 .app-main .hero {
   background: #0b1020;
-  grid-template-columns: 1.25fr 1fr;
+  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
 }
 
 /* Dark theme readability: avoid low-contrast gray-on-gray in dense panels. */
