@@ -320,6 +320,10 @@ body {
   padding: 18px;
 }
 
+.user-profile-detail-row .user-profile-panel {
+  margin: 0;
+}
+
 .selected-user-profile {
   border-top: 1px solid var(--line);
   display: grid;
@@ -646,6 +650,153 @@ body {
 .open-brain-table th,
 .open-brain-table td {
   border-color: rgba(148, 163, 184, 0.16);
+}
+
+.skills-lab {
+  padding: 0;
+}
+
+.skills-head {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 28px 32px;
+}
+
+.skills-head h2 {
+  margin: 0 0 6px;
+}
+
+.skills-head p {
+  color: #b8c7df;
+  margin: 0;
+}
+
+.skills-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
+.skill-seed-button {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.45);
+  color: #fbbf24;
+}
+
+.skills-workspace {
+  display: grid;
+  grid-template-columns: minmax(220px, 300px) minmax(280px, 400px) minmax(0, 1fr);
+  min-height: 560px;
+}
+
+.skills-sidebar,
+.skills-files,
+.skills-detail {
+  background: #0b1020;
+  min-width: 0;
+}
+
+.skills-sidebar,
+.skills-files {
+  border-right: 1px solid var(--line);
+}
+
+.skills-sidebar {
+  align-content: start;
+  display: grid;
+  gap: 8px;
+  padding: 20px 16px;
+}
+
+.skills-category {
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #a9bbd5;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: 46px minmax(0, 1fr);
+  min-height: 54px;
+  padding: 10px 12px;
+}
+
+.skills-category span {
+  color: #7fb2ff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.skills-category strong {
+  color: #cfe4ff;
+  font-size: 0.98rem;
+}
+
+.skills-category.is-active {
+  background: #2563eb;
+  border-color: rgba(96, 165, 250, 0.65);
+}
+
+.skills-category.is-active span,
+.skills-category.is-active strong {
+  color: #fff;
+}
+
+.skills-files {
+  display: grid;
+  grid-template-rows: auto 1fr;
+}
+
+.skills-file-toolbar {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: grid;
+  gap: 10px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 16px;
+}
+
+.skills-icon {
+  color: #60a5fa;
+  font-size: 0.8rem;
+  font-weight: 900;
+}
+
+.skills-file-toolbar input {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  color: #f8fafc;
+  font: inherit;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.skills-empty,
+.skills-detail-empty {
+  align-content: center;
+  color: #8fa3bf;
+  display: grid;
+  justify-items: center;
+  min-height: 300px;
+  padding: 24px;
+  text-align: center;
+}
+
+.skills-empty strong,
+.skills-detail-empty strong {
+  color: #cfe4ff;
+  font-size: 1.05rem;
+}
+
+.skills-detail {
+  display: grid;
+  min-height: 100%;
 }
 
 .second-opinion-grid {
@@ -1215,6 +1366,12 @@ select {
   gap: 12px;
 }
 
+.trade-user-context {
+  margin: -6px 0 18px;
+  color: #93c5fd;
+  font-weight: 800;
+}
+
 .paper-card {
   padding: 16px 18px;
   background: #0f172a;
@@ -1727,16 +1884,25 @@ ol {
 
 .brand-mark {
   align-items: center;
-  background: rgba(59, 130, 246, 0.18);
-  border: 1px solid rgba(59, 130, 246, 0.46);
-  border-radius: 8px;
-  color: #60a5fa;
-  display: inline-grid;
-  font-size: 0.78rem;
-  font-weight: 900;
-  height: 34px;
+  color: #3b82f6;
+  display: inline-flex;
+  height: 28px;
   place-items: center;
   width: 34px;
+}
+
+.brand-mark svg {
+  display: block;
+  height: 28px;
+  width: 34px;
+}
+
+.brand-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
 }
 
 .side-nav .app-menu {
@@ -1999,8 +2165,21 @@ textarea::placeholder {
   .hero,
   .intro,
   .workspace,
-  .roadmap {
+  .roadmap,
+  .skills-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .skills-head {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 22px;
+  }
+
+  .skills-sidebar,
+  .skills-files {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
   }
 
   .commodity-strip {

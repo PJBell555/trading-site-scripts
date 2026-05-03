@@ -4,7 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
-  <link rel="stylesheet" href="./styles.css?v=comhedge-profile-shell-2">
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-arrow-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -28,7 +29,12 @@
   <div class="shell app-shell" id="app-shell" hidden>
     <aside class="side-nav" aria-label="ComHedge 2 navigation">
       <button class="brand-lockup" type="button" data-section-target="home" aria-label="Home">
-        <span class="brand-mark">CH</span>
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 32 32" role="img" focusable="false">
+            <path d="M4 22.5 12.2 14.3 17.7 19.8 28 9.5" />
+            <path d="M20 9.5h8v8" />
+          </svg>
+        </span>
         <strong>ComHedge 2</strong>
       </button>
       <nav class="app-menu" aria-label="ComHedge 2 sections">
@@ -36,6 +42,7 @@
         <div class="menu-tree">
           <button class="menu-button" type="button" data-section-target="advisories" data-active="true"><span>A</span>Advisories</button>
           <button class="menu-button" type="button" data-section-target="second-opinion"><span>2</span>Second Opinion</button>
+          <button class="menu-button" type="button" data-section-target="skills"><span>S</span>Skills</button>
           <button class="menu-button" type="button" data-section-target="open-brain"><span>B</span>Open Brain</button>
         </div>
         <span class="menu-group">Trading</span>
@@ -289,6 +296,65 @@
       </div>
     </section>
 
+    <section class="band skills-lab" data-app-section="skills" aria-label="Skills workspace">
+      <div class="skills-head">
+        <div>
+          <p class="eyebrow">Intelligence pipeline</p>
+          <h2>Skills</h2>
+          <p>The knowledge pipeline that powers advisories: what we know, what we watch, and how we improve.</p>
+        </div>
+        <div class="skills-actions">
+          <button class="filter-button skill-seed-button" type="button">Generate Seed Content</button>
+          <button class="filter-button" type="button">Voice</button>
+        </div>
+      </div>
+      <div class="skills-workspace">
+        <aside class="skills-sidebar" aria-label="Skill categories">
+          <div class="skills-category is-active">
+            <span>Brain</span>
+            <strong>Market Expertise</strong>
+          </div>
+          <div class="skills-category">
+            <span>Trade</span>
+            <strong>Lessons from Trades</strong>
+          </div>
+          <div class="skills-category">
+            <span>Paper</span>
+            <strong>Lessons from Paper Trades</strong>
+          </div>
+          <div class="skills-category">
+            <span>Search</span>
+            <strong>Research Levers</strong>
+          </div>
+          <div class="skills-category">
+            <span>Data</span>
+            <strong>Data Feeds</strong>
+          </div>
+          <div class="skills-category">
+            <span>Prompt</span>
+            <strong>Prompts for Advisories</strong>
+          </div>
+        </aside>
+        <div class="skills-files">
+          <div class="skills-file-toolbar">
+            <span class="skills-icon">Brain</span>
+            <input type="text" placeholder="Search files..." aria-label="Search skill files">
+            <button class="filter-button" type="button">+</button>
+          </div>
+          <div class="skills-empty">
+            <strong>No skill files yet.</strong>
+            <span>Create your first one.</span>
+          </div>
+        </div>
+        <div class="skills-detail">
+          <div class="skills-detail-empty">
+            <strong>Select a skill file</strong>
+            <span>Choose or create a file to view its notes, rules, examples, and training material.</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <main class="layout">
       <section class="band intro" data-app-section="advisories">
         <div>
@@ -433,6 +499,7 @@
       <section class="band roadmap" data-app-section="trading">
         <div>
           <h2>Paper trading system</h2>
+          <p class="trade-user-context" id="paper-user-context">Viewing shared paper trades</p>
           <div class="paper-grid">
             <div class="paper-card">
               <label class="paper-edit-field">
@@ -693,6 +760,6 @@
     <option value="https://pjbell555.github.io/trading-site-scripts/">GitHub Pages app only</option>
   </datalist>
 
-  <script src="./app.js?v=comhedge-profile-shell-2"></script>
+  <script src="./app.js?v=comhedge-paper-user-4"></script>
 </body>
 </html>

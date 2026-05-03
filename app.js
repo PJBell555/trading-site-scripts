@@ -78,6 +78,7 @@ const paperEquityEl = document.querySelector("#paper-equity");
 const paperRiskEl = document.querySelector("#paper-risk");
 const paperEquityInputEl = document.querySelector("#paper-equity-input");
 const paperRiskInputEl = document.querySelector("#paper-risk-input");
+const paperUserContextEl = document.querySelector("#paper-user-context");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -780,6 +781,19 @@ function getCurrentLedgerEmail() {
   return normalizeEmail(getCurrentUserProfile()?.email || getCurrentAccessEmail() || LEGACY_LEDGER_USER_EMAIL);
 }
 
+function formatPossessiveName(name) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) return "";
+  return `${cleanName}${cleanName.toLowerCase().endsWith("s") ? "'" : "'s"}`;
+}
+
+function getPaperUserContextText() {
+  const user = getCurrentUserProfile();
+  if (user?.name) return `Viewing ${formatPossessiveName(user.name)} paper trades`;
+  const email = getCurrentLedgerEmail();
+  return email ? `Viewing paper trades for ${email}` : "Viewing shared paper trades";
+}
+
 function isCurrentLegacyLedgerOwner() {
   const user = getCurrentUserProfile();
   const email = getCurrentLedgerEmail();
@@ -1383,18 +1397,15 @@ function toggleExpandedUser(user) {
   renderUserManagement();
   if (expandedUserEmail) {
     window.requestAnimationFrame(() => {
-      selectedUserProfileEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      const detailRow = document.querySelector(".user-profile-detail-row");
+      (detailRow || selectedUserProfileEl).scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
 }
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
-  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
-  selectedUserProfileEl.hidden = !selectedUser;
-  if (!selectedUser) return;
-
-  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
+  selectedUserProfileEl.hidden = true;
 }
 
 function renderUserManagement() {
@@ -1452,7 +1463,10 @@ function renderUserManagement() {
     });
     profile.className = "user-profile";
     profile.type = "button";
-    profile.addEventListener("click", () => toggleExpandedUser(user));
+    profile.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleExpandedUser(user);
+    });
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
     profileText.append(name, email);
@@ -1466,8 +1480,11 @@ function renderUserManagement() {
     actions.className = "user-actions";
     action.type = "button";
     action.className = "view-user-button";
-    action.textContent = "View";
-    action.addEventListener("click", () => toggleExpandedUser(user));
+    action.textContent = expandedUserEmail === normalizeEmail(user.email) ? "Hide" : "View";
+    action.addEventListener("click", (event) => {
+      event.stopPropagation();
+      toggleExpandedUser(user);
+    });
     actions.append(action);
     actionCell.append(actions);
 
@@ -1492,6 +1509,16 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
+
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const detailRow = document.createElement("tr");
+      const detailCell = document.createElement("td");
+      detailRow.className = "user-profile-detail-row";
+      detailCell.colSpan = 8;
+      detailCell.append(createUserProfilePanel(user));
+      detailRow.append(detailCell);
+      userTableBodyEl.append(detailRow);
+    }
   });
   renderSelectedUserProfile();
 }
@@ -4277,6 +4304,9 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const staleStopTrade = !openTrade && getLatestUnclosedOpeningTrade(commodity);
 
   syncPaperInputs();
+  if (paperUserContextEl) {
+    paperUserContextEl.textContent = getPaperUserContextText();
+  }
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
