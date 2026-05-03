@@ -7,6 +7,7 @@ This project uses a Cloudflare Worker to make `transactions.json` the shared mas
 - `GET` returns the current GitHub master `transactions.json`.
 - `POST` merges browser trades into the master ledger and writes it back to GitHub.
 - `POST /coinbase/sandbox/orders` forwards mock market orders to Coinbase's sandbox endpoint.
+- `POST /models/openrouter/opinion` sends second-opinion prompts through OpenRouter from the Worker.
 - `GET/POST /settings` shares cross-device app settings such as the Coinbase sandbox toggle.
 - `GET/POST /advisories` stores one-minute advisory/price samples for the charting lab.
 - Every successful `POST` also writes a date-stamped backup like `backups/transactions-2026-04-30.json`.
@@ -25,10 +26,12 @@ From the repo root, log in and deploy:
 ```powershell
 npx wrangler login
 npx wrangler secret put GITHUB_TOKEN
+npx wrangler secret put OPENROUTER_API_KEY
 npx wrangler deploy
 ```
 
 When prompted for `GITHUB_TOKEN`, paste the GitHub token.
+When prompted for `OPENROUTER_API_KEY`, paste your OpenRouter API key.
 
 The non-secret Worker variables live in `wrangler.toml`:
 
@@ -40,6 +43,8 @@ BACKUP_DIR = "backups"
 SETTINGS_PATH = "settings.json"
 ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
+OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
+OPENROUTER_APP_NAME = "ComHedge 2"
 ```
 
 After deploy, Cloudflare prints a Worker URL like:

@@ -5,6 +5,7 @@ const DEFAULT_SETTINGS_PATH = "settings.json";
 const DEFAULT_ADVISORY_PATH = "advisory-snapshots.json";
 const MAX_ADVISORY_SNAPSHOTS = 20000;
 const COINBASE_SANDBOX_BASE_URL = "https://api-sandbox.coinbase.com/api/v3/brokerage";
+const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
 
 function corsHeaders(origin) {
   return {
@@ -246,6 +247,93 @@ async function createCoinbaseSandboxOrder(body = {}) {
   };
 }
 
+function getOpenRouterModel(modelId = "") {
+  const models = {
+    "gpt-5-5": "openrouter/auto",
+    "gpt-5-4": "openrouter/auto",
+    perplexity: "perplexity/sonar",
+    gemini: "google/gemini-2.5-flash",
+    claude: "anthropic/claude-3.5-haiku",
+    grok: "x-ai/grok-3-mini"
+  };
+
+  return models[modelId] || modelId || "openrouter/auto";
+}
+
+function buildOpenRouterOpinionMessages(body = {}) {
+  const prompt = String(body.prompt || "Master Technician Analysis");
+  const context = body.context || {};
+  const commodity = context.commodityName || context.commodity || "selected commodity";
+
+  return [
+    {
+      role: "system",
+      content: [
+        "You are a cautious commodity futures second-opinion analyst.",
+        "This is educational market commentary, not personalized investment advice.",
+        "Return compact JSON only with keys: conviction, tone, summary, reasons, risks.",
+        "tone must be one of long, short, wait. conviction must be 0-100."
+      ].join(" ")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        prompt,
+        task: `Give a second opinion on the current ${commodity} advisory.`,
+        context
+      })
+    }
+  ];
+}
+
+async function createOpenRouterOpinion(env, body = {}) {
+  if (!env.OPENROUTER_API_KEY) {
+    throw new Error("Missing OPENROUTER_API_KEY Worker secret");
+  }
+
+  const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
+  const model = getOpenRouterModel(body.modelId || body.model);
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.OPENROUTER_SITE_URL || env.ALLOWED_ORIGIN || "https://pjbell555.github.io",
+      "X-Title": env.OPENROUTER_APP_NAME || "ComHedge 2"
+    },
+    body: JSON.stringify({
+      model,
+      messages: buildOpenRouterOpinionMessages(body),
+      temperature: 0.2,
+      max_tokens: 500,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    throw new Error(data?.error?.message || data?.message || `OpenRouter request failed: ${response.status}`);
+  }
+
+  const content = data?.choices?.[0]?.message?.content || "{}";
+  let opinion = {};
+  try {
+    opinion = JSON.parse(content);
+  } catch (error) {
+    opinion = { summary: content };
+  }
+
+  return {
+    provider: "OpenRouter",
+    model,
+    rawModelId: body.modelId || body.model,
+    opinion,
+    usage: data.usage || null
+  };
+}
+
 async function githubRequest(env, path, options = {}) {
   const token = env.GITHUB_TOKEN;
   const repo = env.GITHUB_REPOSITORY || env.REPO_FULL_NAME;
@@ -422,6 +510,16 @@ export default {
           sandbox: true,
           ...sandboxOrder
         }, 200, origin);
+      }
+
+      if (url.pathname === "/models/openrouter/opinion") {
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const opinion = await createOpenRouterOpinion(env, body);
+        return jsonResponse(opinion, 200, origin);
       }
 
       if (url.pathname === "/settings") {
