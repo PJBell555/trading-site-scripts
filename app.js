@@ -84,6 +84,7 @@ const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
 const paperOpenPlEl = document.querySelector("#paper-open-pl");
 const paperMartingaleEl = document.querySelector("#paper-martingale");
+const paperMarketStatusEl = document.querySelector("#paper-market-status");
 const paperKarpathyEl = document.querySelector("#paper-karpathy");
 const coinbaseSandboxStatusEl = document.querySelector("#coinbase-sandbox-status");
 const paperDecisionTitleEl = document.querySelector("#paper-decision-title");
@@ -1397,15 +1398,18 @@ function toggleExpandedUser(user) {
   renderUserManagement();
   if (expandedUserEmail) {
     window.requestAnimationFrame(() => {
-      const detailRow = document.querySelector(".user-profile-detail-row");
-      (detailRow || selectedUserProfileEl).scrollIntoView({ behavior: "smooth", block: "nearest" });
+      selectedUserProfileEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
 }
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
-  selectedUserProfileEl.hidden = true;
+  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
+  selectedUserProfileEl.hidden = !selectedUser;
+  if (!selectedUser) return;
+
+  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
 }
 
 function renderUserManagement() {
@@ -1509,16 +1513,6 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
-
-    if (expandedUserEmail === normalizeEmail(user.email)) {
-      const detailRow = document.createElement("tr");
-      const detailCell = document.createElement("td");
-      detailRow.className = "user-profile-detail-row";
-      detailCell.colSpan = 8;
-      detailCell.append(createUserProfilePanel(user));
-      detailRow.append(detailCell);
-      userTableBodyEl.append(detailRow);
-    }
   });
   renderSelectedUserProfile();
 }
@@ -2067,6 +2061,68 @@ function formatTradeTime(value) {
     minute: "2-digit",
     second: "2-digit"
   }).format(value);
+}
+
+function getEasternMarketParts(value = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(value).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const hour = Number(parts.hour) === 24 ? 0 : Number(parts.hour);
+
+  return {
+    day: dayMap[parts.weekday] ?? 0,
+    minutes: (hour * 60) + Number(parts.minute || 0)
+  };
+}
+
+function getFuturesMarketStatus(value = new Date()) {
+  const { day, minutes } = getEasternMarketParts(value);
+  const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const isMaintenanceBreak = day >= 1 && day <= 4 && minutes >= 17 * 60 && minutes < 18 * 60;
+  const isOpen = (day === 0 && minutes >= 18 * 60)
+    || (day >= 1 && day <= 4 && !isMaintenanceBreak)
+    || (day === 5 && minutes < 17 * 60);
+
+  if (isOpen) {
+    const closeCopy = day >= 1 && day <= 4 && minutes < 17 * 60
+      ? "Maintenance starts today 5:00 PM ET"
+      : day >= 0 && day <= 4
+        ? "Next maintenance 5:00 PM ET"
+        : "Closes Friday 5:00 PM ET";
+    return {
+      isOpen: true,
+      label: "Market open",
+      shortLabel: "Market open",
+      detail: closeCopy
+    };
+  }
+
+  if (isMaintenanceBreak) {
+    return {
+      isOpen: false,
+      label: "Market closed",
+      shortLabel: "Reopens 6:00 PM ET",
+      detail: "Daily maintenance break. Reopens today 6:00 PM ET."
+    };
+  }
+
+  const opensToday = day === 0 && minutes < 18 * 60;
+  return {
+    isOpen: false,
+    label: "Market closed",
+    shortLabel: opensToday ? "Opens 6:00 PM ET" : "Opens Sunday 6:00 PM ET",
+    detail: opensToday
+      ? "Weekend close. Opens today 6:00 PM ET."
+      : `Weekend close. Opens Sunday 6:00 PM ET. Today is ${dayNames[day]} ET.`
+  };
 }
 
 function formatDuration(ms) {
@@ -3060,7 +3116,9 @@ async function loadSharedAdvisoryHistory(manual = false) {
     renderAdvisoryChart();
     return true;
   } catch (error) {
-    advisoryHistoryStatusEl.textContent = manual ? "Chart sync failed" : "Chart backend offline";
+    advisoryHistoryStatusEl.textContent = advisoryHistory.length
+      ? `Chart using ${advisoryHistory.length} local sample${advisoryHistory.length === 1 ? "" : "s"}; backend offline`
+      : manual ? "Chart sync failed" : "Chart backend offline";
     renderAdvisoryChart();
     return false;
   } finally {
@@ -3344,8 +3402,12 @@ function renderAccuracyBars(evaluations) {
 
 function renderAccuracyOutcomes(evaluations) {
   accuracyOutcomesEl.innerHTML = "";
+  const recentEvaluations = evaluations
+    .filter((item) => item && item.entry && Number.isFinite(Number(item.startPrice)) && Number.isFinite(Number(item.endPrice)))
+    .slice(-12)
+    .reverse();
 
-  if (!evaluations.length) {
+  if (!recentEvaluations.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
@@ -3357,7 +3419,7 @@ function renderAccuracyOutcomes(evaluations) {
     return;
   }
 
-  evaluations.slice(-8).reverse().forEach((item) => {
+  recentEvaluations.forEach((item) => {
     const row = document.createElement("tr");
     row.dataset.result = item.correct ? "correct" : "wrong";
     [
@@ -4302,6 +4364,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
   const decision = getPaperDecision(signal, tradePlan, openTrade);
   const staleStopTrade = !openTrade && getLatestUnclosedOpeningTrade(commodity);
+  const marketStatus = getFuturesMarketStatus();
 
   syncPaperInputs();
   if (paperUserContextEl) {
@@ -4313,7 +4376,11 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperCommittedEl.textContent = formatMoney(committedCapital);
   paperOpenPlEl.textContent = formatSignedMoney(openPl);
   paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
-  paperMartingaleEl.textContent = `Step ${martingaleStep} / ${MARTINGALE_MAX_STEP} (${formatMoney(nextCapital)})`;
+  paperMartingaleEl.textContent = `Step ${martingaleStep} / ${MARTINGALE_MAX_STEP} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
+  if (paperMarketStatusEl) {
+    paperMarketStatusEl.textContent = `${marketStatus.label}: ${marketStatus.detail}`;
+    paperMarketStatusEl.dataset.open = String(marketStatus.isOpen);
+  }
   paperDecisionTitleEl.textContent = decision.title;
   paperDecisionDetailEl.textContent = decision.detail;
 

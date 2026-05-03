@@ -1385,6 +1385,16 @@ select {
   font-size: 1.35rem;
 }
 
+#paper-market-status {
+  color: #fbbf24;
+  font-size: 1.05rem;
+  line-height: 1.35;
+}
+
+#paper-market-status[data-open="true"] {
+  color: #22d3a6;
+}
+
 .paper-edit-field {
   gap: 6px;
   margin: 0;
@@ -1679,6 +1689,15 @@ select {
 
 .accuracy-table {
   min-width: 700px;
+}
+
+.accuracy-table tbody tr {
+  display: table-row;
+}
+
+.accuracy-table tbody td {
+  background: #111827;
+  color: #cfe4ff;
 }
 
 .accuracy-table tbody tr[data-result="correct"] td:last-child {
