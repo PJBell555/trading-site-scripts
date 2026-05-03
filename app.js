@@ -96,7 +96,6 @@ const historyTotalFilteredEl = document.querySelector("#history-total-filtered")
 const historyTotalCountEl = document.querySelector("#history-total-count");
 const historyApiUrlEl = document.querySelector("#history-api-url");
 const saveHistoryApiEl = document.querySelector("#save-history-api");
-const syncHistoryEl = document.querySelector("#sync-history");
 const cleanHistoryEl = document.querySelector("#clean-history");
 const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
@@ -4292,12 +4291,6 @@ historyApiUrlEl.addEventListener("keydown", (event) => {
     loadSharedTransactionHistory(true);
     loadSharedAdvisoryHistory(true);
   }
-});
-syncHistoryEl.addEventListener("click", () => {
-  loadSharedSettings(true)
-    .then(() => saveSharedTransactionHistory())
-    .then(() => loadSharedTransactionHistory(true))
-    .then(() => loadSharedAdvisoryHistory(true));
 });
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
