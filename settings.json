@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-05-03T15:10:54.358Z",
+  "generatedAt": "2026-05-03T15:11:32.328Z",
   "source": "cloudflare-github-shared-settings",
-  "coinbaseSandboxEnabled": true,
+  "coinbaseSandboxEnabled": false,
   "users": [
     {
       "id": "user-peter-bell",
