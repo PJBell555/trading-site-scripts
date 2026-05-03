@@ -215,6 +215,7 @@ const ACCESS_EMAIL_KEY = "atlas-access-email";
 const ACCESS_SESSION_RECORDED_KEY = "atlas-access-session-recorded";
 const ACCESS_PASSWORD_HASH = "55bdd6bb9b1839c8f8e7c3459e61f5537d0691c6b4c8fa827d594708f4d63db2";
 const USER_ROSTER_KEY = "atlas-user-roster-v1";
+const LEGACY_LEDGER_USER_EMAIL = "peter@pjbell.com";
 const FEATURE_REQUESTS_KEY = "atlas-feature-requests-v1";
 const PRIMARY_MODEL_KEY = "atlas-primary-advisory-model";
 const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
@@ -263,6 +264,7 @@ let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
 let expandedUserEmail = "";
+let editingUserEmail = "";
 let activeSection = "advisories";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
@@ -713,6 +715,7 @@ function normalizeUserRecord(user, fallback = {}) {
   const sessionHistory = Array.isArray(user?.sessionHistory)
     ? user.sessionHistory
     : Array.isArray(fallback.sessionHistory) ? fallback.sessionHistory : [];
+  const commoditiesForUser = normalizeCommodityIds(user?.commodities ?? fallback.commodities);
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -724,6 +727,7 @@ function normalizeUserRecord(user, fallback = {}) {
     paperBaseEquity: Number.isFinite(profileEquity) ? Math.max(0, profileEquity) : PAPER_START_EQUITY,
     paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
     avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
+    commodities: commoditiesForUser,
     sessionHistory: sessionHistory
       .filter((session) => session && session.time)
       .slice(0, 25),
@@ -767,6 +771,62 @@ function getCurrentUserProfile() {
   return findRegisteredUserByEmail(getCurrentAccessEmail());
 }
 
+function getCurrentLedgerEmail() {
+  return normalizeEmail(getCurrentUserProfile()?.email || getCurrentAccessEmail() || LEGACY_LEDGER_USER_EMAIL);
+}
+
+function isCurrentLegacyLedgerOwner() {
+  const user = getCurrentUserProfile();
+  const email = getCurrentLedgerEmail();
+  return email === LEGACY_LEDGER_USER_EMAIL
+    || email.startsWith("pete@")
+    || email.startsWith("peter@")
+    || String(user?.name || "").toLowerCase().includes("peter");
+}
+
+function getAllCommodityIds() {
+  return commodities.map(({ id }) => id);
+}
+
+function normalizeCommodityIds(values) {
+  const allowed = new Set(getAllCommodityIds());
+  const normalized = (Array.isArray(values) ? values : [])
+    .map((value) => String(value || "").trim())
+    .filter((value) => allowed.has(value));
+  return normalized.length ? Array.from(new Set(normalized)) : getAllCommodityIds();
+}
+
+function getCurrentUserCommodityIds() {
+  return normalizeCommodityIds(getCurrentUserProfile()?.commodities);
+}
+
+function userCanTradeCommodity(commodity) {
+  return getCurrentUserCommodityIds().includes(commodity);
+}
+
+function ensureSelectedCommodityAllowed() {
+  const allowed = getCurrentUserCommodityIds();
+  if (allowed.includes(commoditySelect.value)) return false;
+
+  commoditySelect.value = allowed[0] || "oil";
+  historyCommodityFilter = allowed.includes(historyCommodityFilter) ? historyCommodityFilter : "all";
+  advisoryCommodityFilter = allowed.includes(advisoryCommodityFilter) ? advisoryCommodityFilter : commoditySelect.value;
+  return true;
+}
+
+function renderCommodityAccess() {
+  const allowed = new Set(getCurrentUserCommodityIds());
+
+  Array.from(commoditySelect.options).forEach((option) => {
+    option.hidden = !allowed.has(option.value);
+    option.disabled = !allowed.has(option.value);
+  });
+
+  chipMap.forEach(({ chip }, commodity) => {
+    chip.hidden = !allowed.has(commodity);
+  });
+}
+
 function recomputePaperEquityFromBase() {
   const closedPnl = getClosedPaperTrades().reduce((total, entry) => total + getDisplayPnl(entry), 0);
   paperEquity = paperBaseEquity + closedPnl;
@@ -776,6 +836,8 @@ function applyCurrentUserPaperSettings() {
   const user = getCurrentUserProfile();
   if (!user) return false;
 
+  ensureSelectedCommodityAllowed();
+  renderCommodityAccess();
   paperBaseEquity = Number.isFinite(Number(user.paperBaseEquity))
     ? Math.max(0, Number(user.paperBaseEquity))
     : PAPER_START_EQUITY;
@@ -802,7 +864,8 @@ function getSharedUserProfilesPayload() {
   return userRoster.reduce((profiles, user) => {
     profiles[user.email] = {
       paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
-      paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT
+      paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
+      commodities: normalizeCommodityIds(user.commodities)
     };
     return profiles;
   }, {});
@@ -837,6 +900,7 @@ function mergeUserRecords(existing, incoming) {
     paperRiskPct: Number.isFinite(Number(incoming.paperRiskPct))
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
+    commodities: normalizeCommodityIds(incoming.commodities || existing.commodities),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
     sessionHistory: Array.from(sessionsByKey.values())
       .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
@@ -892,6 +956,13 @@ function mergeSharedUserProfiles(profiles) {
     if (Number.isFinite(profileRiskPct)) {
       user.paperRiskPct = clamp(profileRiskPct, 0.1, 25);
       changed = true;
+    }
+    if (Array.isArray(profile.commodities)) {
+      const nextCommodities = normalizeCommodityIds(profile.commodities);
+      if (JSON.stringify(nextCommodities) !== JSON.stringify(normalizeCommodityIds(user.commodities))) {
+        user.commodities = nextCommodities;
+        changed = true;
+      }
     }
   });
 
@@ -1040,10 +1111,23 @@ function saveExpandedUserProfile(user, nameInput, emailInput) {
   user.name = nextName;
   user.email = nextEmail;
   expandedUserEmail = nextEmail;
+  editingUserEmail = "";
   saveUserRoster();
   saveSharedSettings();
   renderUserManagement();
   userManagementStatusEl.textContent = "Profile saved";
+}
+
+function saveUserCommoditySelection(user, container) {
+  const selected = Array.from(container.querySelectorAll("input[type='checkbox']:checked"))
+    .map((input) => input.value);
+  user.commodities = normalizeCommodityIds(selected);
+  saveUserRoster();
+  saveSharedSettings();
+  applyCurrentUserPaperSettings();
+  calculateSignal();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${user.name || user.email} commodity access saved`;
 }
 
 function createUserProfilePanel(user) {
@@ -1053,14 +1137,24 @@ function createUserProfilePanel(user) {
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
   const profileInfo = document.createElement("div");
+  const profileHeader = document.createElement("div");
+  const profileTitleRow = document.createElement("div");
+  const profileName = document.createElement("strong");
+  const editButton = document.createElement("button");
+  const profileMeta = document.createElement("div");
+  const editFields = document.createElement("div");
   const nameInput = document.createElement("input");
   const emailInput = document.createElement("input");
   const saveButton = document.createElement("button");
+  const cancelButton = document.createElement("button");
   const clearPhoto = document.createElement("button");
+  const commoditiesCard = document.createElement("section");
   const statsCard = document.createElement("section");
   const actionsCard = document.createElement("section");
   const historyCard = document.createElement("section");
   const history = getUserSessionHistory(user);
+  const emailKey = normalizeEmail(user.email);
+  const isEditing = editingUserEmail === emailKey;
 
   wrapper.className = "user-profile-panel";
   profileCard.className = "user-profile-detail-card";
@@ -1081,10 +1175,37 @@ function createUserProfilePanel(user) {
     if (file) updateUserPhoto(user, file);
     photoInput.value = "";
   });
-  photoHint.textContent = "Click or drag to upload. Images are resized for profile use.";
+  photoHint.textContent = "Click or drag to upload. Images will be resized to 256x256px.";
   photoLabel.append(createUserAvatar(user, "profile-photo-preview"), photoInput, photoHint);
 
-  profileInfo.className = "profile-edit-fields";
+  profileInfo.className = "profile-detail-info";
+  profileHeader.className = "profile-header";
+  profileTitleRow.className = "profile-title-row";
+  profileName.textContent = user.name || "Unnamed user";
+  editButton.type = "button";
+  editButton.className = "profile-edit-toggle";
+  editButton.textContent = isEditing ? "Done" : "Edit";
+  editButton.addEventListener("click", () => {
+    editingUserEmail = isEditing ? "" : emailKey;
+    renderUserManagement();
+  });
+  profileTitleRow.append(profileName, editButton);
+
+  profileMeta.className = "profile-meta";
+  [
+    [`Email: ${user.email || "-"}`],
+    [`Joined ${formatRelativeDate(user.createdAt)}`],
+    [`Last active ${formatRelativeDate(user.lastActiveAt)}`]
+  ].forEach(([value]) => {
+    const item = document.createElement("span");
+    item.textContent = value;
+    profileMeta.append(item);
+  });
+  profileHeader.append(profileTitleRow, profileMeta);
+  profileInfo.append(profileHeader);
+
+  editFields.className = "profile-edit-fields";
+  editFields.hidden = !isEditing;
   nameInput.type = "text";
   nameInput.value = user.name || "";
   nameInput.placeholder = "User name";
@@ -1095,6 +1216,13 @@ function createUserProfilePanel(user) {
   saveButton.className = "access-button profile-save-button";
   saveButton.textContent = "Save profile";
   saveButton.addEventListener("click", () => saveExpandedUserProfile(user, nameInput, emailInput));
+  cancelButton.type = "button";
+  cancelButton.className = "filter-button";
+  cancelButton.textContent = "Cancel";
+  cancelButton.addEventListener("click", () => {
+    editingUserEmail = "";
+    renderUserManagement();
+  });
   clearPhoto.type = "button";
   clearPhoto.className = "filter-button";
   clearPhoto.textContent = "Clear photo";
@@ -1113,10 +1241,32 @@ function createUserProfilePanel(user) {
     const label = document.createElement("label");
     label.textContent = labelText;
     label.append(input);
-    profileInfo.append(label);
+    editFields.append(label);
   });
-  profileInfo.append(saveButton, clearPhoto);
+  editFields.append(saveButton, cancelButton, clearPhoto);
+  profileInfo.append(editFields);
   profileCard.append(photoLabel, profileInfo);
+
+  commoditiesCard.className = "user-profile-subcard";
+  commoditiesCard.innerHTML = "<h3>Commodities Traded</h3>";
+  const commodityGrid = document.createElement("div");
+  const commoditySave = document.createElement("button");
+  commodityGrid.className = "profile-commodity-grid";
+  const selectedCommodities = new Set(normalizeCommodityIds(user.commodities));
+  commodities.forEach(({ id, name }) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.value = id;
+    input.checked = selectedCommodities.has(id);
+    label.append(input, document.createTextNode(name));
+    commodityGrid.append(label);
+  });
+  commoditySave.type = "button";
+  commoditySave.className = "filter-button profile-commodity-save";
+  commoditySave.textContent = "Save commodities";
+  commoditySave.addEventListener("click", () => saveUserCommoditySelection(user, commodityGrid));
+  commoditiesCard.append(commodityGrid, commoditySave);
 
   statsCard.className = "user-profile-subcard";
   statsCard.innerHTML = `
@@ -1183,7 +1333,7 @@ function createUserProfilePanel(user) {
   });
   historyCard.append(table);
 
-  wrapper.append(profileCard, statsCard, actionsCard, historyCard);
+  wrapper.append(profileCard, commoditiesCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
 
@@ -1195,6 +1345,13 @@ function getFilteredUsers() {
     String(user.name || "").toLowerCase().includes(query)
     || String(user.email || "").toLowerCase().includes(query)
   ));
+}
+
+function toggleExpandedUser(user) {
+  const emailKey = normalizeEmail(user.email);
+  expandedUserEmail = expandedUserEmail === emailKey ? "" : emailKey;
+  editingUserEmail = "";
+  renderUserManagement();
 }
 
 function renderUserManagement() {
@@ -1238,13 +1395,19 @@ function renderUserManagement() {
 
     row.className = "user-summary-row";
     row.dataset.expanded = String(expandedUserEmail === normalizeEmail(user.email));
+    row.tabIndex = 0;
+    row.addEventListener("click", (event) => {
+      if (event.target.closest("button, input, a, label")) return;
+      toggleExpandedUser(user);
+    });
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      toggleExpandedUser(user);
+    });
     profile.className = "user-profile";
     profile.type = "button";
-    profile.addEventListener("click", () => {
-      const emailKey = normalizeEmail(user.email);
-      expandedUserEmail = expandedUserEmail === emailKey ? "" : emailKey;
-      renderUserManagement();
-    });
+    profile.addEventListener("click", () => toggleExpandedUser(user));
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
     profileText.append(name, email);
@@ -1257,14 +1420,9 @@ function renderUserManagement() {
 
     actions.className = "user-actions";
     action.type = "button";
-    action.className = "filter-button";
-    action.textContent = user.enabled === false ? "Enable" : "Disable";
-    action.addEventListener("click", () => {
-      user.enabled = user.enabled === false;
-      saveUserRoster();
-      saveSharedSettings();
-      renderUserManagement();
-    });
+    action.className = "view-user-button";
+    action.textContent = "View";
+    action.addEventListener("click", () => toggleExpandedUser(user));
     actions.append(action);
     actionCell.append(actions);
 
@@ -1677,9 +1835,10 @@ commoditySelect.value = "oil";
 function renderHistoryFilterButtons() {
   historyCommodityFiltersEl.innerHTML = "";
 
+  const visibleCommodities = commodities.filter(({ id }) => userCanTradeCommodity(id));
   const filters = [
     { id: "all", name: "All" },
-    ...commodities.map(({ id, name }) => ({ id, name }))
+    ...visibleCommodities.map(({ id, name }) => ({ id, name }))
   ];
 
   filters.forEach(({ id, name }) => {
@@ -1715,7 +1874,7 @@ function renderPeriodFilterButtons() {
 function renderAdvisoryFilterButtons() {
   advisoryCommodityFiltersEl.innerHTML = "";
 
-  commodities.forEach(({ id, name }) => {
+  commodities.filter(({ id }) => userCanTradeCommodity(id)).forEach(({ id, name }) => {
     const button = document.createElement("button");
     const check = document.createElement("span");
 
@@ -1998,7 +2157,7 @@ function clamp(value, min, max) {
 }
 
 function getClosedPaperTrades() {
-  return transactionHistory.filter((entry) => entry.pnl !== 0);
+  return getUserScopedTransactions().filter((entry) => entry.pnl !== 0);
 }
 
 function getLossStreak(closedTrades) {
@@ -2012,7 +2171,7 @@ function getLossStreak(closedTrades) {
 
 function getConsecutiveLosingCloses() {
   const losses = [];
-  const closedTrades = transactionHistory
+  const closedTrades = getUserScopedTransactions()
     .filter(isClosingTransaction)
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 
@@ -2353,15 +2512,27 @@ function normalizeTransactionEntry(entry) {
   const time = getTransactionDate(entry.time);
   const openedAt = entry.openedAt ? getTransactionDate(entry.openedAt) : null;
   const closedAt = entry.closedAt ? getTransactionDate(entry.closedAt) : null;
+  const userEmail = normalizeEmail(entry.userEmail || entry.profileEmail || entry.accountEmail || LEGACY_LEDGER_USER_EMAIL);
 
   return {
     ...entry,
     commodity,
     commodityName: entry.commodityName || commodities.find(({ id }) => id === commodity)?.name,
+    userEmail,
     time,
     openedAt,
     closedAt
   };
+}
+
+function isTransactionForCurrentUser(entry) {
+  const entryEmail = normalizeEmail(entry.userEmail || LEGACY_LEDGER_USER_EMAIL);
+  return entryEmail === getCurrentLedgerEmail()
+    || (entryEmail === LEGACY_LEDGER_USER_EMAIL && isCurrentLegacyLedgerOwner());
+}
+
+function getUserScopedTransactions() {
+  return transactionHistory.filter(isTransactionForCurrentUser);
 }
 
 function getTransactionKey(entry) {
@@ -2426,6 +2597,7 @@ function mergeTransactionHistory(entries, options = {}) {
 
 function getTradeLifecycleKey(entry) {
   return [
+    entry.userEmail || LEGACY_LEDGER_USER_EMAIL,
     entry.commodity || "commodity",
     entry.contract || "contract",
     entry.side || "side",
@@ -2469,7 +2641,7 @@ function tradeFromOpeningEntry(entry) {
 
 function rebuildPaperStateFromHistory() {
   const activeTrades = new Map();
-  const chronological = [...transactionHistory].sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+  const chronological = getUserScopedTransactions().sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
   let latestClosed = null;
 
   chronological.forEach((entry) => {
@@ -2490,7 +2662,7 @@ function rebuildPaperStateFromHistory() {
     if (trade.commodity) openPaperTrades.set(trade.commodity, trade);
   });
 
-  const closedEntries = transactionHistory.filter(isClosingTransaction);
+  const closedEntries = getUserScopedTransactions().filter(isClosingTransaction);
   paperEquity = paperBaseEquity + closedEntries.reduce((total, entry) => total + getDisplayPnl(entry), 0);
 
   martingaleStep = latestClosed ? getNextMartingaleStepFromHistory() : 1;
@@ -3354,6 +3526,8 @@ async function recordTransaction(entry) {
   const transaction = normalizeTransactionEntry({
     id: nextTransactionId,
     time: new Date(),
+    userEmail: getCurrentLedgerEmail(),
+    userName: getCurrentUserProfile()?.name || "",
     ...entry
   });
 
@@ -3579,7 +3753,7 @@ function closeOnlyPaperSweep() {
   if (!hasHistoryBackend()) return;
 
   const baseSignals = readBaseSignals();
-  commodities.forEach((commodityMeta) => {
+  commodities.filter(({ id }) => userCanTradeCommodity(id)).forEach((commodityMeta) => {
     const commodity = commodityMeta.id;
     if (!openPaperTrades.has(commodity)) return;
 
@@ -3698,7 +3872,7 @@ function isEntryInPeriod(entry, period) {
 }
 
 function getFilteredTransactions() {
-  return transactionHistory.filter((entry) => {
+  return getUserScopedTransactions().filter((entry) => {
     const commodityMatch = historyCommodityFilter === "all" || entry.commodity === historyCommodityFilter;
     return commodityMatch && isEntryInPeriod(entry, historyPeriodFilter);
   });
@@ -3717,7 +3891,7 @@ function isOpeningTransaction(entry) {
 }
 
 function getLatestUnclosedOpeningTrade(commodity) {
-  const chronological = [...transactionHistory].sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+  const chronological = getUserScopedTransactions().sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
   const active = new Map();
 
   chronological.forEach((entry) => {
@@ -3750,8 +3924,9 @@ function isSameTradePair(left, right) {
 }
 
 function getOpeningEntry(entry) {
+  const scopedTransactions = getUserScopedTransactions();
   if (entry.tradeId) {
-    const exact = transactionHistory.find((candidate) => (
+    const exact = scopedTransactions.find((candidate) => (
       candidate.tradeId === entry.tradeId &&
       candidate.id !== entry.id &&
       isOpeningTransaction(candidate)
@@ -3760,7 +3935,7 @@ function getOpeningEntry(entry) {
   }
 
   const entryTime = getTransactionDate(entry.time).getTime();
-  return transactionHistory
+  return scopedTransactions
     .filter((candidate) => (
       isOpeningTransaction(candidate) &&
       isSameTradePair(candidate, entry) &&
@@ -3770,8 +3945,9 @@ function getOpeningEntry(entry) {
 }
 
 function getClosingEntry(entry) {
+  const scopedTransactions = getUserScopedTransactions();
   if (entry.tradeId) {
-    const exact = transactionHistory.find((candidate) => (
+    const exact = scopedTransactions.find((candidate) => (
       candidate.tradeId === entry.tradeId &&
       candidate.id !== entry.id &&
       isClosingTransaction(candidate)
@@ -3780,7 +3956,7 @@ function getClosingEntry(entry) {
   }
 
   const entryTime = getTransactionDate(entry.time).getTime();
-  return transactionHistory
+  return scopedTransactions
     .filter((candidate) => (
       isClosingTransaction(candidate) &&
       isSameTradePair(candidate, entry) &&
@@ -3954,6 +4130,7 @@ function renderTransactionDetail(entry) {
 }
 
 function renderPaperTrading(commodity, signal, tradePlan) {
+  const scopedTransactions = getUserScopedTransactions();
   const openTrade = getOpenPaperTrade(commodity);
   const openTrades = Array.from(openPaperTrades.values());
   const openPl = openTrades.reduce((total, trade) => {
@@ -4002,7 +4179,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
 
-  if (!transactionHistory.length) {
+  if (!scopedTransactions.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     historyTotalAllEl.textContent = "$0.00";
@@ -4017,7 +4194,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     return;
   }
 
-  const periodEntries = transactionHistory.filter((entry) => isEntryInPeriod(entry, historyPeriodFilter));
+  const periodEntries = scopedTransactions.filter((entry) => isEntryInPeriod(entry, historyPeriodFilter));
   const filteredEntries = getFilteredTransactions();
   const allTotal = getProfitTotal(periodEntries);
   const filteredTotal = getProfitTotal(filteredEntries);
@@ -4109,6 +4286,13 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 }
 
 function calculateSignal() {
+  const selectionChanged = ensureSelectedCommodityAllowed();
+  renderCommodityAccess();
+  if (selectionChanged) {
+    connectCoinbaseWebSocket(commoditySelect.value);
+    refreshCoinbasePrice(commoditySelect.value);
+  }
+
   const commodity = commoditySelect.value;
   const commodityMeta = commodities.find(({ id }) => id === commodity) || commodities[0];
   const baseSignals = readBaseSignals();
