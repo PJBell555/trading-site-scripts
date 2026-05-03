@@ -1694,7 +1694,7 @@ function openUserDetail(user) {
   renderUserManagement();
   if (expandedUserEmail) {
     window.requestAnimationFrame(() => {
-      userDetailViewEl.scrollIntoView({ behavior: "smooth", block: "start" });
+      document.querySelector(".user-detail-inline")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
     });
   }
 }
@@ -1707,15 +1707,9 @@ function closeUserDetail() {
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
-  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
-  const hasSelectedUser = Boolean(selectedUser);
-
-  userRosterViewEl.hidden = hasSelectedUser;
-  userDetailViewEl.hidden = !hasSelectedUser;
-  selectedUserProfileEl.hidden = !hasSelectedUser;
-  if (!selectedUser) return;
-
-  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
+  userRosterViewEl.hidden = false;
+  userDetailViewEl.hidden = true;
+  selectedUserProfileEl.hidden = true;
 }
 
 function renderUserManagement() {
@@ -1764,18 +1758,21 @@ function renderUserManagement() {
     row.tabIndex = 0;
     row.addEventListener("click", (event) => {
       if (event.target.closest("button, input, a, label")) return;
-      openUserDetail(user);
+      if (expandedUserEmail === normalizeEmail(user.email)) closeUserDetail();
+      else openUserDetail(user);
     });
     row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      openUserDetail(user);
+      if (expandedUserEmail === normalizeEmail(user.email)) closeUserDetail();
+      else openUserDetail(user);
     });
     profile.className = "user-profile";
     profile.type = "button";
     profile.addEventListener("click", (event) => {
       event.stopPropagation();
-      openUserDetail(user);
+      if (expandedUserEmail === normalizeEmail(user.email)) closeUserDetail();
+      else openUserDetail(user);
     });
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
@@ -1790,9 +1787,13 @@ function renderUserManagement() {
     actions.className = "user-actions";
     action.type = "button";
     action.className = "view-user-button";
-    action.textContent = "View";
+    action.textContent = row.dataset.expanded === "true" ? "Hide" : "View";
     action.addEventListener("click", (event) => {
       event.stopPropagation();
+      if (expandedUserEmail === normalizeEmail(user.email)) {
+        closeUserDetail();
+        return;
+      }
       openUserDetail(user);
     });
     actions.append(action);
@@ -1819,6 +1820,16 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const detailRow = document.createElement("tr");
+      const detailCell = document.createElement("td");
+
+      detailRow.className = "user-detail-inline";
+      detailCell.colSpan = 8;
+      detailCell.append(createUserProfilePanel(user));
+      detailRow.append(detailCell);
+      userTableBodyEl.append(detailRow);
+    }
   });
   renderSelectedUserProfile();
 }
@@ -4009,7 +4020,7 @@ function renderAdvisoryAccuracy(samples) {
 
 function drawChartMessage(context, canvas, message) {
   context.clearRect(0, 0, canvas.width, canvas.height);
-  context.fillStyle = "#94a3b8";
+  context.fillStyle = "#dbeafe";
   context.font = "700 28px Aptos, Segoe UI, sans-serif";
   context.textAlign = "center";
   context.fillText(message, canvas.width / 2, canvas.height / 2);
@@ -4062,12 +4073,12 @@ function renderAdvisoryChart() {
   const signalValues = samples.map((entry) => signalYFor(entry.tone));
 
   context.clearRect(0, 0, width, height);
-  context.fillStyle = "#111827";
+  context.fillStyle = "#020617";
   context.fillRect(0, 0, width, height);
-  context.strokeStyle = "rgba(148, 163, 184, 0.18)";
+  context.strokeStyle = "rgba(191, 219, 254, 0.22)";
   context.lineWidth = 1 * scale;
   context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
-  context.fillStyle = "#94a3b8";
+  context.fillStyle = "#dbeafe";
   context.textAlign = "right";
 
   for (let index = 0; index <= 4; index += 1) {
@@ -4095,10 +4106,10 @@ function renderAdvisoryChart() {
     context.setLineDash([]);
   }
 
-  drawLine(prices, "#dbeafe");
-  drawLine(signalValues, "#22d3a6", [10, 7], (value) => value);
+  drawLine(prices, "#f8fafc");
+  drawLine(signalValues, "#facc15", [10, 7], (value) => value);
 
-  context.strokeStyle = "rgba(148, 163, 184, 0.28)";
+  context.strokeStyle = "rgba(96, 165, 250, 0.58)";
   context.lineWidth = 1.5 * scale;
   context.beginPath();
   context.moveTo(padding.left, laneTop - laneGap * 0.5);
@@ -4113,7 +4124,7 @@ function renderAdvisoryChart() {
   context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
   signalRows.forEach(([label, tone, color]) => {
     const y = signalYFor(tone);
-    context.strokeStyle = "rgba(148, 163, 184, 0.14)";
+    context.strokeStyle = "rgba(191, 219, 254, 0.18)";
     context.lineWidth = 1 * scale;
     context.beginPath();
     context.moveTo(padding.left, y);
@@ -4130,7 +4141,7 @@ function renderAdvisoryChart() {
   const title = `${commodities.find(({ id }) => id === advisoryCommodityFilter)?.name || "Commodity"} ${advisoryHorizonFilter} advisory`;
   context.fillText(title, padding.left, 24 * scale);
 
-  context.fillStyle = "#94a3b8";
+  context.fillStyle = "#bfdbfe";
   context.font = `${12 * scale}px Aptos, Segoe UI, sans-serif`;
   context.fillText(formatTradeTime(new Date(minTime)), padding.left, height - 24 * scale);
   context.textAlign = "right";
