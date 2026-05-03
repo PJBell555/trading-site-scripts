@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-03T15:50:51.203Z",
+  "generatedAt": "2026-05-03T15:51:06.023Z",
   "source": "cloudflare-github-shared-settings",
   "coinbaseSandboxEnabled": true,
   "users": [
@@ -21,12 +21,19 @@
       "name": "Peter Bell",
       "email": "peter@pjbell.com",
       "createdAt": "2026-02-02T12:00:00.000Z",
-      "lastActiveAt": "2026-05-03T15:50:51.276Z",
-      "sessions": 40,
+      "lastActiveAt": "2026-05-03T15:51:06.040Z",
+      "sessions": 41,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
       "avatarDataUrl": "",
       "sessionHistory": [
+        {
+          "time": "2026-05-03T15:51:06.040Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
         {
           "time": "2026-05-03T15:50:51.276Z",
           "device": "Desktop",
