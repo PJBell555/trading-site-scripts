@@ -206,6 +206,7 @@ const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
+const COINBASE_WS_STALE_MS = 30000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
@@ -2141,12 +2142,28 @@ function buildTradePlan(commodity, signal) {
 }
 
 async function refreshCoinbasePrice(commodity) {
+  const lastWebSocketUpdate = latestPriceTimes.get(commodity);
+  const webSocketFresh = lastWebSocketUpdate
+    && Date.now() - getTransactionDate(lastWebSocketUpdate).getTime() <= COINBASE_WS_STALE_MS;
+
   if (
     latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
     activePriceSocketCommodity === commodity &&
-    activePriceSocket?.readyState === WebSocket.OPEN
+    activePriceSocket?.readyState === WebSocket.OPEN &&
+    webSocketFresh
   ) {
     return;
+  }
+
+  if (
+    latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
+    activePriceSocketCommodity === commodity &&
+    activePriceSocket?.readyState === WebSocket.OPEN &&
+    !webSocketFresh
+  ) {
+    latestPriceSources.set(commodity, "Coinbase WebSocket stale");
+    closeCoinbaseWebSocket();
+    connectCoinbaseWebSocket(commodity);
   }
 
   const config = marketConfig[commodity];
@@ -2164,6 +2181,7 @@ async function refreshCoinbasePrice(commodity) {
       latestPriceTimes.set(commodity, new Date());
       latestPriceSources.set(commodity, "Coinbase live");
       await refreshCoinbaseProductDetails(commodity, livePrice);
+      closeOnlyPaperSweep();
       if (commoditySelect.value === commodity) calculateSignal();
     }
   } catch (error) {
@@ -2233,6 +2251,7 @@ function connectCoinbaseWebSocket(commodity) {
       latestPriceTimes.set(commodity, new Date());
       latestPriceSources.set(commodity, "Coinbase WebSocket");
       refreshCoinbaseProductDetails(commodity, socketPrice);
+      closeOnlyPaperSweep();
 
       if (commoditySelect.value === commodity) calculateSignal();
     };
