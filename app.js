@@ -26,6 +26,7 @@ const userEmailInputEl = document.querySelector("#user-email-input");
 const userSearchInputEl = document.querySelector("#user-search-input");
 const userSearchButtonEl = document.querySelector("#user-search-button");
 const userTableBodyEl = document.querySelector("#user-table-body");
+const selectedUserProfileEl = document.querySelector("#selected-user-profile");
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -1354,6 +1355,15 @@ function toggleExpandedUser(user) {
   renderUserManagement();
 }
 
+function renderSelectedUserProfile() {
+  selectedUserProfileEl.innerHTML = "";
+  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
+  selectedUserProfileEl.hidden = !selectedUser;
+  if (!selectedUser) return;
+
+  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
+}
+
 function renderUserManagement() {
   if (!userRoster.length) loadUserRoster();
 
@@ -1378,6 +1388,7 @@ function renderUserManagement() {
     cell.textContent = "No users match the current search.";
     row.append(cell);
     userTableBodyEl.append(row);
+    renderSelectedUserProfile();
     return;
   }
 
@@ -1447,17 +1458,8 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
-
-    if (expandedUserEmail === normalizeEmail(user.email)) {
-      const detailRow = document.createElement("tr");
-      const detailCell = document.createElement("td");
-      detailRow.className = "user-profile-detail-row";
-      detailCell.colSpan = 8;
-      detailCell.append(createUserProfilePanel(user));
-      detailRow.append(detailCell);
-      userTableBodyEl.append(detailRow);
-    }
   });
+  renderSelectedUserProfile();
 }
 
 function markCurrentSessionActive() {
@@ -3074,6 +3076,52 @@ function getFilteredAdvisorySamples() {
   ));
 }
 
+function getPaperTradeAdvisoryEvaluations() {
+  if (advisoryHorizonFilter !== "intraday") return [];
+
+  const start = getAdvisoryPeriodStart();
+
+  return getUserScopedTransactions()
+    .filter((entry) => (
+      isClosingTransaction(entry)
+      && entry.commodity === advisoryCommodityFilter
+      && getTransactionDate(entry.time).getTime() >= start
+    ))
+    .map((entry) => {
+      const openingEntry = getOpeningEntry(entry);
+      const detail = getEntryDetail(entry);
+      const side = entry.side || openingEntry?.side;
+      const tone = side === "short" ? "short" : side === "long" ? "long" : "wait";
+      const startPrice = Number(detail.entryPrice);
+      const endPrice = Number(detail.exitPrice);
+      const conviction = Number(openingEntry?.conviction ?? entry.conviction ?? 0);
+      const netPnl = getDisplayPnl(entry);
+
+      if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
+
+      return {
+        entry: {
+          time: openingEntry?.time || detail.openedAt || entry.openedAt || entry.time,
+          label: `Paper ${tone}`,
+          tone,
+          conviction
+        },
+        future: {
+          time: entry.closedAt || entry.time,
+          price: endPrice
+        },
+        startPrice,
+        endPrice,
+        move: endPrice - startPrice,
+        correct: netPnl > 0,
+        qualified: conviction >= advisoryScoreThreshold,
+        source: "paper-trade",
+        pnl: netPnl
+      };
+    })
+    .filter(Boolean);
+}
+
 function formatPercent(value) {
   if (!Number.isFinite(value)) return "-";
   return `${Math.round(value)}%`;
@@ -3195,7 +3243,9 @@ function renderAccuracyOutcomes(evaluations) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 6;
-    cell.textContent = "No evaluated outcomes yet. More snapshots are needed after each advisory.";
+    cell.textContent = advisoryHorizonFilter === "intraday"
+      ? "No evaluated outcomes in this window. Use Week or Month to include older paper trade outcomes."
+      : "No evaluated outcomes yet. More snapshots are needed after each advisory.";
     row.append(cell);
     accuracyOutcomesEl.append(row);
     return;
@@ -3221,7 +3271,10 @@ function renderAccuracyOutcomes(evaluations) {
 }
 
 function renderAdvisoryAccuracy(samples) {
-  const evaluations = evaluateAdvisorySamples(samples);
+  const evaluations = [
+    ...evaluateAdvisorySamples(samples),
+    ...getPaperTradeAdvisoryEvaluations()
+  ].sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
   const allSummary = summarizeEvaluations(evaluations);
   const qualifiedSummary = summarizeEvaluations(evaluations, (item) => item.qualified);
   const averageAbsMove = evaluations.length

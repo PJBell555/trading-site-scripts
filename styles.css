@@ -302,6 +302,17 @@ body {
   padding: 18px;
 }
 
+.selected-user-profile {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 18px;
+  padding-top: 20px;
+}
+
+.selected-user-profile[hidden] {
+  display: none;
+}
+
 .user-profile-panel {
   display: grid;
   gap: 18px;
