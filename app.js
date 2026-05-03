@@ -94,8 +94,6 @@ const historyPeriodFiltersEl = document.querySelector("#history-period-filters")
 const historyTotalAllEl = document.querySelector("#history-total-all");
 const historyTotalFilteredEl = document.querySelector("#history-total-filtered");
 const historyTotalCountEl = document.querySelector("#history-total-count");
-const historyApiUrlEl = document.querySelector("#history-api-url");
-const saveHistoryApiEl = document.querySelector("#save-history-api");
 const cleanHistoryEl = document.querySelector("#clean-history");
 const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
@@ -210,7 +208,6 @@ const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_WS_STALE_MS = 30000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
-const HISTORY_API_KEY = "atlas-history-api-url";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
@@ -2625,55 +2622,16 @@ function downloadSharedHistory() {
   sharedHistoryStatusEl.textContent = `${transactionHistory.length} rows exported for GitHub`;
 }
 
-function normalizeHistoryApiUrl(value) {
-  const normalized = String(value || "").trim().replace(/\/$/, "");
-  if (!normalized) return "";
-
-  try {
-    const url = new URL(normalized);
-    const hostname = url.hostname.toLowerCase();
-    const pathname = url.pathname.toLowerCase();
-
-    if (
-      hostname.endsWith("github.io")
-      || pathname.endsWith("/transactions.json")
-      || pathname.endsWith("/index.html")
-    ) {
-      return DEFAULT_HISTORY_API_URL;
-    }
-  } catch (error) {
-    return "";
-  }
-
-  return normalized;
-}
-
 function getHistoryApiUrl() {
-  const stored = window.localStorage.getItem(HISTORY_API_KEY) || DEFAULT_HISTORY_API_URL;
-  const normalized = normalizeHistoryApiUrl(stored);
-  if (normalized !== stored) window.localStorage.setItem(HISTORY_API_KEY, normalized);
-  return normalized;
+  return DEFAULT_HISTORY_API_URL;
 }
 
 function hasHistoryBackend() {
   return Boolean(getHistoryApiUrl());
 }
 
-function setHistoryApiUrl(value) {
-  const normalized = normalizeHistoryApiUrl(value);
-  if (normalized) {
-    window.localStorage.setItem(HISTORY_API_KEY, normalized);
-  } else {
-    window.localStorage.removeItem(HISTORY_API_KEY);
-  }
-  backendHistoryReady = false;
-  historyApiUrlEl.value = normalized;
-  sharedHistoryStatusEl.textContent = normalized ? "Backend API saved" : "Backend required";
-}
-
 function initializeHistoryApiControls() {
-  historyApiUrlEl.value = getHistoryApiUrl();
-  sharedHistoryStatusEl.textContent = historyApiUrlEl.value ? "Backend auto-sync ready" : "Backend required";
+  sharedHistoryStatusEl.textContent = "Backend auto-sync ready";
   setCoinbaseSandboxEnabled(isCoinbaseSandboxEnabled());
 }
 
@@ -3522,11 +3480,15 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   try {
     sandboxOrder = await submitCoinbaseSandboxOrder(trade, trade.side === "short" ? "BUY" : "SELL", "close");
   } catch (error) {
-    coinbaseSandboxStatusEl.textContent = "Sandbox close failed";
-    paperEquity -= pnl;
-    openPaperTrades.set(commodity, trade);
-    clearPaperActionPending(commodity);
-    return;
+    coinbaseSandboxStatusEl.textContent = "Sandbox close failed; paper close recorded";
+    sandboxOrder = {
+      sandbox: true,
+      intent: "close",
+      error: error.message || "Coinbase sandbox close failed",
+      productId: trade.contract,
+      side: trade.side === "short" ? "BUY" : "SELL",
+      sentAt: new Date().toISOString()
+    };
   }
 
   try {
@@ -4278,20 +4240,6 @@ advisoryPeriodFiltersEl.addEventListener("click", (event) => {
 });
 syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(true));
 advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
-saveHistoryApiEl.addEventListener("click", () => {
-  setHistoryApiUrl(historyApiUrlEl.value);
-  loadSharedSettings(true);
-  loadSharedTransactionHistory(true);
-  loadSharedAdvisoryHistory(true);
-});
-historyApiUrlEl.addEventListener("keydown", (event) => {
-  if (event.key === "Enter") {
-    setHistoryApiUrl(historyApiUrlEl.value);
-    loadSharedSettings(true);
-    loadSharedTransactionHistory(true);
-    loadSharedAdvisoryHistory(true);
-  }
-});
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 paperEquityInputEl.addEventListener("change", updatePaperEquitySetting);
