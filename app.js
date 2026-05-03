@@ -200,6 +200,9 @@ const latestPriceSources = new Map();
 const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
+const BACKEND_TRANSACTION_SYNC_MS = 15000;
+const BACKEND_SETTINGS_SYNC_MS = 30000;
+const BACKEND_ADVISORY_SYNC_MS = 60000;
 const PAPER_START_EQUITY = 100000;
 const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
@@ -268,6 +271,12 @@ let activeSection = "advisories";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
+let backendSyncInFlight = false;
+let backendHistoryWriteInFlight = false;
+let backendSettingsSyncInFlight = false;
+let backendAdvisorySyncInFlight = false;
+let backendHistoryReady = false;
+let pendingHistorySaveRetry = false;
 let lastPrimarySignal = null;
 let lastTradePlan = null;
 let lastCommodityMeta = commodities[0];
@@ -2658,13 +2667,14 @@ function setHistoryApiUrl(value) {
   } else {
     window.localStorage.removeItem(HISTORY_API_KEY);
   }
+  backendHistoryReady = false;
   historyApiUrlEl.value = normalized;
   sharedHistoryStatusEl.textContent = normalized ? "Backend API saved" : "Backend required";
 }
 
 function initializeHistoryApiControls() {
   historyApiUrlEl.value = getHistoryApiUrl();
-  sharedHistoryStatusEl.textContent = historyApiUrlEl.value ? "Backend API ready" : "Backend required";
+  sharedHistoryStatusEl.textContent = historyApiUrlEl.value ? "Backend auto-sync ready" : "Backend required";
   setCoinbaseSandboxEnabled(isCoinbaseSandboxEnabled());
 }
 
@@ -2744,6 +2754,8 @@ async function submitCoinbaseSandboxOrder(trade, side, intent) {
 
 async function loadSharedSettings(manual = false) {
   if (!hasHistoryBackend()) return false;
+  if (backendSettingsSyncInFlight) return false;
+  backendSettingsSyncInFlight = true;
 
   try {
     const response = await fetch(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" });
@@ -2763,6 +2775,8 @@ async function loadSharedSettings(manual = false) {
   } catch (error) {
     if (manual) coinbaseSandboxStatusEl.textContent = "Settings sync failed";
     return false;
+  } finally {
+    backendSettingsSyncInFlight = false;
   }
 }
 
@@ -2828,6 +2842,8 @@ async function loadSharedAdvisoryHistory(manual = false) {
     renderAdvisoryChart();
     return false;
   }
+  if (backendAdvisorySyncInFlight) return false;
+  backendAdvisorySyncInFlight = true;
 
   try {
     advisoryHistoryStatusEl.textContent = "Syncing advisory chart";
@@ -2843,6 +2859,8 @@ async function loadSharedAdvisoryHistory(manual = false) {
     advisoryHistoryStatusEl.textContent = manual ? "Chart sync failed" : "Chart backend offline";
     renderAdvisoryChart();
     return false;
+  } finally {
+    backendAdvisorySyncInFlight = false;
   }
 }
 
@@ -3261,8 +3279,14 @@ async function saveSharedTransactionHistory() {
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) {
     sharedHistoryStatusEl.textContent = "Add backend URL to save";
+    pendingHistorySaveRetry = true;
     return false;
   }
+  if (backendHistoryWriteInFlight) {
+    pendingHistorySaveRetry = true;
+    return false;
+  }
+  backendHistoryWriteInFlight = true;
 
   try {
     sharedHistoryStatusEl.textContent = "Saving to backend";
@@ -3278,10 +3302,15 @@ async function saveSharedTransactionHistory() {
     replaceTransactionHistory(entries);
     reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
+    backendHistoryReady = true;
+    pendingHistorySaveRetry = false;
     return true;
   } catch (error) {
-    sharedHistoryStatusEl.textContent = "Backend save failed";
+    pendingHistorySaveRetry = true;
+    sharedHistoryStatusEl.textContent = "Backend save failed; retrying automatically";
     return false;
+  } finally {
+    backendHistoryWriteInFlight = false;
   }
 }
 
@@ -3320,6 +3349,8 @@ async function loadSharedTransactionHistory(manual = false) {
     sharedHistoryStatusEl.textContent = "Backend required";
     return false;
   }
+  if (backendSyncInFlight || backendHistoryWriteInFlight) return false;
+  backendSyncInFlight = true;
 
   try {
     sharedHistoryStatusEl.textContent = "Syncing backend";
@@ -3331,12 +3362,26 @@ async function loadSharedTransactionHistory(manual = false) {
     replaceTransactionHistory(entries);
     reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
+    backendHistoryReady = true;
     calculateSignal();
     return true;
   } catch (error) {
     sharedHistoryStatusEl.textContent = manual ? "Backend sync failed" : "Backend offline";
     return false;
+  } finally {
+    backendSyncInFlight = false;
   }
+}
+
+async function autoSyncTransactionHistory() {
+  if (!hasHistoryBackend() || backendSyncInFlight || backendHistoryWriteInFlight) return false;
+
+  if (pendingHistorySaveRetry) {
+    const saved = await saveSharedTransactionHistory();
+    if (!saved) return false;
+  }
+
+  return loadSharedTransactionHistory(false);
 }
 
 async function recordTransaction(entry) {
@@ -3530,6 +3575,7 @@ async function closePaperTrade(commodity, exitPrice, reason) {
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   if (!latestPrices.has(commodity)) return;
   if (!hasHistoryBackend()) return;
+  if (!backendHistoryReady) return;
   reconcilePaperStateFromHistory();
 
   const openTrade = getOpenPaperTrade(commodity);
@@ -3582,6 +3628,13 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     return {
       title: "Backend not connected",
       detail: "The paper trader will not open or sync trades until the Backend API is connected."
+    };
+  }
+
+  if (!backendHistoryReady) {
+    return {
+      title: "Loading backend ledger",
+      detail: "The paper trader will start after the shared ledger is loaded."
     };
   }
 
@@ -4362,11 +4415,14 @@ function initializeApp() {
   renderAdvisoryFilterButtons();
   calculateSignal();
   loadSharedSettings();
-  loadSharedTransactionHistory();
+  autoSyncTransactionHistory();
   loadSharedAdvisoryHistory();
   connectCoinbaseWebSocket(commoditySelect.value);
   refreshSelectedCoinbasePrice();
   window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
+  window.setInterval(loadSharedSettings, BACKEND_SETTINGS_SYNC_MS);
+  window.setInterval(autoSyncTransactionHistory, BACKEND_TRANSACTION_SYNC_MS);
+  window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", renderAdvisoryChart);
