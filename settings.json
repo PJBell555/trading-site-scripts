@@ -1,7 +1,7 @@
 {
-  "generatedAt": "2026-05-03T16:12:43.515Z",
+  "generatedAt": "2026-05-03T16:12:55.014Z",
   "source": "cloudflare-github-shared-settings",
-  "coinbaseSandboxEnabled": true,
+  "coinbaseSandboxEnabled": false,
   "users": [
     {
       "id": "user-1777673695845",
