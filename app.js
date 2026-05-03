@@ -13,6 +13,7 @@ const accessEmailEl = document.querySelector("#access-email");
 const accessPasswordEl = document.querySelector("#access-password");
 const accessErrorEl = document.querySelector("#access-error");
 const appShellEl = document.querySelector("#app-shell");
+const heroEl = document.querySelector("header.hero");
 const menuButtons = document.querySelectorAll("[data-section-target]");
 const appSections = document.querySelectorAll("[data-app-section]");
 const userManagementStatusEl = document.querySelector("#user-management-status");
@@ -261,6 +262,7 @@ let advisoryPeriodFilter = "hour";
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
+let expandedUserEmail = "";
 let activeSection = "advisories";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
@@ -286,10 +288,21 @@ function showAppShell() {
   appShellEl.hidden = false;
 }
 
-function showUserManagement() {
+function showUserManagement(resetSearch = false) {
   loadUserRoster();
+  if (resetSearch) {
+    userSearchQuery = "";
+    if (userSearchInputEl) userSearchInputEl.value = "";
+  }
   userSearchQuery = userSearchInputEl.value.trim();
   renderUserManagement();
+
+  // Pull shared settings without blocking paint (keeps Users consistent across devices).
+  loadSharedSettings().then(() => {
+    userSearchQuery = userSearchInputEl.value.trim();
+    renderUserManagement();
+  });
+
   window.requestAnimationFrame(() => {
     userSearchQuery = userSearchInputEl.value.trim();
     renderUserManagement();
@@ -304,10 +317,13 @@ function setActiveSection(section) {
   appSections.forEach((sectionEl) => {
     sectionEl.hidden = sectionEl.dataset.appSection !== section;
   });
+
+  // The hero is for "Advisories" only.
+  if (heroEl) heroEl.hidden = section !== "advisories";
   if (section === "advisories") renderAdvisoryChart();
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
-  if (section === "users") showUserManagement();
+  if (section === "users") showUserManagement(true);
 }
 
 function loadOpenBrainMemory() {
@@ -688,6 +704,9 @@ function normalizeUserRecord(user, fallback = {}) {
   const profileEquity = Number(user?.paperBaseEquity ?? fallback.paperBaseEquity ?? PAPER_START_EQUITY);
   const profileRiskPct = Number(user?.paperRiskPct ?? fallback.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT);
   const avatarDataUrl = String(user?.avatarDataUrl || fallback.avatarDataUrl || "");
+  const sessionHistory = Array.isArray(user?.sessionHistory)
+    ? user.sessionHistory
+    : Array.isArray(fallback.sessionHistory) ? fallback.sessionHistory : [];
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -699,6 +718,9 @@ function normalizeUserRecord(user, fallback = {}) {
     paperBaseEquity: Number.isFinite(profileEquity) ? Math.max(0, profileEquity) : PAPER_START_EQUITY,
     paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
     avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
+    sessionHistory: sessionHistory
+      .filter((session) => session && session.time)
+      .slice(0, 25),
     enabled: user?.enabled === false ? false : fallback.enabled !== false
   };
 }
@@ -787,6 +809,12 @@ function getSharedUsersPayload() {
 function mergeUserRecords(existing, incoming) {
   const existingLastActive = existing.lastActiveAt ? getTransactionDate(existing.lastActiveAt).getTime() : 0;
   const incomingLastActive = incoming.lastActiveAt ? getTransactionDate(incoming.lastActiveAt).getTime() : 0;
+  const sessionsByKey = new Map();
+
+  [...(existing.sessionHistory || []), ...(incoming.sessionHistory || [])].forEach((session) => {
+    if (!session?.time) return;
+    sessionsByKey.set(`${session.time}|${session.device || ""}|${session.location || ""}`, session);
+  });
 
   return {
     ...existing,
@@ -804,6 +832,9 @@ function mergeUserRecords(existing, incoming) {
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
+    sessionHistory: Array.from(sessionsByKey.values())
+      .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
+      .slice(0, 25),
     enabled: incoming.enabled !== false
   };
 }
@@ -937,6 +968,219 @@ async function updateUserPhoto(user, file) {
   }
 }
 
+function getUserSessionHistory(user) {
+  const sessions = Array.isArray(user.sessionHistory) ? user.sessionHistory : [];
+  if (sessions.length) return sessions;
+  if (!user.lastActiveAt) return [];
+
+  return [{
+    time: user.lastActiveAt,
+    device: "Browser",
+    platform: "Unknown",
+    location: "Unknown",
+    colo: "unknown"
+  }];
+}
+
+function getUniqueSessionCount(user, field) {
+  const values = getUserSessionHistory(user)
+    .map((session) => String(session[field] || "").trim().toLowerCase())
+    .filter(Boolean);
+  return new Set(values).size;
+}
+
+function createUserAvatar(user, className = "user-avatar") {
+  const avatar = document.createElement("span");
+  avatar.className = className;
+
+  if (user.avatarDataUrl) {
+    const avatarImage = document.createElement("img");
+    avatarImage.alt = "";
+    avatarImage.src = user.avatarDataUrl;
+    avatar.append(avatarImage);
+  } else {
+    avatar.textContent = getUserInitials(user);
+  }
+
+  return avatar;
+}
+
+function handleProfilePhotoDrop(event, user) {
+  event.preventDefault();
+  event.currentTarget.dataset.dragging = "false";
+  const [file] = event.dataTransfer?.files || [];
+  if (file) updateUserPhoto(user, file);
+}
+
+function saveExpandedUserProfile(user, nameInput, emailInput) {
+  const nextName = nameInput.value.trim();
+  const nextEmail = normalizeEmail(emailInput.value);
+  const currentEmail = normalizeEmail(user.email);
+
+  if (!nextName || !nextEmail) {
+    userManagementStatusEl.textContent = "Name and email required";
+    return;
+  }
+
+  const emailOwner = userRoster.find((candidate) => (
+    normalizeEmail(candidate.email) === nextEmail
+    && normalizeEmail(candidate.email) !== currentEmail
+  ));
+  if (emailOwner) {
+    userManagementStatusEl.textContent = "Email already belongs to another user";
+    return;
+  }
+
+  user.name = nextName;
+  user.email = nextEmail;
+  expandedUserEmail = nextEmail;
+  saveUserRoster();
+  saveSharedSettings();
+  renderUserManagement();
+  userManagementStatusEl.textContent = "Profile saved";
+}
+
+function createUserProfilePanel(user) {
+  const wrapper = document.createElement("div");
+  const profileCard = document.createElement("section");
+  const photoLabel = document.createElement("label");
+  const photoInput = document.createElement("input");
+  const photoHint = document.createElement("span");
+  const profileInfo = document.createElement("div");
+  const nameInput = document.createElement("input");
+  const emailInput = document.createElement("input");
+  const saveButton = document.createElement("button");
+  const clearPhoto = document.createElement("button");
+  const statsCard = document.createElement("section");
+  const actionsCard = document.createElement("section");
+  const historyCard = document.createElement("section");
+  const history = getUserSessionHistory(user);
+
+  wrapper.className = "user-profile-panel";
+  profileCard.className = "user-profile-detail-card";
+  photoLabel.className = "profile-photo-dropzone";
+  photoLabel.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    photoLabel.dataset.dragging = "true";
+  });
+  photoLabel.addEventListener("dragleave", () => {
+    photoLabel.dataset.dragging = "false";
+  });
+  photoLabel.addEventListener("drop", (event) => handleProfilePhotoDrop(event, user));
+
+  photoInput.type = "file";
+  photoInput.accept = "image/*";
+  photoInput.addEventListener("change", () => {
+    const [file] = photoInput.files || [];
+    if (file) updateUserPhoto(user, file);
+    photoInput.value = "";
+  });
+  photoHint.textContent = "Click or drag to upload. Images are resized for profile use.";
+  photoLabel.append(createUserAvatar(user, "profile-photo-preview"), photoInput, photoHint);
+
+  profileInfo.className = "profile-edit-fields";
+  nameInput.type = "text";
+  nameInput.value = user.name || "";
+  nameInput.placeholder = "User name";
+  emailInput.type = "email";
+  emailInput.value = user.email || "";
+  emailInput.placeholder = "Email address";
+  saveButton.type = "button";
+  saveButton.className = "access-button profile-save-button";
+  saveButton.textContent = "Save profile";
+  saveButton.addEventListener("click", () => saveExpandedUserProfile(user, nameInput, emailInput));
+  clearPhoto.type = "button";
+  clearPhoto.className = "filter-button";
+  clearPhoto.textContent = "Clear photo";
+  clearPhoto.disabled = !user.avatarDataUrl;
+  clearPhoto.addEventListener("click", () => {
+    user.avatarDataUrl = "";
+    saveUserRoster();
+    saveSharedSettings();
+    renderUserManagement();
+  });
+
+  [
+    ["Name", nameInput],
+    ["Email", emailInput]
+  ].forEach(([labelText, input]) => {
+    const label = document.createElement("label");
+    label.textContent = labelText;
+    label.append(input);
+    profileInfo.append(label);
+  });
+  profileInfo.append(saveButton, clearPhoto);
+  profileCard.append(photoLabel, profileInfo);
+
+  statsCard.className = "user-profile-subcard";
+  statsCard.innerHTML = `
+    <h3>Session Statistics</h3>
+    <div class="profile-stat-grid">
+      <div><span>Total Sessions</span><strong>${Number(user.sessions) || history.length}</strong></div>
+      <div><span>Unique Devices</span><strong>${getUniqueSessionCount(user, "device") || 1}</strong></div>
+      <div><span>Unique Locations</span><strong>${getUniqueSessionCount(user, "location") || 1}</strong></div>
+      <div><span>Last Active</span><strong>${formatRelativeDate(user.lastActiveAt)}</strong></div>
+    </div>
+  `;
+
+  actionsCard.className = "user-profile-subcard";
+  actionsCard.innerHTML = "<h3>Admin Actions</h3>";
+  const adminActions = document.createElement("div");
+  adminActions.className = "profile-admin-actions";
+  [
+    ["Force Password Reset", "warning"],
+    ["Revoke All Sessions", "danger"],
+    ["Clear Session History", "neutral"]
+  ].forEach(([label, tone]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `profile-action-button ${tone}`;
+    button.textContent = label;
+    button.addEventListener("click", () => {
+      if (label === "Clear Session History") {
+        user.sessionHistory = [];
+        user.sessions = 0;
+        user.lastActiveAt = null;
+        saveUserRoster();
+        saveSharedSettings();
+        renderUserManagement();
+      } else {
+        userManagementStatusEl.textContent = `${label} marked for ${user.name || user.email}`;
+      }
+    });
+    adminActions.append(button);
+  });
+  actionsCard.append(adminActions);
+
+  historyCard.className = "user-profile-subcard";
+  historyCard.innerHTML = `<h3>Session History <span>${history.length} sessions</span></h3>`;
+  const table = document.createElement("table");
+  table.className = "profile-session-table";
+  table.innerHTML = `
+    <thead><tr><th>Timestamp</th><th>Device</th><th>Location</th><th>Colo</th></tr></thead>
+    <tbody></tbody>
+  `;
+  const tbody = table.querySelector("tbody");
+  (history.length ? history : [{ time: null, device: "-", location: "-", colo: "-" }]).slice(0, 8).forEach((session) => {
+    const row = document.createElement("tr");
+    [
+      session.time ? `${formatTradeTime(session.time)} (${formatRelativeDate(session.time)})` : "No sessions recorded",
+      [session.device || "Unknown", session.platform || ""].filter(Boolean).join(" / "),
+      session.location || "Unknown",
+      session.colo || "unknown"
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+    tbody.append(row);
+  });
+  historyCard.append(table);
+
+  wrapper.append(profileCard, statsCard, actionsCard, historyCard);
+  return wrapper;
+}
+
 function getFilteredUsers() {
   const query = userSearchQuery.trim().toLowerCase();
   if (!query) return userRoster;
@@ -977,34 +1221,28 @@ function renderUserManagement() {
   filteredUsers.forEach((user) => {
     const row = document.createElement("tr");
     const profileCell = document.createElement("td");
-    const profile = document.createElement("div");
-    const avatar = document.createElement("span");
-    const avatarImage = document.createElement("img");
+    const profile = document.createElement("button");
     const profileText = document.createElement("div");
     const name = document.createElement("strong");
     const email = document.createElement("span");
     const status = document.createElement("span");
     const actionCell = document.createElement("td");
     const actions = document.createElement("div");
-    const photoLabel = document.createElement("label");
-    const photoInput = document.createElement("input");
-    const photoText = document.createElement("span");
-    const clearPhoto = document.createElement("button");
     const action = document.createElement("button");
 
+    row.className = "user-summary-row";
+    row.dataset.expanded = String(expandedUserEmail === normalizeEmail(user.email));
     profile.className = "user-profile";
-    avatar.className = "user-avatar";
-    if (user.avatarDataUrl) {
-      avatarImage.alt = "";
-      avatarImage.src = user.avatarDataUrl;
-      avatar.append(avatarImage);
-    } else {
-      avatar.textContent = getUserInitials(user);
-    }
+    profile.type = "button";
+    profile.addEventListener("click", () => {
+      const emailKey = normalizeEmail(user.email);
+      expandedUserEmail = expandedUserEmail === emailKey ? "" : emailKey;
+      renderUserManagement();
+    });
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
     profileText.append(name, email);
-    profile.append(avatar, profileText);
+    profile.append(createUserAvatar(user), profileText);
     profileCell.append(profile);
 
     status.className = "user-status";
@@ -1012,28 +1250,6 @@ function renderUserManagement() {
     status.textContent = user.enabled === false ? "Disabled" : "Active";
 
     actions.className = "user-actions";
-    photoLabel.className = "filter-button photo-upload-button";
-    photoInput.type = "file";
-    photoInput.accept = "image/*";
-    photoInput.addEventListener("change", () => {
-      const [file] = photoInput.files || [];
-      if (file) updateUserPhoto(user, file);
-      photoInput.value = "";
-    });
-    photoText.textContent = user.avatarDataUrl ? "Change photo" : "Add photo";
-    photoLabel.append(photoInput, photoText);
-
-    clearPhoto.type = "button";
-    clearPhoto.className = "filter-button";
-    clearPhoto.textContent = "Clear photo";
-    clearPhoto.hidden = !user.avatarDataUrl;
-    clearPhoto.addEventListener("click", () => {
-      user.avatarDataUrl = "";
-      saveUserRoster();
-      saveSharedSettings();
-      renderUserManagement();
-    });
-
     action.type = "button";
     action.className = "filter-button";
     action.textContent = user.enabled === false ? "Enable" : "Disable";
@@ -1043,7 +1259,7 @@ function renderUserManagement() {
       saveSharedSettings();
       renderUserManagement();
     });
-    actions.append(photoLabel, clearPhoto, action);
+    actions.append(action);
     actionCell.append(actions);
 
     [
@@ -1067,6 +1283,16 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
+
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const detailRow = document.createElement("tr");
+      const detailCell = document.createElement("td");
+      detailRow.className = "user-profile-detail-row";
+      detailCell.colSpan = 8;
+      detailCell.append(createUserProfilePanel(user));
+      detailRow.append(detailCell);
+      userTableBodyEl.append(detailRow);
+    }
   });
 }
 
@@ -1077,7 +1303,18 @@ function markCurrentSessionActive() {
 
   user.lastActiveAt = new Date().toISOString();
   user.sessions = Math.max(1, Number(user.sessions || 0) + 1);
+  user.sessionHistory = [
+    {
+      time: user.lastActiveAt,
+      device: "Desktop",
+      platform: window.navigator?.platform || "Browser",
+      location: "Unknown",
+      colo: "local"
+    },
+    ...(Array.isArray(user.sessionHistory) ? user.sessionHistory : [])
+  ].slice(0, 25);
   saveUserRoster();
+  saveSharedSettings();
   recordOpenBrainEvent("login", `${user.name || user.email} logged in`, {
     userId: user.id,
     email: user.email,
@@ -3271,7 +3508,7 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   }
 }
 
-function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
+function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   if (!latestPrices.has(commodity)) return;
   if (!hasHistoryBackend()) return;
   reconcilePaperStateFromHistory();
@@ -3297,9 +3534,24 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan) {
     return;
   }
 
-  if (getSignalSide(signal) && signal.conviction >= tradePlan.learnedThreshold) {
+  const allowOpen = options.allowOpen !== false;
+  if (allowOpen && getSignalSide(signal) && signal.conviction >= tradePlan.learnedThreshold) {
     openPaperTrade(commodity, commodityMeta, signal, tradePlan);
   }
+}
+
+function closeOnlyPaperSweep() {
+  if (!hasHistoryBackend()) return;
+
+  const baseSignals = readBaseSignals();
+  commodities.forEach((commodityMeta) => {
+    const commodity = commodityMeta.id;
+    if (!openPaperTrades.has(commodity)) return;
+
+    const signal = scoreCommodity(commodity, baseSignals);
+    const tradePlan = buildTradePlan(commodity, signal);
+    executePaperTrading(commodity, commodityMeta, signal, tradePlan, { allowOpen: false });
+  });
 }
 
 function getPaperDecision(signal, tradePlan, openTrade) {
@@ -3891,7 +4143,7 @@ function calculateSignal() {
     paperStepsEl.append(item);
   });
 
-  executePaperTrading(commodity, commodityMeta, primarySignal, tradePlan);
+  executePaperTrading(commodity, commodityMeta, primarySignal, tradePlan, { allowOpen: true });
   renderKarpathyLoop(primarySignal, tradePlan);
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
@@ -4096,6 +4348,8 @@ function initializeApp() {
   connectCoinbaseWebSocket(commoditySelect.value);
   refreshSelectedCoinbasePrice();
   window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
+  // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
+  window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", renderAdvisoryChart);
 }
 

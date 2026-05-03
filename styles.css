@@ -203,8 +203,16 @@ body {
 
 .user-profile {
   align-items: center;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
   display: flex;
   gap: 12px;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  width: 100%;
 }
 
 .user-avatar {
@@ -252,6 +260,175 @@ body {
   width: 1px;
 }
 
+.user-summary-row[data-expanded="true"] td {
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.user-profile-detail-row td {
+  background: #0b1020;
+  padding: 18px;
+}
+
+.user-profile-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.user-profile-detail-card,
+.user-profile-subcard {
+  background: #111827;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+}
+
+.user-profile-detail-card {
+  align-items: center;
+  display: grid;
+  gap: 24px;
+  grid-template-columns: 180px minmax(0, 1fr);
+  padding: 22px 28px;
+}
+
+.profile-photo-dropzone {
+  align-items: center;
+  color: var(--muted);
+  cursor: pointer;
+  display: grid;
+  gap: 12px;
+  justify-items: center;
+  text-align: center;
+}
+
+.profile-photo-dropzone[data-dragging="true"] .profile-photo-preview {
+  outline: 3px solid #60a5fa;
+}
+
+.profile-photo-dropzone input {
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+  position: absolute;
+  width: 1px;
+}
+
+.profile-photo-preview {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 50%;
+  color: #fff;
+  display: grid;
+  font-size: 2rem;
+  font-weight: 900;
+  height: 120px;
+  overflow: hidden;
+  place-items: center;
+  width: 120px;
+}
+
+.profile-photo-preview img {
+  height: 100%;
+  object-fit: cover;
+  width: 100%;
+}
+
+.profile-edit-fields {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.profile-edit-fields label {
+  display: grid;
+  gap: 8px;
+  font-weight: 800;
+}
+
+.profile-save-button {
+  margin-top: 0;
+}
+
+.user-profile-subcard h3 {
+  align-items: center;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  display: flex;
+  justify-content: space-between;
+  margin: 0;
+  padding: 18px 28px;
+}
+
+.user-profile-subcard h3 span {
+  color: var(--muted);
+  font-size: 0.92rem;
+  font-weight: 700;
+}
+
+.profile-stat-grid,
+.profile-admin-actions {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 18px 28px;
+}
+
+.profile-stat-grid div {
+  background: var(--panel-soft);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  padding: 14px;
+}
+
+.profile-stat-grid span {
+  color: var(--muted);
+  display: block;
+}
+
+.profile-stat-grid strong {
+  display: block;
+  margin-top: 8px;
+}
+
+.profile-action-button {
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 900;
+  min-height: 44px;
+  padding: 10px 14px;
+}
+
+.profile-action-button.warning {
+  background: #b77900;
+}
+
+.profile-action-button.danger {
+  background: #dc2626;
+}
+
+.profile-action-button.neutral {
+  background: #475569;
+}
+
+.profile-session-table {
+  border-collapse: collapse;
+  margin: 18px 28px 24px;
+  width: calc(100% - 56px);
+}
+
+.profile-session-table th,
+.profile-session-table td {
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  padding: 12px 10px;
+  text-align: left;
+}
+
+.profile-session-table th {
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+}
+
 .user-status {
   border-radius: 999px;
   display: inline-block;
@@ -293,8 +470,8 @@ body {
 .open-brain-card,
 .open-brain-pipeline div {
   padding: 16px;
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: #0f172a;
+  border: 1px solid rgba(96, 165, 250, 0.24);
   border-radius: 8px;
 }
 
@@ -312,7 +489,7 @@ body {
 .open-brain-card p,
 .open-brain-pipeline span {
   margin: 8px 0 0;
-  color: var(--muted);
+  color: #b7c8e6;
 }
 
 .open-brain-pipeline {
@@ -321,6 +498,16 @@ body {
 
 .open-brain-table td:nth-child(3) {
   min-width: 360px;
+}
+
+.open-brain-table {
+  background: #0b1020;
+  border-color: rgba(96, 165, 250, 0.24);
+}
+
+.open-brain-table th,
+.open-brain-table td {
+  border-color: rgba(148, 163, 184, 0.16);
 }
 
 .second-opinion-grid {
@@ -892,8 +1079,8 @@ select {
 
 .paper-card {
   padding: 16px 18px;
-  background: rgba(255, 255, 255, 0.56);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: #0f172a;
+  border: 1px solid rgba(96, 165, 250, 0.24);
   border-radius: 8px;
 }
 
@@ -912,10 +1099,10 @@ select {
   width: 100%;
   min-height: 36px;
   padding: 7px 10px;
-  border: 1px solid rgba(17, 32, 43, 0.14);
+  border: 1px solid rgba(147, 197, 253, 0.28);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.78);
-  color: var(--ink);
+  background: #081225;
+  color: #f8fafc;
   font: inherit;
   font-weight: 800;
 }
@@ -923,8 +1110,8 @@ select {
 .trade-decision {
   margin-top: 12px;
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: #0f172a;
+  border: 1px solid rgba(96, 165, 250, 0.24);
   border-radius: 8px;
 }
 
@@ -954,8 +1141,8 @@ select {
 
 .karpathy-loop div {
   padding: 14px 16px;
-  background: rgba(255, 255, 255, 0.56);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: #0f172a;
+  border: 1px solid rgba(96, 165, 250, 0.24);
   border-radius: 8px;
 }
 
@@ -1518,6 +1705,22 @@ ol {
   grid-template-columns: 1.25fr 1fr;
 }
 
+/* Dark theme readability: avoid low-contrast gray-on-gray in dense panels. */
+.app-main .risk-box label,
+.app-main .risk-box .stat-label,
+.app-main .open-brain-pipeline span,
+.app-main .open-brain-card p,
+.app-main .feature-form label,
+.app-main .feature-empty,
+.app-main .user-management p {
+  color: #cbd5e1;
+}
+
+.app-main .risk-box strong,
+.app-main .open-brain-card strong {
+  color: #f8fafc;
+}
+
 .hero-stats div,
 .score-row div,
 .commodity-chip,
@@ -1653,6 +1856,13 @@ textarea::placeholder {
 
   .feature-description-field {
     grid-column: auto;
+  }
+
+  .user-profile-detail-card,
+  .profile-edit-fields,
+  .profile-stat-grid,
+  .profile-admin-actions {
+    grid-template-columns: 1fr;
   }
 
   .section-heading {
