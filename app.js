@@ -27,6 +27,9 @@ const userEmailInputEl = document.querySelector("#user-email-input");
 const userSearchInputEl = document.querySelector("#user-search-input");
 const userSearchButtonEl = document.querySelector("#user-search-button");
 const userTableBodyEl = document.querySelector("#user-table-body");
+const userRosterViewEl = document.querySelector("#user-roster-view");
+const userDetailViewEl = document.querySelector("#user-detail-view");
+const backToUsersButtonEl = document.querySelector("#back-to-users-button");
 const selectedUserProfileEl = document.querySelector("#selected-user-profile");
 const userStatCards = Array.from(document.querySelectorAll("[data-user-list-filter]"));
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
@@ -79,6 +82,7 @@ const paperRiskEl = document.querySelector("#paper-risk");
 const paperEquityInputEl = document.querySelector("#paper-equity-input");
 const paperRiskInputEl = document.querySelector("#paper-risk-input");
 const paperUserContextEl = document.querySelector("#paper-user-context");
+const userStrategyBannerEl = document.querySelector("#user-strategy-banner");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -104,6 +108,15 @@ const exportHistoryEl = document.querySelector("#export-history");
 const sharedHistoryStatusEl = document.querySelector("#shared-history-status");
 const coinbaseSandboxEnabledEl = document.querySelector("#coinbase-sandbox-enabled");
 const transactionHistoryEl = document.querySelector("#transaction-history");
+const liveTradeFormEl = document.querySelector("#live-trade-form");
+const liveTradeSummaryEl = document.querySelector("#live-trade-summary");
+const liveTradeHistoryEl = document.querySelector("#live-trade-history");
+const liveTotalPlEl = document.querySelector("#live-total-pl");
+const liveFilteredPlEl = document.querySelector("#live-filtered-pl");
+const liveTradeCountEl = document.querySelector("#live-trade-count");
+const liveLedgerStatusEl = document.querySelector("#live-ledger-status");
+const liveAgentSelectEl = document.querySelector("#live-agent-select");
+const liveChannelSelectEl = document.querySelector("#live-channel-select");
 const advisoryHistoryStatusEl = document.querySelector("#advisory-history-status");
 const advisoryCommodityFiltersEl = document.querySelector("#advisory-commodity-filters");
 const advisoryHorizonFiltersEl = document.querySelector("#advisory-horizon-filters");
@@ -227,6 +240,7 @@ const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
 const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
 const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
 const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
+const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const ADVISORY_CAPTURE_MS = 120000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
@@ -243,10 +257,33 @@ const ADVISORY_EVALUATION_WINDOWS = {
   position: 4 * 60 * 60 * 1000
 };
 const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
+const DEFAULT_USER_STRATEGY = {
+  name: "Martingale with Karpathy loop",
+  type: "martingale-karpathy",
+  description: "Use four Martingale steps, then let the Karpathy loop adjust the advisory threshold from trade outcomes.",
+  martingaleSteps: 4,
+  karpathyLoop: true,
+  skillsAccess: true,
+  openBrainAccess: true,
+  skillFocus: "Lessons from Paper Trades",
+  openBrainMemory: "Capture trade decisions, advisory context, and outcomes before changing thresholds."
+};
+const DEFAULT_BROKER_ACCOUNT = {
+  provider: "Coinbase",
+  environment: "sandbox",
+  accountLabel: "",
+  apiKeyName: "",
+  keyStorage: "Cloudflare Worker secret",
+  permissionScope: "view-only",
+  canTrade: false,
+  webhookUrl: "",
+  notes: ""
+};
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
 const transactionHistory = [];
+const liveTradeLedger = [];
 const advisoryHistory = [];
 const pendingPaperActions = new Set();
 let paperEquity = PAPER_START_EQUITY;
@@ -335,10 +372,14 @@ function setActiveSection(section) {
 
   if (heroEl) heroEl.hidden = section !== "home";
   if (noticeEl) noticeEl.hidden = section !== "home";
-  if (section === "advisories") renderAdvisoryChart();
+  if (section === "advisories") {
+    renderCurrentUserStrategy();
+    renderAdvisoryChart();
+  }
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
   if (section === "users") showUserManagement(true);
+  if (section === "actual-trades") renderLiveTradeLedger();
 }
 
 function loadOpenBrainMemory() {
@@ -735,6 +776,8 @@ function normalizeUserRecord(user, fallback = {}) {
     paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
     avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
     commodities: commoditiesForUser,
+    strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
+    brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
     sessionHistory: sessionHistory
       .filter((session) => session && session.time)
       .slice(0, 25),
@@ -778,6 +821,14 @@ function getCurrentUserProfile() {
   return findRegisteredUserByEmail(getCurrentAccessEmail());
 }
 
+function getCurrentUserStrategy() {
+  return normalizeUserStrategy(getCurrentUserProfile()?.strategy);
+}
+
+function getCurrentMartingaleMaxStep() {
+  return Math.round(getCurrentUserStrategy().martingaleSteps) || MARTINGALE_MAX_STEP;
+}
+
 function getCurrentLedgerEmail() {
   return normalizeEmail(getCurrentUserProfile()?.email || getCurrentAccessEmail() || LEGACY_LEDGER_USER_EMAIL);
 }
@@ -814,6 +865,36 @@ function normalizeCommodityIds(values) {
     .map((value) => String(value || "").trim())
     .filter((value) => allowed.has(value));
   return normalized.length ? Array.from(new Set(normalized)) : getAllCommodityIds();
+}
+
+function normalizeUserStrategy(strategy = {}) {
+  const merged = { ...DEFAULT_USER_STRATEGY, ...(strategy && typeof strategy === "object" ? strategy : {}) };
+  return {
+    name: String(merged.name || DEFAULT_USER_STRATEGY.name).trim(),
+    type: String(merged.type || DEFAULT_USER_STRATEGY.type).trim(),
+    description: String(merged.description || DEFAULT_USER_STRATEGY.description).trim(),
+    martingaleSteps: clamp(Number(merged.martingaleSteps) || DEFAULT_USER_STRATEGY.martingaleSteps, 1, 8),
+    karpathyLoop: merged.karpathyLoop !== false,
+    skillsAccess: merged.skillsAccess !== false,
+    openBrainAccess: merged.openBrainAccess !== false,
+    skillFocus: String(merged.skillFocus || DEFAULT_USER_STRATEGY.skillFocus).trim(),
+    openBrainMemory: String(merged.openBrainMemory || DEFAULT_USER_STRATEGY.openBrainMemory).trim()
+  };
+}
+
+function normalizeBrokerAccount(account = {}) {
+  const merged = { ...DEFAULT_BROKER_ACCOUNT, ...(account && typeof account === "object" ? account : {}) };
+  return {
+    provider: String(merged.provider || DEFAULT_BROKER_ACCOUNT.provider).trim(),
+    environment: ["sandbox", "live"].includes(merged.environment) ? merged.environment : DEFAULT_BROKER_ACCOUNT.environment,
+    accountLabel: String(merged.accountLabel || "").trim(),
+    apiKeyName: String(merged.apiKeyName || "").trim(),
+    keyStorage: String(merged.keyStorage || DEFAULT_BROKER_ACCOUNT.keyStorage).trim(),
+    permissionScope: String(merged.permissionScope || DEFAULT_BROKER_ACCOUNT.permissionScope).trim(),
+    canTrade: merged.canTrade === true,
+    webhookUrl: String(merged.webhookUrl || "").trim(),
+    notes: String(merged.notes || "").trim()
+  };
 }
 
 function getCurrentUserCommodityIds() {
@@ -885,7 +966,10 @@ function getSharedUserProfilesPayload() {
     profiles[user.email] = {
       paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
       paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
-      commodities: normalizeCommodityIds(user.commodities)
+      commodities: normalizeCommodityIds(user.commodities),
+      strategy: normalizeUserStrategy(user.strategy),
+      brokerAccount: normalizeBrokerAccount(user.brokerAccount),
+      avatarDataUrl: String(user.avatarDataUrl || "").startsWith("data:image/") ? user.avatarDataUrl : ""
     };
     return profiles;
   }, {});
@@ -921,6 +1005,8 @@ function mergeUserRecords(existing, incoming) {
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
     commodities: normalizeCommodityIds(incoming.commodities || existing.commodities),
+    strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
+    brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
     sessionHistory: Array.from(sessionsByKey.values())
       .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
@@ -983,6 +1069,24 @@ function mergeSharedUserProfiles(profiles) {
         user.commodities = nextCommodities;
         changed = true;
       }
+    }
+    if (profile.strategy && typeof profile.strategy === "object") {
+      const nextStrategy = normalizeUserStrategy(profile.strategy);
+      if (JSON.stringify(nextStrategy) !== JSON.stringify(normalizeUserStrategy(user.strategy))) {
+        user.strategy = nextStrategy;
+        changed = true;
+      }
+    }
+    if (profile.brokerAccount && typeof profile.brokerAccount === "object") {
+      const nextBrokerAccount = normalizeBrokerAccount(profile.brokerAccount);
+      if (JSON.stringify(nextBrokerAccount) !== JSON.stringify(normalizeBrokerAccount(user.brokerAccount))) {
+        user.brokerAccount = nextBrokerAccount;
+        changed = true;
+      }
+    }
+    if (String(profile.avatarDataUrl || "").startsWith("data:image/") && profile.avatarDataUrl !== user.avatarDataUrl) {
+      user.avatarDataUrl = profile.avatarDataUrl;
+      changed = true;
     }
   });
 
@@ -1058,8 +1162,11 @@ async function updateUserPhoto(user, file) {
   try {
     user.avatarDataUrl = await resizeUserPhoto(file);
     saveUserRoster();
-    await saveSharedSettings();
+    const synced = await saveSharedSettings();
     renderUserManagement();
+    userManagementStatusEl.textContent = synced
+      ? `${user.name || user.email} photo saved and synced`
+      : `${user.name || user.email} photo saved locally. Backend sync failed.`;
   } catch (error) {
     userManagementStatusEl.textContent = error.message || "Photo upload failed";
   }
@@ -1150,6 +1257,66 @@ function saveUserCommoditySelection(user, container) {
   userManagementStatusEl.textContent = `${user.name || user.email} commodity access saved`;
 }
 
+function saveUserStrategySettings(user, container) {
+  const strategy = normalizeUserStrategy({
+    name: container.querySelector("[data-strategy-field='name']")?.value,
+    type: container.querySelector("[data-strategy-field='type']")?.value,
+    description: container.querySelector("[data-strategy-field='description']")?.value,
+    martingaleSteps: container.querySelector("[data-strategy-field='martingaleSteps']")?.value,
+    karpathyLoop: container.querySelector("[data-strategy-field='karpathyLoop']")?.checked,
+    skillsAccess: container.querySelector("[data-strategy-field='skillsAccess']")?.checked,
+    openBrainAccess: container.querySelector("[data-strategy-field='openBrainAccess']")?.checked,
+    skillFocus: container.querySelector("[data-strategy-field='skillFocus']")?.value,
+    openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value
+  });
+
+  user.strategy = strategy;
+  saveUserRoster();
+  saveSharedSettings();
+  renderCurrentUserStrategy();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${user.name || user.email} strategy saved`;
+}
+
+function saveUserBrokerAccountSettings(user, container) {
+  user.brokerAccount = normalizeBrokerAccount({
+    provider: container.querySelector("[data-broker-field='provider']")?.value,
+    environment: container.querySelector("[data-broker-field='environment']")?.value,
+    accountLabel: container.querySelector("[data-broker-field='accountLabel']")?.value,
+    apiKeyName: container.querySelector("[data-broker-field='apiKeyName']")?.value,
+    keyStorage: container.querySelector("[data-broker-field='keyStorage']")?.value,
+    permissionScope: container.querySelector("[data-broker-field='permissionScope']")?.value,
+    canTrade: container.querySelector("[data-broker-field='canTrade']")?.checked,
+    webhookUrl: container.querySelector("[data-broker-field='webhookUrl']")?.value,
+    notes: container.querySelector("[data-broker-field='notes']")?.value
+  });
+
+  saveUserRoster();
+  saveSharedSettings();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${user.name || user.email} broker account metadata saved`;
+}
+
+function renderCurrentUserStrategy() {
+  if (!userStrategyBannerEl) return;
+
+  const user = getCurrentUserProfile();
+  const strategy = normalizeUserStrategy(user?.strategy);
+  const title = userStrategyBannerEl.querySelector("strong");
+  const copy = userStrategyBannerEl.querySelector("p");
+  if (title) {
+    title.textContent = `${strategy.name} (${strategy.martingaleSteps} step${strategy.martingaleSteps === 1 ? "" : "s"})`;
+  }
+  if (copy) {
+    const access = [
+      strategy.skillsAccess ? `Skills: ${strategy.skillFocus}` : "Skills disabled",
+      strategy.openBrainAccess ? "Open Brain enabled" : "Open Brain disabled",
+      strategy.karpathyLoop ? "Karpathy loop enabled" : "Karpathy loop disabled"
+    ].join(" / ");
+    copy.textContent = `${strategy.description} ${access}.`;
+  }
+}
+
 function createUserProfilePanel(user) {
   const wrapper = document.createElement("div");
   const profileCard = document.createElement("section");
@@ -1169,6 +1336,8 @@ function createUserProfilePanel(user) {
   const cancelButton = document.createElement("button");
   const clearPhoto = document.createElement("button");
   const commoditiesCard = document.createElement("section");
+  const strategyCard = document.createElement("section");
+  const brokerCard = document.createElement("section");
   const statsCard = document.createElement("section");
   const actionsCard = document.createElement("section");
   const historyCard = document.createElement("section");
@@ -1288,6 +1457,134 @@ function createUserProfilePanel(user) {
   commoditySave.addEventListener("click", () => saveUserCommoditySelection(user, commodityGrid));
   commoditiesCard.append(commodityGrid, commoditySave);
 
+  const strategy = normalizeUserStrategy(user.strategy);
+  strategyCard.className = "user-profile-subcard profile-strategy-card";
+  strategyCard.innerHTML = `
+    <h3>Strategy, Skills, and Open Brain</h3>
+    <div class="profile-strategy-grid">
+      <label>
+        Strategy name
+        <input data-strategy-field="name" type="text" value="${escapeHtml(strategy.name)}">
+      </label>
+      <label>
+        Strategy type
+        <select data-strategy-field="type">
+          <option value="martingale-karpathy"${strategy.type === "martingale-karpathy" ? " selected" : ""}>Martingale + Karpathy loop</option>
+          <option value="fixed-risk"${strategy.type === "fixed-risk" ? " selected" : ""}>Fixed risk</option>
+          <option value="manual-review"${strategy.type === "manual-review" ? " selected" : ""}>Manual review</option>
+          <option value="custom"${strategy.type === "custom" ? " selected" : ""}>Custom</option>
+        </select>
+      </label>
+      <label>
+        Martingale steps
+        <input data-strategy-field="martingaleSteps" type="number" min="1" max="8" step="1" value="${strategy.martingaleSteps}">
+      </label>
+      <label>
+        Skill focus
+        <select data-strategy-field="skillFocus">
+          <option${strategy.skillFocus === "Lessons from Paper Trades" ? " selected" : ""}>Lessons from Paper Trades</option>
+          <option${strategy.skillFocus === "Lessons from Trades" ? " selected" : ""}>Lessons from Trades</option>
+          <option${strategy.skillFocus === "Market Expertise" ? " selected" : ""}>Market Expertise</option>
+          <option${strategy.skillFocus === "Prompts for Advisories" ? " selected" : ""}>Prompts for Advisories</option>
+        </select>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="karpathyLoop" type="checkbox"${strategy.karpathyLoop ? " checked" : ""}>
+        Karpathy loop enabled
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="skillsAccess" type="checkbox"${strategy.skillsAccess ? " checked" : ""}>
+        Allow Skills access
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="openBrainAccess" type="checkbox"${strategy.openBrainAccess ? " checked" : ""}>
+        Allow Open Brain access
+      </label>
+      <label class="profile-strategy-wide">
+        Strategy definition
+        <textarea data-strategy-field="description" rows="3">${escapeHtml(strategy.description)}</textarea>
+      </label>
+      <label class="profile-strategy-wide">
+        Open Brain memory instruction
+        <textarea data-strategy-field="openBrainMemory" rows="3">${escapeHtml(strategy.openBrainMemory)}</textarea>
+      </label>
+    </div>
+  `;
+  const strategySave = document.createElement("button");
+  strategySave.type = "button";
+  strategySave.className = "filter-button profile-commodity-save";
+  strategySave.textContent = "Save strategy";
+  strategySave.addEventListener("click", () => saveUserStrategySettings(user, strategyCard));
+  strategyCard.append(strategySave);
+
+  const brokerAccount = normalizeBrokerAccount(user.brokerAccount);
+  brokerCard.className = "user-profile-subcard profile-broker-card";
+  brokerCard.innerHTML = `
+    <h3>Brokerage Account</h3>
+    <div class="profile-security-note">
+      Do not paste Coinbase API secrets here. Store secrets only in Cloudflare Worker secrets, a vault, or another backend secret store. This profile saves metadata only.
+    </div>
+    <div class="profile-strategy-grid">
+      <label>
+        Provider
+        <select data-broker-field="provider">
+          <option${brokerAccount.provider === "Coinbase" ? " selected" : ""}>Coinbase</option>
+          <option${brokerAccount.provider === "Other" ? " selected" : ""}>Other</option>
+        </select>
+      </label>
+      <label>
+        Environment
+        <select data-broker-field="environment">
+          <option value="sandbox"${brokerAccount.environment === "sandbox" ? " selected" : ""}>Sandbox</option>
+          <option value="live"${brokerAccount.environment === "live" ? " selected" : ""}>Live</option>
+        </select>
+      </label>
+      <label>
+        Account label
+        <input data-broker-field="accountLabel" type="text" value="${escapeHtml(brokerAccount.accountLabel)}" placeholder="Peter Coinbase sandbox">
+      </label>
+      <label>
+        API key name / ID
+        <input data-broker-field="apiKeyName" type="text" value="${escapeHtml(brokerAccount.apiKeyName)}" placeholder="organizations/.../apiKeys/...">
+      </label>
+      <label>
+        Secret storage
+        <select data-broker-field="keyStorage">
+          <option${brokerAccount.keyStorage === "Cloudflare Worker secret" ? " selected" : ""}>Cloudflare Worker secret</option>
+          <option${brokerAccount.keyStorage === "Hostinger VPS env file" ? " selected" : ""}>Hostinger VPS env file</option>
+          <option${brokerAccount.keyStorage === "Vault" ? " selected" : ""}>Vault</option>
+          <option${brokerAccount.keyStorage === "Not configured" ? " selected" : ""}>Not configured</option>
+        </select>
+      </label>
+      <label>
+        Permission scope
+        <select data-broker-field="permissionScope">
+          <option value="view-only"${brokerAccount.permissionScope === "view-only" ? " selected" : ""}>View only</option>
+          <option value="trade-sandbox"${brokerAccount.permissionScope === "trade-sandbox" ? " selected" : ""}>Trade sandbox only</option>
+          <option value="trade-live"${brokerAccount.permissionScope === "trade-live" ? " selected" : ""}>Trade live</option>
+        </select>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-broker-field="canTrade" type="checkbox"${brokerAccount.canTrade ? " checked" : ""}>
+        Trading permission enabled in backend
+      </label>
+      <label class="profile-strategy-wide">
+        Backend order endpoint
+        <input data-broker-field="webhookUrl" type="url" value="${escapeHtml(brokerAccount.webhookUrl)}" placeholder="https://.../orders">
+      </label>
+      <label class="profile-strategy-wide">
+        Account notes
+        <textarea data-broker-field="notes" rows="3">${escapeHtml(brokerAccount.notes)}</textarea>
+      </label>
+    </div>
+  `;
+  const brokerSave = document.createElement("button");
+  brokerSave.type = "button";
+  brokerSave.className = "filter-button profile-commodity-save";
+  brokerSave.textContent = "Save brokerage metadata";
+  brokerSave.addEventListener("click", () => saveUserBrokerAccountSettings(user, brokerCard));
+  brokerCard.append(brokerSave);
+
   statsCard.className = "user-profile-subcard";
   statsCard.innerHTML = `
     <h3>Session Statistics</h3>
@@ -1353,7 +1650,7 @@ function createUserProfilePanel(user) {
   });
   historyCard.append(table);
 
-  wrapper.append(profileCard, commoditiesCard, statsCard, actionsCard, historyCard);
+  wrapper.append(profileCard, commoditiesCard, strategyCard, brokerCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
 
@@ -1391,22 +1688,31 @@ function renderUserListFilterButtons() {
   });
 }
 
-function toggleExpandedUser(user) {
-  const emailKey = normalizeEmail(user.email);
-  expandedUserEmail = expandedUserEmail === emailKey ? "" : emailKey;
+function openUserDetail(user) {
+  expandedUserEmail = normalizeEmail(user.email);
   editingUserEmail = "";
   renderUserManagement();
   if (expandedUserEmail) {
     window.requestAnimationFrame(() => {
-      selectedUserProfileEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      userDetailViewEl.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   }
+}
+
+function closeUserDetail() {
+  expandedUserEmail = "";
+  editingUserEmail = "";
+  renderUserManagement();
 }
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
   const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
-  selectedUserProfileEl.hidden = !selectedUser;
+  const hasSelectedUser = Boolean(selectedUser);
+
+  userRosterViewEl.hidden = hasSelectedUser;
+  userDetailViewEl.hidden = !hasSelectedUser;
+  selectedUserProfileEl.hidden = !hasSelectedUser;
   if (!selectedUser) return;
 
   selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
@@ -1458,18 +1764,18 @@ function renderUserManagement() {
     row.tabIndex = 0;
     row.addEventListener("click", (event) => {
       if (event.target.closest("button, input, a, label")) return;
-      toggleExpandedUser(user);
+      openUserDetail(user);
     });
     row.addEventListener("keydown", (event) => {
       if (event.key !== "Enter" && event.key !== " ") return;
       event.preventDefault();
-      toggleExpandedUser(user);
+      openUserDetail(user);
     });
     profile.className = "user-profile";
     profile.type = "button";
     profile.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleExpandedUser(user);
+      openUserDetail(user);
     });
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
@@ -1484,10 +1790,10 @@ function renderUserManagement() {
     actions.className = "user-actions";
     action.type = "button";
     action.className = "view-user-button";
-    action.textContent = expandedUserEmail === normalizeEmail(user.email) ? "Hide" : "View";
+    action.textContent = "View";
     action.addEventListener("click", (event) => {
       event.stopPropagation();
-      toggleExpandedUser(user);
+      openUserDetail(user);
     });
     actions.append(action);
     actionCell.append(actions);
@@ -2063,6 +2369,22 @@ function formatTradeTime(value) {
   }).format(value);
 }
 
+function formatEasternDate(value = new Date()) {
+  return new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "long",
+    month: "long",
+    day: "numeric",
+    year: "numeric"
+  }).format(value);
+}
+
+function addDays(value, days) {
+  const date = new Date(value);
+  date.setDate(date.getDate() + days);
+  return date;
+}
+
 function getEasternMarketParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
@@ -2086,6 +2408,7 @@ function getEasternMarketParts(value = new Date()) {
 function getFuturesMarketStatus(value = new Date()) {
   const { day, minutes } = getEasternMarketParts(value);
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const todayDate = formatEasternDate(value);
   const isMaintenanceBreak = day >= 1 && day <= 4 && minutes >= 17 * 60 && minutes < 18 * 60;
   const isOpen = (day === 0 && minutes >= 18 * 60)
     || (day >= 1 && day <= 4 && !isMaintenanceBreak)
@@ -2093,10 +2416,10 @@ function getFuturesMarketStatus(value = new Date()) {
 
   if (isOpen) {
     const closeCopy = day >= 1 && day <= 4 && minutes < 17 * 60
-      ? "Maintenance starts today 5:00 PM ET"
+      ? `Today is ${todayDate} ET. Maintenance starts today at 5:00 PM ET.`
       : day >= 0 && day <= 4
-        ? "Next maintenance 5:00 PM ET"
-        : "Closes Friday 5:00 PM ET";
+        ? `Today is ${todayDate} ET. Next maintenance starts at 5:00 PM ET.`
+        : `Today is ${todayDate} ET. Closes Friday at 5:00 PM ET.`;
     return {
       isOpen: true,
       label: "Market open",
@@ -2110,18 +2433,19 @@ function getFuturesMarketStatus(value = new Date()) {
       isOpen: false,
       label: "Market closed",
       shortLabel: "Reopens 6:00 PM ET",
-      detail: "Daily maintenance break. Reopens today 6:00 PM ET."
+      detail: `Today is ${todayDate} ET. Daily maintenance break. Reopens today, ${todayDate}, at 6:00 PM ET.`
     };
   }
 
   const opensToday = day === 0 && minutes < 18 * 60;
+  const nextSundayDate = formatEasternDate(opensToday ? value : addDays(value, (7 - day) % 7));
   return {
     isOpen: false,
     label: "Market closed",
     shortLabel: opensToday ? "Opens 6:00 PM ET" : "Opens Sunday 6:00 PM ET",
     detail: opensToday
-      ? "Weekend close. Opens today 6:00 PM ET."
-      : `Weekend close. Opens Sunday 6:00 PM ET. Today is ${dayNames[day]} ET.`
+      ? `Today is ${todayDate} ET. Weekend close. Opens today, ${todayDate}, at 6:00 PM ET.`
+      : `Today is ${todayDate} ET. Weekend close. Opens Sunday, ${nextSundayDate}, at 6:00 PM ET. Today is ${dayNames[day]} ET.`
   };
 }
 
@@ -2303,6 +2627,7 @@ function getConsecutiveLosingCloses() {
 }
 
 function getNextMartingaleStepFromHistory() {
+  const maxStep = getCurrentMartingaleMaxStep();
   const losingCloses = getConsecutiveLosingCloses();
   if (!losingCloses.length) return 1;
 
@@ -2310,8 +2635,8 @@ function getNextMartingaleStepFromHistory() {
     Math.max(highest, Number(entry.step) || 1)
   ), 1);
 
-  if (highestLosingStep >= MARTINGALE_MAX_STEP) return 1;
-  return Math.max(1, Math.min(MARTINGALE_MAX_STEP, highestLosingStep + 1));
+  if (highestLosingStep >= maxStep) return 1;
+  return Math.max(1, Math.min(maxStep, highestLosingStep + 1));
 }
 
 function getKarpathyLoop(side) {
@@ -2349,6 +2674,8 @@ function getKarpathyLoop(side) {
 
 function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
+  const userStrategy = getCurrentUserStrategy();
+  const maxMartingaleStep = getCurrentMartingaleMaxStep();
   const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
   const updatedAt = latestPriceTimes.get(commodity);
   const priceSource = latestPriceSources.get(commodity);
@@ -2383,6 +2710,14 @@ function buildTradePlan(commodity, signal) {
   const marginSource = config.productType === "Coinbase futures contract"
     ? "Estimated margin"
     : "Reference margin";
+  const strategyName = userStrategy.name || "Profile strategy";
+  const loopName = userStrategy.karpathyLoop ? "Karpathy loop" : "profile threshold";
+  const skillText = userStrategy.skillsAccess
+    ? ` Use ${userStrategy.skillFocus || "selected skills"} as supporting context.`
+    : "";
+  const memoryText = userStrategy.openBrainAccess
+    ? ` Capture context in Open Brain before changing thresholds.`
+    : "";
 
   return {
     ticker: config.ticker,
@@ -2416,10 +2751,10 @@ function buildTradePlan(commodity, signal) {
     size: `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}`,
     status,
     steps: [
-      `Auto-enter long or short when conviction clears the learned threshold of ${learnedThreshold}.`,
-      `Commit Martingale step ${martingaleStep} margin, currently ${formatMoney(nextCapital)}, for ${plannedContracts} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
+      `${strategyName}: auto-enter long or short when conviction clears the profile threshold of ${learnedThreshold}.`,
+      `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${plannedContracts} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
-      `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then adjust the next Martingale step.`
+      `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
     ]
   };
 }
@@ -2650,6 +2985,204 @@ function isTransactionForCurrentUser(entry) {
     || (entryEmail === LEGACY_LEDGER_USER_EMAIL && isCurrentLegacyLedgerOwner());
 }
 
+function parseOptionalNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function formatOptionalMoney(value) {
+  return Number.isFinite(Number(value)) ? formatMoney(Number(value)) : "-";
+}
+
+function formatOptionalNumber(value) {
+  return Number.isFinite(Number(value)) ? String(Number(value)) : "-";
+}
+
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function getCommodityName(commodity) {
+  return commodities.find(({ id }) => id === commodity)?.name || commodity || "-";
+}
+
+function normalizeLiveTradeEntry(entry) {
+  const commodity = entry.commodity || getCommodityFromContract(entry.contract) || commoditySelect.value || "oil";
+  const time = getTransactionDate(entry.time);
+
+  return {
+    id: entry.id || `live-${Date.now()}`,
+    time,
+    userEmail: normalizeEmail(entry.userEmail || getCurrentLedgerEmail()),
+    userName: entry.userName || getCurrentUserProfile()?.name || "",
+    commodity,
+    commodityName: entry.commodityName || getCommodityName(commodity),
+    contract: entry.contract || marketConfig[commodity]?.ticker || "",
+    orderId: entry.orderId || "",
+    side: entry.side === "short" ? "short" : "long",
+    action: entry.action || "OPEN",
+    orderType: entry.orderType || "market",
+    contracts: parseOptionalNumber(entry.contracts),
+    tradeValue: parseOptionalNumber(entry.tradeValue),
+    entryPrice: parseOptionalNumber(entry.entryPrice),
+    limitPrice: parseOptionalNumber(entry.limitPrice),
+    stopPrice: parseOptionalNumber(entry.stopPrice),
+    targetPrice: parseOptionalNumber(entry.targetPrice),
+    timeInForce: entry.timeInForce || "GTC",
+    status: entry.status || "Submitted",
+    fees: parseOptionalNumber(entry.fees),
+    pnl: parseOptionalNumber(entry.pnl) || 0,
+    agent: entry.agent || liveAgentSelectEl?.value || "Manual only",
+    channel: entry.channel || liveChannelSelectEl?.value || "Manual",
+    notes: entry.notes || ""
+  };
+}
+
+function loadLiveTradeLedger() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(LIVE_TRADE_LEDGER_KEY) || "[]");
+    liveTradeLedger.splice(0, liveTradeLedger.length, ...(Array.isArray(stored) ? stored.map(normalizeLiveTradeEntry) : []));
+  } catch (error) {
+    liveTradeLedger.splice(0, liveTradeLedger.length);
+  }
+  renderLiveTradeLedger();
+}
+
+function saveLiveTradeLedger() {
+  window.localStorage.setItem(LIVE_TRADE_LEDGER_KEY, JSON.stringify(liveTradeLedger));
+  if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `Local live ledger saved ${liveTradeLedger.length} rows`;
+}
+
+function appendLiveTradeDetail(parent, label, value) {
+  const item = document.createElement("div");
+  const labelEl = document.createElement("span");
+  const valueEl = document.createElement("strong");
+  labelEl.className = "stat-label";
+  labelEl.textContent = label;
+  valueEl.textContent = value || "-";
+  item.append(labelEl, valueEl);
+  parent.append(item);
+}
+
+function renderLiveTradeLedger() {
+  if (!liveTradeHistoryEl) return;
+
+  liveTradeHistoryEl.innerHTML = "";
+  const scopedTrades = liveTradeLedger.filter((trade) => trade.userEmail === getCurrentLedgerEmail());
+  const totalPl = scopedTrades.reduce((total, trade) => total + (Number(trade.pnl) || 0), 0);
+  const committed = scopedTrades.reduce((total, trade) => total + (Number(trade.tradeValue) || 0), 0);
+
+  if (liveTotalPlEl) liveTotalPlEl.textContent = formatSignedMoney(totalPl);
+  if (liveFilteredPlEl) liveFilteredPlEl.textContent = formatSignedMoney(totalPl);
+  if (liveTradeCountEl) liveTradeCountEl.textContent = `${scopedTrades.length} row${scopedTrades.length === 1 ? "" : "s"}`;
+  if (liveTradeSummaryEl) {
+    liveTradeSummaryEl.textContent = scopedTrades.length
+      ? `Showing ${scopedTrades.length} live trade record${scopedTrades.length === 1 ? "" : "s"} for ${getCurrentUserProfile()?.name || getCurrentLedgerEmail()}. Committed ${formatMoney(committed)}.`
+      : "No live trades recorded. This ledger will be separate from paper trade history.";
+  }
+  if (liveLedgerStatusEl && !liveLedgerStatusEl.textContent.includes("saved")) {
+    liveLedgerStatusEl.textContent = "Live ledger local only";
+  }
+
+  if (!scopedTrades.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "No live trades recorded yet. Use the Coinbase mirror entry form above to capture actual trade details.";
+    row.append(cell);
+    liveTradeHistoryEl.append(row);
+    return;
+  }
+
+  scopedTrades.forEach((trade) => {
+    const row = document.createElement("tr");
+    [
+      formatTradeTime(trade.time),
+      trade.action,
+      formatSide(trade.side),
+      trade.agent,
+      trade.contract || "-",
+      formatOptionalMoney(trade.entryPrice ?? trade.limitPrice),
+      formatOptionalMoney(trade.tradeValue),
+      formatSignedMoney(Number(trade.pnl) || 0)
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+
+    const detailRow = document.createElement("tr");
+    detailRow.className = "live-trade-detail";
+    const detailCell = document.createElement("td");
+    detailCell.colSpan = 8;
+    const detailGrid = document.createElement("div");
+    detailGrid.className = "transaction-detail-grid live-detail-grid";
+
+    appendLiveTradeDetail(detailGrid, "User", trade.userName || trade.userEmail);
+    appendLiveTradeDetail(detailGrid, "Commodity", trade.commodityName);
+    appendLiveTradeDetail(detailGrid, "Order ID", trade.orderId);
+    appendLiveTradeDetail(detailGrid, "Order type", trade.orderType);
+    appendLiveTradeDetail(detailGrid, "Contracts", formatOptionalNumber(trade.contracts));
+    appendLiveTradeDetail(detailGrid, "Entry price", formatOptionalMoney(trade.entryPrice));
+    appendLiveTradeDetail(detailGrid, "Limit price", formatOptionalMoney(trade.limitPrice));
+    appendLiveTradeDetail(detailGrid, "Stop price", formatOptionalMoney(trade.stopPrice));
+    appendLiveTradeDetail(detailGrid, "Target price", formatOptionalMoney(trade.targetPrice));
+    appendLiveTradeDetail(detailGrid, "Time in force", trade.timeInForce);
+    appendLiveTradeDetail(detailGrid, "Status", trade.status);
+    appendLiveTradeDetail(detailGrid, "Fees", formatOptionalMoney(trade.fees));
+    appendLiveTradeDetail(detailGrid, "Channel", trade.channel);
+    appendLiveTradeDetail(detailGrid, "Notes", trade.notes);
+
+    detailCell.append(detailGrid);
+    detailRow.append(detailCell);
+    liveTradeHistoryEl.append(row, detailRow);
+  });
+}
+
+function addLiveTradeFromForm(event) {
+  event.preventDefault();
+  const formData = new FormData(liveTradeFormEl);
+  const commodity = formData.get("commodity") || commoditySelect.value || "oil";
+  const trade = normalizeLiveTradeEntry({
+    id: `live-${Date.now()}`,
+    time: new Date().toISOString(),
+    userEmail: getCurrentLedgerEmail(),
+    userName: getCurrentUserProfile()?.name || "",
+    commodity,
+    commodityName: getCommodityName(commodity),
+    contract: String(formData.get("contract") || marketConfig[commodity]?.ticker || "").trim(),
+    orderId: String(formData.get("orderId") || "").trim(),
+    side: formData.get("side"),
+    action: formData.get("action"),
+    orderType: formData.get("orderType"),
+    contracts: formData.get("contracts"),
+    tradeValue: formData.get("tradeValue"),
+    entryPrice: formData.get("entryPrice"),
+    limitPrice: formData.get("limitPrice"),
+    stopPrice: formData.get("stopPrice"),
+    targetPrice: formData.get("targetPrice"),
+    timeInForce: formData.get("timeInForce"),
+    status: formData.get("status"),
+    fees: formData.get("fees"),
+    pnl: formData.get("pnl"),
+    agent: liveAgentSelectEl?.value || "Manual only",
+    channel: liveChannelSelectEl?.value || "Manual",
+    notes: String(formData.get("notes") || "").trim()
+  });
+
+  liveTradeLedger.unshift(trade);
+  saveLiveTradeLedger();
+  renderLiveTradeLedger();
+  liveTradeFormEl.reset();
+  const contractInput = document.querySelector("#live-trade-contract");
+  if (contractInput) contractInput.value = marketConfig[commoditySelect.value]?.ticker || "";
+}
+
 function getUserScopedTransactions() {
   return transactionHistory.filter(isTransactionForCurrentUser);
 }
@@ -2873,7 +3406,7 @@ function loadPaperState() {
     if (Number.isFinite(state.paperEquity)) paperEquity = state.paperEquity;
     if (Number.isFinite(state.paperRiskPct)) paperRiskPct = clamp(Number(state.paperRiskPct), 0.1, 25);
     if (Number.isInteger(state.martingaleStep)) {
-      martingaleStep = Math.max(1, Math.min(MARTINGALE_MAX_STEP, state.martingaleStep));
+      martingaleStep = Math.max(1, Math.min(getCurrentMartingaleMaxStep(), state.martingaleStep));
     }
     if (Number.isInteger(state.nextTransactionId)) nextTransactionId = state.nextTransactionId;
     if (Array.isArray(state.openPaperTrades)) {
@@ -4365,6 +4898,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const decision = getPaperDecision(signal, tradePlan, openTrade);
   const staleStopTrade = !openTrade && getLatestUnclosedOpeningTrade(commodity);
   const marketStatus = getFuturesMarketStatus();
+  const maxMartingaleStep = getCurrentMartingaleMaxStep();
 
   syncPaperInputs();
   if (paperUserContextEl) {
@@ -4376,7 +4910,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperCommittedEl.textContent = formatMoney(committedCapital);
   paperOpenPlEl.textContent = formatSignedMoney(openPl);
   paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
-  paperMartingaleEl.textContent = `Step ${martingaleStep} / ${MARTINGALE_MAX_STEP} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
+  paperMartingaleEl.textContent = `Step ${martingaleStep} / ${maxMartingaleStep} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
   if (paperMarketStatusEl) {
     paperMarketStatusEl.textContent = `${marketStatus.label}: ${marketStatus.detail}`;
     paperMarketStatusEl.dataset.open = String(marketStatus.isOpen);
@@ -4627,6 +5161,10 @@ primaryModelSelect.addEventListener("change", () => {
 commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
 commoditySelect.addEventListener("change", () => {
   connectCoinbaseWebSocket(commoditySelect.value);
+  const contractInput = document.querySelector("#live-trade-contract");
+  const commodityInput = document.querySelector("#live-trade-commodity");
+  if (commodityInput) commodityInput.value = commoditySelect.value;
+  if (contractInput && !contractInput.value.trim()) contractInput.value = marketConfig[commoditySelect.value]?.ticker || "";
 });
 historyPeriodFiltersEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-period]");
@@ -4664,6 +5202,7 @@ syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(
 advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
+liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 paperEquityInputEl.addEventListener("change", updatePaperEquitySetting);
 paperRiskInputEl.addEventListener("change", updatePaperRiskSetting);
 coinbaseSandboxEnabledEl.addEventListener("change", () => {
@@ -4726,6 +5265,7 @@ userSearchButtonEl.addEventListener("click", () => {
   userSearchQuery = userSearchInputEl.value;
   renderUserManagement();
 });
+backToUsersButtonEl.addEventListener("click", closeUserDetail);
 userStatCards.forEach((card) => {
   card.addEventListener("click", () => {
     userListFilter = card.dataset.userListFilter || "all";
@@ -4773,10 +5313,16 @@ function initializeApp() {
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
   loadFeatureRequests();
+  loadLiveTradeLedger();
+  const liveCommodityInput = document.querySelector("#live-trade-commodity");
+  const liveContractInput = document.querySelector("#live-trade-contract");
+  if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;
+  if (liveContractInput) liveContractInput.value = marketConfig[commoditySelect.value]?.ticker || "";
   markCurrentSessionActive();
   renderPrimaryModelSelector();
   renderSecondOpinionControls();
   renderOpenBrainMemory();
+  renderCurrentUserStrategy();
   showUserManagement();
   renderFeatureRequests();
   setActiveSection(activeSection);
