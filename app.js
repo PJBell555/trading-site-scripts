@@ -2612,7 +2612,7 @@ function formatPriceTime(value) {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit"
-  }).format(value);
+  }).format(getTransactionDate(value));
 }
 
 function formatTradeTime(value) {
@@ -2622,7 +2622,7 @@ function formatTradeTime(value) {
     hour: "numeric",
     minute: "2-digit",
     second: "2-digit"
-  }).format(value);
+  }).format(getTransactionDate(value));
 }
 
 function formatEasternDate(value = new Date()) {
