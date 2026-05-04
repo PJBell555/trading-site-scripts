@@ -495,8 +495,15 @@
             The safest first version of this product is an advisor that weighs market structure, inventories, macro pressure, and momentum, then explains why it prefers long, short, or wait.
           </p>
           <div class="user-strategy-banner" id="user-strategy-banner">
+            <div class="advisory-user-profile">
+              <span id="advisory-user-avatar" class="user-avatar">CH</span>
+              <div>
+                <span class="stat-label">Viewing advisory for</span>
+                <strong id="advisory-user-name">Current user</strong>
+              </div>
+            </div>
             <span class="stat-label">Current user strategy</span>
-            <strong>Loading strategy</strong>
+            <strong id="advisory-user-strategy-name">Loading strategy</strong>
             <p>Strategy settings are defined in the user profile.</p>
           </div>
         </div>
@@ -643,7 +650,7 @@
         <details class="trade-system-details">
           <summary>
             <span>Paper trading system details</span>
-            <strong id="paper-user-context">Viewing shared paper trades</strong>
+            <strong id="paper-user-context" class="trade-context-profile">Viewing shared paper trades</strong>
           </summary>
           <div class="trade-system-detail-grid">
             <div>
@@ -813,7 +820,7 @@
         <details class="trade-system-details live-system-details">
           <summary>
             <span>Actual trading system details</span>
-            <strong>Live trading workspace. No orders are placed by this page yet.</strong>
+            <strong id="live-user-context" class="trade-context-profile">Viewing shared live trades</strong>
           </summary>
           <div class="trade-system-detail-grid">
             <div>

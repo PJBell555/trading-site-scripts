@@ -93,7 +93,11 @@ const paperRiskEl = document.querySelector("#paper-risk");
 const paperEquityInputEl = document.querySelector("#paper-equity-input");
 const paperRiskInputEl = document.querySelector("#paper-risk-input");
 const paperUserContextEl = document.querySelector("#paper-user-context");
+const liveUserContextEl = document.querySelector("#live-user-context");
 const userStrategyBannerEl = document.querySelector("#user-strategy-banner");
+const advisoryUserAvatarEl = document.querySelector("#advisory-user-avatar");
+const advisoryUserNameEl = document.querySelector("#advisory-user-name");
+const advisoryUserStrategyNameEl = document.querySelector("#advisory-user-strategy-name");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -961,6 +965,21 @@ function getPaperUserContextText() {
   return email ? `Viewing paper trades for ${email}` : "Viewing shared paper trades";
 }
 
+function getLiveUserContextText() {
+  const user = getCurrentUserProfile();
+  if (user?.name) return `Viewing ${formatPossessiveName(user.name)} live trades`;
+  const email = getCurrentLedgerEmail();
+  return email ? `Viewing live trades for ${email}` : "Viewing shared live trades";
+}
+
+function renderUserContextWithAvatar(element, text) {
+  if (!element) return;
+  const user = getCurrentUserProfile() || { name: "Current user", email: getCurrentLedgerEmail() };
+  const label = document.createElement("span");
+  label.textContent = text;
+  element.replaceChildren(createUserAvatar(user, "trade-context-avatar"), label);
+}
+
 function isCurrentLegacyLedgerOwner() {
   const user = getCurrentUserProfile();
   const email = getCurrentLedgerEmail();
@@ -1567,8 +1586,19 @@ function renderCurrentUserStrategy() {
 
   const user = getCurrentUserProfile();
   const strategy = normalizeUserStrategy(user?.strategy);
-  const title = userStrategyBannerEl.querySelector("strong");
+  const title = advisoryUserStrategyNameEl;
   const copy = userStrategyBannerEl.querySelector("p");
+
+  if (advisoryUserAvatarEl) {
+    const avatar = createUserAvatar(user || { name: "Current user", email: getCurrentLedgerEmail() }, "user-avatar");
+    advisoryUserAvatarEl.replaceChildren(...Array.from(avatar.childNodes));
+    advisoryUserAvatarEl.className = avatar.className;
+  }
+  if (advisoryUserNameEl) {
+    const name = user?.name || user?.email || getCurrentLedgerEmail() || "Current user";
+    advisoryUserNameEl.textContent = name;
+  }
+
   if (title) {
     title.textContent = `${strategy.name} (${strategy.martingaleSteps} step${strategy.martingaleSteps === 1 ? "" : "s"})`;
   }
@@ -3587,6 +3617,7 @@ function appendLiveTradeDetail(parent, label, value) {
 function renderLiveTradeLedger() {
   if (!liveTradeHistoryEl) return;
 
+  renderUserContextWithAvatar(liveUserContextEl, getLiveUserContextText());
   liveTradeHistoryEl.innerHTML = "";
   const scopedTrades = liveTradeLedger.filter((trade) => trade.userEmail === getCurrentLedgerEmail());
   const totalPl = scopedTrades.reduce((total, trade) => total + (Number(trade.pnl) || 0), 0);
@@ -4858,20 +4889,26 @@ async function recordTransaction(entry) {
   transactionHistory.unshift(transaction);
   nextTransactionId += 1;
   savePaperState();
-  recordOpenBrainEvent(
-    "paper-trade",
-    `${transaction.action} ${transaction.contract} at ${formatPrice(transaction.price)} with net P/L ${formatCurrency(transaction.pnl || 0)}`,
-    {
-      tradeId: transaction.tradeId,
-      commodity: transaction.commodity,
-      action: transaction.action,
-      side: transaction.side,
-      step: transaction.step,
-      price: transaction.price,
-      pnl: transaction.pnl,
-      tags: ["paper-trade", transaction.commodity, transaction.side, transaction.action]
-    }
-  );
+
+  try {
+    recordOpenBrainEvent(
+      "paper-trade",
+      `${transaction.action} ${transaction.contract} at ${formatPrice(transaction.price)} with net P/L ${formatSignedMoney(Number(transaction.pnl) || 0)}`,
+      {
+        tradeId: transaction.tradeId,
+        commodity: transaction.commodity,
+        action: transaction.action,
+        side: transaction.side,
+        step: transaction.step,
+        price: transaction.price,
+        pnl: transaction.pnl,
+        tags: ["paper-trade", transaction.commodity, transaction.side, transaction.action]
+      }
+    );
+  } catch (error) {
+    openBrainStatusEl.textContent = "Open Brain log skipped; trade ledger saved";
+  }
+
   await saveSharedTransactionHistory();
   return transaction;
 }
@@ -4943,34 +4980,43 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
 
   openPaperTrades.set(commodity, trade);
   savePaperState();
-  recordTransaction({
-    tradeId: trade.id,
-    commodity,
-    commodityName: commodityMeta.name,
-    action: side === "short" ? "SELL SHORT" : "BUY",
-    side,
-    step: trade.martingaleStep,
-    contract: trade.contract,
-    price: entryPrice,
-    entryPrice,
-    targetEntryPrice: trade.targetEntryPrice,
-    targetPrice: trade.targetPrice,
-    stopPrice: trade.stopPrice,
-    contractMultiplier: trade.contractMultiplier,
-    contracts: trade.contracts,
-    marginRequirement: trade.marginRequirement,
-    notionalValue: trade.notionalValue,
-    openFee: trade.openFee,
-    estimatedExitFee: trade.estimatedExitFee,
-    totalEstimatedFees: trade.totalEstimatedFees,
-    feePerContractSide: trade.feePerContractSide,
-    feeLabel: trade.feeLabel,
-    coinbaseSandbox: sandboxOrder,
-    openedAt: trade.openedAt,
-    capital,
-    pnl: 0,
-    note: `${commodityMeta.name} ${side} opened at ${signal.conviction} conviction`
-  }).finally(() => clearPaperActionPending(commodity));
+
+  try {
+    await recordTransaction({
+      tradeId: trade.id,
+      commodity,
+      commodityName: commodityMeta.name,
+      action: side === "short" ? "SELL SHORT" : "BUY",
+      side,
+      step: trade.martingaleStep,
+      contract: trade.contract,
+      price: entryPrice,
+      entryPrice,
+      targetEntryPrice: trade.targetEntryPrice,
+      targetPrice: trade.targetPrice,
+      stopPrice: trade.stopPrice,
+      contractMultiplier: trade.contractMultiplier,
+      contracts: trade.contracts,
+      marginRequirement: trade.marginRequirement,
+      notionalValue: trade.notionalValue,
+      openFee: trade.openFee,
+      estimatedExitFee: trade.estimatedExitFee,
+      totalEstimatedFees: trade.totalEstimatedFees,
+      feePerContractSide: trade.feePerContractSide,
+      feeLabel: trade.feeLabel,
+      coinbaseSandbox: sandboxOrder,
+      openedAt: trade.openedAt,
+      capital,
+      pnl: 0,
+      note: `${commodityMeta.name} ${side} opened at ${signal.conviction} conviction`
+    });
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = "Paper trade opened locally; backend save retrying";
+    pendingHistorySaveRetry = true;
+  } finally {
+    clearPaperActionPending(commodity);
+    calculateSignal();
+  }
 }
 
 async function closePaperTrade(commodity, exitPrice, reason) {
@@ -5495,9 +5541,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
 
   syncPaperInputs();
-  if (paperUserContextEl) {
-    paperUserContextEl.textContent = getPaperUserContextText();
-  }
+  renderUserContextWithAvatar(paperUserContextEl, getPaperUserContextText());
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
