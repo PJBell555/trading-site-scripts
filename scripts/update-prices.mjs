@@ -6,7 +6,7 @@ const commodities = [
     ticker: "NOL-18MAY26-CDE",
     productId: "NOL-18MAY26-CDE",
     productType: "Coinbase futures contract",
-    referencePrice: 88.75
+    referencePrice: 101.32
   },
   {
     id: "natural-gas",

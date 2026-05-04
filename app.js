@@ -179,7 +179,7 @@ const marketConfig = {
     productId: "NOL-18MAY26-CDE",
     contractMonth: "May 2026",
     productType: "Coinbase futures contract",
-    referencePrice: 88.75,
+    referencePrice: 101.32,
     contractMultiplier: 10,
     marginRateLong: 0.1,
     marginRateShort: 0.12,
@@ -1771,6 +1771,7 @@ function appendStateCell(row, code, label) {
 function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   const row = document.createElement("tr");
   const signalSide = getSignalSide(signal);
+  const hasExecutablePrice = Boolean(tradePlan?.priceReady && signalSide);
   const action = signalSide
     ? `${signalSide === "short" ? "Sell short" : "Buy"} queued`
     : "Waiting for signal";
@@ -1784,8 +1785,8 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     signalSide ? formatSide(signalSide) : "-",
     `#${martingaleStep}`,
     marketConfig[commodity]?.ticker || tradePlan.ticker,
-    signalSide ? formatPrice(queuedPrice) : "-",
-    formatMoney(tradePlan.nextCapital),
+    hasExecutablePrice ? formatPrice(queuedPrice) : "Waiting for live price",
+    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : "-",
     decision.title
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -1801,6 +1802,7 @@ function buildQueuedLiveTradeRow() {
   const signal = lastPrimarySignal;
   const tradePlan = lastTradePlan;
   const side = signal ? getSignalSide(signal) : null;
+  const hasExecutablePrice = Boolean(tradePlan?.priceReady && side);
 
   row.className = "transaction-row queued-trade-row live-queued-row";
   appendStateCell(row, "Q", "Queued / waiting");
@@ -1810,8 +1812,8 @@ function buildQueuedLiveTradeRow() {
     side ? formatSide(side) : "-",
     liveAgentSelectEl?.value || "Manual only",
     tradePlan?.ticker || marketConfig[commoditySelect.value]?.ticker || "-",
-    tradePlan && side ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : "-",
-    tradePlan ? formatMoney(tradePlan.nextCapital) : "-",
+    hasExecutablePrice ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : "Waiting for live price",
+    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : "-",
     "Queued for trader review"
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -2783,9 +2785,11 @@ function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const userStrategy = getCurrentUserStrategy();
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
-  const livePrice = latestPrices.get(commodity) ?? config.referencePrice;
   const updatedAt = latestPriceTimes.get(commodity);
   const priceSource = latestPriceSources.get(commodity);
+  const hasKnownPrice = latestPrices.has(commodity);
+  const priceReady = hasKnownPrice && priceSource !== "Reference snapshot";
+  const livePrice = hasKnownPrice ? latestPrices.get(commodity) : config.referencePrice;
   const contractMultiplier = getContractMultiplier(config);
   const longBias = signal.tone === "long";
   const shortBias = signal.tone === "short";
@@ -2848,7 +2852,8 @@ function buildTradePlan(commodity, signal) {
     sellPrice,
     stopLoss,
     buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
-    priceSource: updatedAt ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : "Reference (snapshot unavailable)",
+    priceReady,
+    priceSource: updatedAt ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : "Waiting for live price",
     minTradeValue,
     minLong: `1 contract / ${formatMoney(longMargin)}`,
     minShort: `1 contract / ${formatMoney(shortMargin)}`,
@@ -3819,7 +3824,7 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
 }
 
 function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
-  if (!latestPrices.has(commodity) || !hasHistoryBackend()) return;
+  if (!tradePlan.priceReady || !hasHistoryBackend()) return;
 
   const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
   const batchKey = `${commodity}|${minute}`;
@@ -4581,7 +4586,7 @@ async function closePaperTrade(commodity, exitPrice, reason) {
 }
 
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
-  if (!latestPrices.has(commodity)) return;
+  if (!tradePlan.priceReady) return;
   if (!hasHistoryBackend()) return;
   if (!backendHistoryReady) return;
   reconcilePaperStateFromHistory();
@@ -4646,10 +4651,10 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     };
   }
 
-  if (!latestPrices.has(commoditySelect.value)) {
+  if (!tradePlan.priceReady) {
     return {
       title: "Waiting for live price",
-      detail: "The paper trader needs a live or backend price before it can evaluate entries."
+      detail: "The paper trader needs Coinbase WebSocket, Coinbase REST, or a valid GitHub snapshot before it can evaluate entries."
     };
   }
 
@@ -5175,6 +5180,10 @@ function calculateSignal() {
   const baseSignals = readBaseSignals();
   const primarySignal = scoreCommodity(commodity, baseSignals);
   const tradePlan = buildTradePlan(commodity, primarySignal);
+  if (!tradePlan.priceReady) {
+    connectCoinbaseWebSocket(commodity);
+    refreshCoinbasePrice(commodity);
+  }
 
   lastPrimarySignal = primarySignal;
   lastTradePlan = tradePlan;
@@ -5220,16 +5229,16 @@ function calculateSignal() {
   actionEl.textContent = primarySignal.action;
   tickerEl.textContent = tradePlan.ticker;
   contractMonthEl.textContent = tradePlan.contractMonth;
-  priceEl.textContent = formatPrice(tradePlan.livePrice);
+  priceEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.livePrice) : "Waiting for live price";
   entryLabelEl.textContent = tradePlan.entryLabel;
   targetLabelEl.textContent = tradePlan.targetLabel;
-  targetBuyEl.textContent = formatPrice(tradePlan.buyPrice);
-  targetSellEl.textContent = formatPrice(tradePlan.sellPrice);
-  stopLossEl.textContent = formatPrice(tradePlan.stopLoss);
+  targetBuyEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.buyPrice) : "-";
+  targetSellEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.sellPrice) : "-";
+  stopLossEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.stopLoss) : "-";
   buyWindowEl.textContent = tradePlan.buyWindow;
   priceSourceEl.textContent = tradePlan.priceSource;
-  minLongEl.textContent = tradePlan.minLong;
-  minShortEl.textContent = tradePlan.minShort;
+  minLongEl.textContent = tradePlan.priceReady ? tradePlan.minLong : "-";
+  minShortEl.textContent = tradePlan.priceReady ? tradePlan.minShort : "-";
   riskCopyEl.textContent = riskNotes[commodity];
   reasonsEl.innerHTML = "";
   paperStepsEl.innerHTML = "";
