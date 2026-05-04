@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-04T16:51:35.722Z",
+  "generatedAt": "2026-05-04T16:55:25.720Z",
   "source": "cloudflare-github-shared-settings",
   "coinbaseSandboxEnabled": true,
   "users": [
@@ -60,7 +60,6 @@
         "oil",
         "natural-gas",
         "gold",
-        "silver",
         "copper",
         "platinum"
       ],
@@ -610,7 +609,6 @@
         "oil",
         "natural-gas",
         "gold",
-        "silver",
         "copper",
         "platinum"
       ],
