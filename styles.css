@@ -119,6 +119,7 @@ body {
   display: none;
 }
 
+[data-app-section],
 .app-shell[data-active-section] [data-app-section] {
   display: none !important;
 }
@@ -416,13 +417,17 @@ body {
   color: #bfdbfe;
 }
 
-.user-profile-detail-row td {
+.user-profile-detail-row > td {
   background: #0b1020;
   padding: 18px;
 }
 
 .user-profile-detail-row .user-profile-panel {
   margin: 0;
+}
+
+.user-profile-detail-row {
+  cursor: default;
 }
 
 .selected-user-profile {

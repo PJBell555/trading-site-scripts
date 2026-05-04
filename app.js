@@ -1840,19 +1840,9 @@ function closeUserDetail() {
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
-  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
-
-  if (!selectedUser) {
-    userRosterViewEl.hidden = false;
-    userDetailViewEl.hidden = true;
-    selectedUserProfileEl.hidden = true;
-    return;
-  }
-
-  userRosterViewEl.hidden = true;
-  userDetailViewEl.hidden = false;
-  selectedUserProfileEl.hidden = false;
-  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
+  userRosterViewEl.hidden = false;
+  userDetailViewEl.hidden = true;
+  selectedUserProfileEl.hidden = true;
 }
 
 function getTransactionStateCode(entry) {
@@ -1961,12 +1951,7 @@ function renderUserManagement() {
     cell.textContent = "No users match the current search.";
     row.append(cell);
     userTableBodyEl.append(row);
-    if (expandedUserEmail) renderSelectedUserProfile();
-    else {
-      userRosterViewEl.hidden = false;
-      userDetailViewEl.hidden = true;
-      selectedUserProfileEl.hidden = true;
-    }
+    renderSelectedUserProfile();
     return;
   }
 
@@ -2045,6 +2030,16 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
+
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const detailRow = document.createElement("tr");
+      const detailCell = document.createElement("td");
+      detailRow.className = "user-profile-detail-row";
+      detailCell.colSpan = 8;
+      detailCell.append(createUserProfilePanel(user));
+      detailRow.append(detailCell);
+      userTableBodyEl.append(detailRow);
+    }
   });
   renderSelectedUserProfile();
 }
@@ -2940,6 +2935,7 @@ function buildTradePlan(commodity, signal) {
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
+  const entryThreshold = learnedThreshold;
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
   const longMargin = getMarginRequirement(config, "long", livePrice);
@@ -2995,11 +2991,12 @@ function buildTradePlan(commodity, signal) {
     minShort: `1 contract / ${formatMoney(shortMargin)}`,
     nextCapital,
     learnedThreshold,
+    entryThreshold,
     riskPct,
     size: Number.isFinite(plannedContracts) ? `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}` : UNAVAILABLE_TEXT,
     status,
     steps: [
-      `${strategyName}: auto-enter long or short when conviction clears the profile threshold of ${learnedThreshold}.`,
+      `${strategyName}: auto-enter long or short when conviction clears the learned Karpathy threshold of ${entryThreshold}.`,
       `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
@@ -4613,9 +4610,14 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   try {
     sandboxOrder = await submitCoinbaseSandboxOrder(trade, side === "short" ? "SELL" : "BUY", "open");
   } catch (error) {
-    coinbaseSandboxStatusEl.textContent = "Sandbox open failed";
-    clearPaperActionPending(commodity);
-    return;
+    coinbaseSandboxStatusEl.textContent = "Sandbox open failed; paper open recorded";
+    sandboxOrder = {
+      sandbox: true,
+      intent: "open",
+      side: side === "short" ? "SELL" : "BUY",
+      error: error.message || "Coinbase sandbox open failed",
+      sentAt: new Date().toISOString()
+    };
   }
 
   openPaperTrades.set(commodity, trade);
@@ -4749,7 +4751,7 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
   }
 
   const allowOpen = options.allowOpen !== false;
-  if (allowOpen && getSignalSide(signal) && signal.conviction >= tradePlan.learnedThreshold) {
+  if (allowOpen && getSignalSide(signal) && signal.conviction >= tradePlan.entryThreshold) {
     openPaperTrade(commodity, commodityMeta, signal, tradePlan);
   }
 }
@@ -4771,7 +4773,8 @@ function closeOnlyPaperSweep() {
 function getPaperDecision(signal, tradePlan, openTrade) {
   const signalSide = getSignalSide(signal);
   const priceText = formatPrice(tradePlan.livePrice);
-  const thresholdText = `${signal.conviction}/${tradePlan.learnedThreshold}`;
+  const thresholdText = `${signal.conviction}/${tradePlan.entryThreshold}`;
+  const karpathyText = ` Advisory conviction is ${signal.conviction}; learned Karpathy trading threshold is ${tradePlan.learnedThreshold}.`;
 
   if (!hasHistoryBackend()) {
     return {
@@ -4808,10 +4811,10 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     };
   }
 
-  if (signal.conviction < tradePlan.learnedThreshold) {
+  if (signal.conviction < tradePlan.entryThreshold) {
     return {
       title: `No trade: conviction ${thresholdText}`,
-      detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches ${tradePlan.learnedThreshold}. Current price is ${priceText}.`
+      detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches ${tradePlan.entryThreshold}. Current price is ${priceText}.${karpathyText}`
     };
   }
 
@@ -4824,7 +4827,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
 
   return {
     title: `Ready to open ${signalSide}`,
-    detail: `Conviction ${thresholdText} clears the learned threshold. Step ${martingaleStep} would commit about ${formatMoney(tradePlan.nextCapital)} at ${priceText}.`
+    detail: `Conviction ${thresholdText} clears the trading threshold. Step ${martingaleStep} would commit about ${formatMoney(tradePlan.nextCapital)} at ${priceText}.${karpathyText}`
   };
 }
 
