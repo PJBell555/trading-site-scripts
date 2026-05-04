@@ -230,14 +230,78 @@ body {
   min-width: 110px;
 }
 
-.user-detail-inline td {
+.user-profile-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+}
+
+.user-profile-dialog[hidden] {
+  display: none;
+}
+
+.user-profile-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(2, 6, 23, 0.78);
+}
+
+.user-profile-dialog-panel {
+  position: absolute;
+  inset: 28px;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  overflow: hidden;
   background: #0b1222;
-  border-top: 1px solid rgba(96, 165, 250, 0.34);
+  border: 1px solid rgba(96, 165, 250, 0.45);
+  border-radius: 10px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.45);
+}
+
+.user-profile-dialog-header {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.user-profile-dialog-body {
+  overflow: auto;
   padding: 18px;
 }
 
-.user-detail-inline .user-profile-panel {
-  margin: 0;
+.trade-state-badge {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-grid;
+  font-size: 0.8rem;
+  font-weight: 900;
+  height: 28px;
+  place-items: center;
+  width: 28px;
+}
+
+.trade-state-badge[data-state="Q"] {
+  background: rgba(250, 204, 21, 0.16);
+  color: #fde68a;
+}
+
+.trade-state-badge[data-state="O"] {
+  background: rgba(34, 211, 238, 0.14);
+  color: #67e8f9;
+}
+
+.trade-state-badge[data-state="C"] {
+  background: rgba(34, 197, 94, 0.14);
+  color: #86efac;
+}
+
+.queued-trade-row td {
+  background: rgba(250, 204, 21, 0.08);
+  color: #fde68a;
+  font-weight: 900;
 }
 
 .user-profile {

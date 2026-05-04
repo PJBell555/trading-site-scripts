@@ -1209,6 +1209,39 @@ function createUserAvatar(user, className = "user-avatar") {
   return avatar;
 }
 
+function ensureUserProfileDialog() {
+  let dialog = document.querySelector("#user-profile-dialog");
+  if (dialog) return dialog;
+
+  dialog = document.createElement("div");
+  dialog.id = "user-profile-dialog";
+  dialog.className = "user-profile-dialog";
+  dialog.hidden = true;
+  dialog.innerHTML = `
+    <div class="user-profile-dialog-backdrop" data-close-user-dialog></div>
+    <section class="user-profile-dialog-panel" role="dialog" aria-modal="true" aria-label="User profile details">
+      <div class="user-profile-dialog-header">
+        <strong>User profile</strong>
+        <button class="filter-button" type="button" data-close-user-dialog>Close</button>
+      </div>
+      <div class="user-profile-dialog-body" id="user-profile-dialog-body"></div>
+    </section>
+  `;
+  dialog.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-user-dialog]")) closeUserDetail();
+  });
+  document.body.append(dialog);
+  return dialog;
+}
+
+function renderUserProfileDialog(user) {
+  const dialog = ensureUserProfileDialog();
+  const body = dialog.querySelector("#user-profile-dialog-body");
+  body.innerHTML = "";
+  body.append(createUserProfilePanel(user));
+  dialog.hidden = false;
+}
+
 function handleProfilePhotoDrop(event, user) {
   event.preventDefault();
   event.currentTarget.dataset.dragging = "false";
@@ -1692,16 +1725,14 @@ function openUserDetail(user) {
   expandedUserEmail = normalizeEmail(user.email);
   editingUserEmail = "";
   renderUserManagement();
-  if (expandedUserEmail) {
-    window.requestAnimationFrame(() => {
-      document.querySelector(".user-detail-inline")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
-    });
-  }
+  renderUserProfileDialog(user);
 }
 
 function closeUserDetail() {
   expandedUserEmail = "";
   editingUserEmail = "";
+  const dialog = document.querySelector("#user-profile-dialog");
+  if (dialog) dialog.hidden = true;
   renderUserManagement();
 }
 
@@ -1710,6 +1741,85 @@ function renderSelectedUserProfile() {
   userRosterViewEl.hidden = false;
   userDetailViewEl.hidden = true;
   selectedUserProfileEl.hidden = true;
+}
+
+function getTransactionStateCode(entry) {
+  if (isClosingTransaction(entry) || entry.closedAt) return "C";
+  const entryTradeId = entry.tradeId || entry.id;
+  if (entryTradeId) {
+    const matchingClose = getUserScopedTransactions().some((candidate) => (
+      candidate !== entry
+      && isClosingTransaction(candidate)
+      && (candidate.tradeId || candidate.id) === entryTradeId
+    ));
+    if (matchingClose) return "C";
+  }
+  return "O";
+}
+
+function appendStateCell(row, code, label) {
+  const cell = document.createElement("td");
+  const badge = document.createElement("span");
+  badge.className = "trade-state-badge";
+  badge.dataset.state = code;
+  badge.title = label;
+  badge.textContent = code;
+  cell.append(badge);
+  row.append(cell);
+}
+
+function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
+  const row = document.createElement("tr");
+  const signalSide = getSignalSide(signal);
+  const action = signalSide
+    ? `${signalSide === "short" ? "Sell short" : "Buy"} queued`
+    : "Waiting for signal";
+  const queuedPrice = signalSide === "short" ? tradePlan.entryPrice : tradePlan.buyPrice;
+
+  row.className = "transaction-row queued-trade-row";
+  appendStateCell(row, "Q", "Queued / waiting");
+  [
+    "Next",
+    action,
+    signalSide ? formatSide(signalSide) : "-",
+    `#${martingaleStep}`,
+    marketConfig[commodity]?.ticker || tradePlan.ticker,
+    signalSide ? formatPrice(queuedPrice) : "-",
+    formatMoney(tradePlan.nextCapital),
+    decision.title
+  ].forEach((value) => {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  });
+
+  return row;
+}
+
+function buildQueuedLiveTradeRow() {
+  const row = document.createElement("tr");
+  const signal = lastPrimarySignal;
+  const tradePlan = lastTradePlan;
+  const side = signal ? getSignalSide(signal) : null;
+
+  row.className = "transaction-row queued-trade-row live-queued-row";
+  appendStateCell(row, "Q", "Queued / waiting");
+  [
+    "Next",
+    side ? `Notify ${side === "short" ? "short" : "long"} setup` : "Waiting for advisory",
+    side ? formatSide(side) : "-",
+    liveAgentSelectEl?.value || "Manual only",
+    tradePlan?.ticker || marketConfig[commoditySelect.value]?.ticker || "-",
+    tradePlan && side ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : "-",
+    tradePlan ? formatMoney(tradePlan.nextCapital) : "-",
+    "Queued for trader review"
+  ].forEach((value) => {
+    const cell = document.createElement("td");
+    cell.textContent = value;
+    row.append(cell);
+  });
+
+  return row;
 }
 
 function renderUserManagement() {
@@ -1787,13 +1897,9 @@ function renderUserManagement() {
     actions.className = "user-actions";
     action.type = "button";
     action.className = "view-user-button";
-    action.textContent = row.dataset.expanded === "true" ? "Hide" : "View";
+    action.textContent = "View";
     action.addEventListener("click", (event) => {
       event.stopPropagation();
-      if (expandedUserEmail === normalizeEmail(user.email)) {
-        closeUserDetail();
-        return;
-      }
       openUserDetail(user);
     });
     actions.append(action);
@@ -1820,16 +1926,6 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
-    if (expandedUserEmail === normalizeEmail(user.email)) {
-      const detailRow = document.createElement("tr");
-      const detailCell = document.createElement("td");
-
-      detailRow.className = "user-detail-inline";
-      detailCell.colSpan = 8;
-      detailCell.append(createUserProfilePanel(user));
-      detailRow.append(detailCell);
-      userTableBodyEl.append(detailRow);
-    }
   });
   renderSelectedUserProfile();
 }
@@ -3103,15 +3199,18 @@ function renderLiveTradeLedger() {
   if (!scopedTrades.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    liveTradeHistoryEl.append(buildQueuedLiveTradeRow());
+    cell.colSpan = 9;
     cell.textContent = "No live trades recorded yet. Use the Coinbase mirror entry form above to capture actual trade details.";
     row.append(cell);
     liveTradeHistoryEl.append(row);
     return;
   }
 
+  liveTradeHistoryEl.append(buildQueuedLiveTradeRow());
   scopedTrades.forEach((trade) => {
     const row = document.createElement("tr");
+    appendStateCell(row, String(trade.action || "").toUpperCase().includes("CLOSE") ? "C" : "O", "Live trade state");
     [
       formatTradeTime(trade.time),
       trade.action,
@@ -3130,7 +3229,7 @@ function renderLiveTradeLedger() {
     const detailRow = document.createElement("tr");
     detailRow.className = "live-trade-detail";
     const detailCell = document.createElement("td");
-    detailCell.colSpan = 8;
+    detailCell.colSpan = 9;
     const detailGrid = document.createElement("div");
     detailGrid.className = "transaction-detail-grid live-detail-grid";
 
@@ -4961,7 +5060,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     historyTotalFilteredEl.textContent = "$0.00";
     historyTotalFilteredEl.className = "";
     historyTotalCountEl.textContent = "0 rows";
-    cell.colSpan = 8;
+    transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
+    cell.colSpan = 9;
     cell.textContent = "Waiting for a long or short advisory above 50 conviction.";
     row.append(cell);
     transactionHistoryEl.append(row);
@@ -4982,18 +5082,21 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   if (!filteredEntries.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
+    cell.colSpan = 9;
     cell.textContent = "No transactions match the selected filters.";
     row.append(cell);
     transactionHistoryEl.append(row);
     return;
   }
 
+  transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
   filteredEntries.slice(0, 50).forEach((entry) => {
     const row = document.createElement("tr");
     const displayPnl = getDisplayPnl(entry);
     const pnlClass = displayPnl > 0 ? "gain" : displayPnl < 0 ? "loss" : "";
     const expanded = expandedTransactionId === entry.id;
+    appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
     const values = [
       formatTradeTime(entry.time),
       null,
@@ -5051,7 +5154,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       const detailCell = document.createElement("td");
 
       detailRow.className = "transaction-detail";
-      detailCell.colSpan = 8;
+      detailCell.colSpan = 9;
       detailCell.append(renderTransactionDetail(entry));
       detailRow.append(detailCell);
       transactionHistoryEl.append(detailRow);
