@@ -1,15 +1,58 @@
 {
-  "generatedAt": "2026-05-04T14:07:34.278Z",
+  "generatedAt": "2026-05-04T14:18:58.711Z",
   "source": "cloudflare-github-shared-settings",
   "coinbaseSandboxEnabled": true,
   "users": [
+    {
+      "id": "user-pete",
+      "name": "Pete Hall",
+      "email": "pete@petehall.com",
+      "createdAt": "2026-03-30T20:55:52.783Z",
+      "lastActiveAt": "2026-05-01T21:59:34.705Z",
+      "sessions": 4,
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "avatarDataUrl": "",
+      "commodities": [
+        "oil",
+        "natural-gas",
+        "gold",
+        "silver",
+        "copper",
+        "platinum"
+      ],
+      "strategy": {
+        "name": "Martingale with Karpathy loop",
+        "type": "martingale-karpathy",
+        "description": "Use four Martingale steps, then let the Karpathy loop adjust the advisory threshold from trade outcomes.",
+        "martingaleSteps": 4,
+        "karpathyLoop": true,
+        "skillsAccess": true,
+        "openBrainAccess": true,
+        "skillFocus": "Lessons from Paper Trades",
+        "openBrainMemory": "Capture trade decisions, advisory context, and outcomes before changing thresholds."
+      },
+      "brokerAccount": {
+        "provider": "Coinbase",
+        "environment": "sandbox",
+        "accountLabel": "",
+        "apiKeyName": "",
+        "keyStorage": "Cloudflare Worker secret",
+        "permissionScope": "view-only",
+        "canTrade": false,
+        "webhookUrl": "",
+        "notes": ""
+      },
+      "sessionHistory": [],
+      "enabled": true
+    },
     {
       "id": "user-peter-bell",
       "name": "Peter Bell",
       "email": "peter@pjbell.com",
       "createdAt": "2026-02-02T12:00:00.000Z",
-      "lastActiveAt": "2026-05-04T14:07:34.469Z",
-      "sessions": 27,
+      "lastActiveAt": "2026-05-04T14:18:58.716Z",
+      "sessions": 68,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
       "avatarDataUrl": "",
@@ -45,28 +88,175 @@
       },
       "sessionHistory": [
         {
-          "time": "2026-05-04T14:07:34.469Z",
+          "time": "2026-05-04T14:18:58.716Z",
           "device": "Desktop",
           "platform": "Win32",
           "location": "Unknown",
           "colo": "local"
         },
         {
-          "time": "2026-05-04T14:07:11.500Z",
+          "time": "2026-05-04T02:49:14.296Z",
           "device": "Desktop",
           "platform": "Win32",
           "location": "Unknown",
           "colo": "local"
         },
         {
-          "time": "2026-05-04T02:57:44.775Z",
+          "time": "2026-05-04T02:40:53.025Z",
           "device": "Desktop",
           "platform": "Win32",
           "location": "Unknown",
           "colo": "local"
         },
         {
-          "time": "2026-05-03T23:02:40.363Z",
+          "time": "2026-05-04T02:31:26.532Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-04T00:55:22.786Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T23:34:18.999Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T22:57:43.530Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T21:41:25.104Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T21:31:55.957Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T21:31:33.994Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:42:01.795Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:41:10.387Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:29:14.986Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:24:49.000Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:21:08.330Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T19:08:22.959Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T18:00:05.645Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:53:09.750Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:52:29.411Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:30:01.607Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:28:43.326Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:24:36.108Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:22:00.129Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T17:21:26.178Z",
+          "device": "Desktop",
+          "platform": "Win32",
+          "location": "Unknown",
+          "colo": "local"
+        },
+        {
+          "time": "2026-05-03T16:23:28.269Z",
           "device": "Desktop",
           "platform": "Win32",
           "location": "Unknown",
@@ -80,7 +270,7 @@
       "name": "Alex Pensotti",
       "email": "alexpensotti@gmail.com",
       "createdAt": "2026-03-15T12:00:00.000Z",
-      "lastActiveAt": "2026-04-09T23:02:40.347Z",
+      "lastActiveAt": "2026-04-07T21:48:54.271Z",
       "sessions": 4,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -123,7 +313,7 @@
       "name": "Hunts Hewett",
       "email": "hunts@fastmail.com",
       "createdAt": "2026-03-10T12:00:00.000Z",
-      "lastActiveAt": "2026-04-12T23:02:40.347Z",
+      "lastActiveAt": "2026-04-10T21:48:54.271Z",
       "sessions": 3,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -166,7 +356,7 @@
       "name": "Christopher Roberts",
       "email": "motochristo@gmail.com",
       "createdAt": "2026-03-10T12:00:00.000Z",
-      "lastActiveAt": "2026-03-02T23:02:40.347Z",
+      "lastActiveAt": "2026-02-28T21:48:54.271Z",
       "sessions": 1,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -209,7 +399,7 @@
       "name": "Eric Ramirez",
       "email": "eric@coquest.com",
       "createdAt": "2026-02-06T12:00:00.000Z",
-      "lastActiveAt": "2026-03-04T23:02:40.347Z",
+      "lastActiveAt": "2026-03-02T21:48:54.271Z",
       "sessions": 0,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -252,7 +442,7 @@
       "name": "Dennis Weinmann",
       "email": "dennis@coquest.com",
       "createdAt": "2026-02-05T12:00:00.000Z",
-      "lastActiveAt": "2026-03-02T23:02:40.347Z",
+      "lastActiveAt": "2026-02-28T21:48:54.271Z",
       "sessions": 3,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -338,7 +528,7 @@
       "name": "Christopher Roberts",
       "email": "ai4ses@gmail.com",
       "createdAt": "2026-02-02T12:00:00.000Z",
-      "lastActiveAt": "2026-05-01T23:02:40.347Z",
+      "lastActiveAt": "2026-04-29T21:48:54.271Z",
       "sessions": 12,
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
@@ -378,6 +568,41 @@
     }
   ],
   "userProfiles": {
+    "pete@petehall.com": {
+      "paperBaseEquity": 100000,
+      "paperRiskPct": 0.75,
+      "commodities": [
+        "oil",
+        "natural-gas",
+        "gold",
+        "silver",
+        "copper",
+        "platinum"
+      ],
+      "strategy": {
+        "name": "Martingale with Karpathy loop",
+        "type": "martingale-karpathy",
+        "description": "Use four Martingale steps, then let the Karpathy loop adjust the advisory threshold from trade outcomes.",
+        "martingaleSteps": 4,
+        "karpathyLoop": true,
+        "skillsAccess": true,
+        "openBrainAccess": true,
+        "skillFocus": "Lessons from Paper Trades",
+        "openBrainMemory": "Capture trade decisions, advisory context, and outcomes before changing thresholds."
+      },
+      "brokerAccount": {
+        "provider": "Coinbase",
+        "environment": "sandbox",
+        "accountLabel": "",
+        "apiKeyName": "",
+        "keyStorage": "Cloudflare Worker secret",
+        "permissionScope": "view-only",
+        "canTrade": false,
+        "webhookUrl": "",
+        "notes": ""
+      },
+      "avatarDataUrl": ""
+    },
     "peter@pjbell.com": {
       "paperBaseEquity": 100000,
       "paperRiskPct": 0.75,
