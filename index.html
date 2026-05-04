@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-inline-user-detail-21">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-user-inline-panel-23">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -129,6 +129,16 @@
           <input id="user-search-input" type="search" placeholder="Search by email or name...">
           <button class="access-button user-search-button" id="user-search-button" type="button">Search</button>
         </div>
+        <section class="user-inline-detail-panel" id="user-inline-detail-panel" hidden>
+          <div class="user-inline-detail-head">
+            <div>
+              <span class="stat-label">Selected user</span>
+              <strong id="user-inline-detail-title">No user selected</strong>
+            </div>
+            <button class="filter-button" type="button" id="user-inline-detail-close">Close</button>
+          </div>
+          <div class="user-inline-detail-body" id="user-inline-detail-body"></div>
+        </section>
         <div class="history-wrap">
           <table class="history-table user-table">
             <thead>
@@ -1174,6 +1184,6 @@
     <option value="https://pjbell555.github.io/trading-site-scripts/">GitHub Pages app only</option>
   </datalist>
 
-  <script src="./app.js?v=comhedge-inline-user-detail-21"></script>
+  <script src="./app.js?v=comhedge-user-inline-panel-23"></script>
 </body>
 </html>

@@ -218,6 +218,14 @@ body {
   display: none;
 }
 
+.user-management .user-roster-view[hidden] {
+  display: grid !important;
+}
+
+.user-management .user-detail-view {
+  display: none !important;
+}
+
 .back-to-users-button {
   justify-self: start;
 }
@@ -245,6 +253,54 @@ body {
 .user-search-button {
   margin-top: 0;
   min-width: 110px;
+}
+
+.user-inline-detail-panel {
+  background: #0b1222;
+  border: 1px solid rgba(96, 165, 250, 0.38);
+  border-radius: 10px;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.18);
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.user-inline-detail-panel[hidden] {
+  display: none;
+}
+
+.user-inline-detail-head {
+  align-items: center;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.2);
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding-bottom: 12px;
+}
+
+.user-inline-detail-head > div {
+  display: grid;
+  gap: 4px;
+}
+
+.user-inline-detail-title,
+#user-inline-detail-title {
+  color: #f8fafc;
+  font-size: 1.1rem;
+}
+
+.user-inline-detail-body {
+  display: grid;
+  gap: 18px;
+}
+
+.user-profile-render-error {
+  background: rgba(127, 29, 29, 0.28);
+  border: 1px solid rgba(248, 113, 113, 0.45);
+  border-radius: 8px;
+  color: #fecaca;
+  font-weight: 800;
+  padding: 14px;
 }
 
 .user-profile-dialog {

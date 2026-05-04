@@ -31,6 +31,10 @@ const userRosterViewEl = document.querySelector("#user-roster-view");
 const userDetailViewEl = document.querySelector("#user-detail-view");
 const backToUsersButtonEl = document.querySelector("#back-to-users-button");
 const selectedUserProfileEl = document.querySelector("#selected-user-profile");
+const userInlineDetailPanelEl = document.querySelector("#user-inline-detail-panel");
+const userInlineDetailTitleEl = document.querySelector("#user-inline-detail-title");
+const userInlineDetailBodyEl = document.querySelector("#user-inline-detail-body");
+const userInlineDetailCloseEl = document.querySelector("#user-inline-detail-close");
 const userStatCards = Array.from(document.querySelectorAll("[data-user-list-filter]"));
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
@@ -1319,6 +1323,7 @@ function ensureUserProfileDialog() {
   dialog = document.createElement("div");
   dialog.id = "user-profile-dialog";
   dialog.className = "user-profile-dialog";
+  dialog.tabIndex = -1;
   dialog.hidden = true;
   dialog.innerHTML = `
     <div class="user-profile-dialog-backdrop" data-close-user-dialog></div>
@@ -1333,6 +1338,9 @@ function ensureUserProfileDialog() {
   dialog.addEventListener("click", (event) => {
     if (event.target.closest("[data-close-user-dialog]")) closeUserDetail();
   });
+  dialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") closeUserDetail();
+  });
   document.body.append(dialog);
   return dialog;
 }
@@ -1343,6 +1351,7 @@ function renderUserProfileDialog(user) {
   body.innerHTML = "";
   body.append(createUserProfilePanel(user));
   dialog.hidden = false;
+  dialog.focus?.();
 }
 
 function handleProfilePhotoDrop(event, user) {
@@ -1824,9 +1833,36 @@ function renderUserListFilterButtons() {
   });
 }
 
+function renderInlineUserDetail() {
+  if (!userInlineDetailPanelEl || !userInlineDetailBodyEl || !userInlineDetailTitleEl) return;
+  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
+  userInlineDetailBodyEl.innerHTML = "";
+
+  if (!selectedUser) {
+    userInlineDetailPanelEl.hidden = true;
+    userInlineDetailTitleEl.textContent = "No user selected";
+    return;
+  }
+
+  userInlineDetailTitleEl.textContent = `${selectedUser.name || "Unnamed user"} / ${selectedUser.email || "-"}`;
+  try {
+    userInlineDetailBodyEl.append(createUserProfilePanel(selectedUser));
+  } catch (error) {
+    console.error("User profile render failed", error);
+    const fallback = document.createElement("div");
+    fallback.className = "user-profile-render-error";
+    fallback.textContent = `User profile could not render: ${error?.message || "unknown error"}`;
+    userInlineDetailBodyEl.append(fallback);
+  }
+  userInlineDetailPanelEl.hidden = false;
+}
+
 function openUserDetail(user) {
   expandedUserEmail = normalizeEmail(user.email);
   editingUserEmail = "";
+  userRosterViewEl.hidden = false;
+  userDetailViewEl.hidden = true;
+  selectedUserProfileEl.hidden = true;
   renderUserManagement();
 }
 
@@ -1835,6 +1871,7 @@ function closeUserDetail() {
   editingUserEmail = "";
   const dialog = document.querySelector("#user-profile-dialog");
   if (dialog) dialog.hidden = true;
+  if (userInlineDetailPanelEl) userInlineDetailPanelEl.hidden = true;
   renderUserManagement();
 }
 
@@ -1843,6 +1880,7 @@ function renderSelectedUserProfile() {
   userRosterViewEl.hidden = false;
   userDetailViewEl.hidden = true;
   selectedUserProfileEl.hidden = true;
+  renderInlineUserDetail();
 }
 
 function getTransactionStateCode(entry) {
@@ -1874,7 +1912,10 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   const row = document.createElement("tr");
   const signalSide = getSignalSide(signal);
   const hasExecutablePrice = Boolean(tradePlan?.priceReady && signalSide);
-  const action = signalSide
+  const clearsThreshold = signalSide && signal.conviction >= tradePlan.entryThreshold;
+  const action = signalSide && !clearsThreshold
+    ? `Waiting ${signal.conviction}/${tradePlan.entryThreshold}`
+    : signalSide
     ? `${signalSide === "short" ? "Sell short" : "Buy"} queued`
     : "Waiting for signal";
   const queuedPrice = signalSide === "short" ? tradePlan.entryPrice : tradePlan.buyPrice;
@@ -2031,15 +2072,6 @@ function renderUserManagement() {
 
     userTableBodyEl.append(row);
 
-    if (expandedUserEmail === normalizeEmail(user.email)) {
-      const detailRow = document.createElement("tr");
-      const detailCell = document.createElement("td");
-      detailRow.className = "user-profile-detail-row";
-      detailCell.colSpan = 8;
-      detailCell.append(createUserProfilePanel(user));
-      detailRow.append(detailCell);
-      userTableBodyEl.append(detailRow);
-    }
   });
   renderSelectedUserProfile();
 }
@@ -2778,8 +2810,7 @@ function getBaseRiskCapital() {
 
 function getMartingaleCapital(minTradeValue) {
   if (!Number.isFinite(minTradeValue) || minTradeValue <= 0) return null;
-  const baseCapital = Math.max(minTradeValue, getBaseRiskCapital());
-  return baseCapital * (2 ** (martingaleStep - 1));
+  return minTradeValue * (2 ** (martingaleStep - 1));
 }
 
 function getContractMultiplier(config) {
@@ -3432,7 +3463,30 @@ function addLiveTradeFromForm(event) {
 }
 
 function getUserScopedTransactions() {
-  return transactionHistory.filter(isTransactionForCurrentUser);
+  return transactionHistory;
+}
+
+async function loadBundledTransactionHistory() {
+  if (transactionHistory.length) return false;
+
+  try {
+    sharedHistoryStatusEl.textContent = "Loading local ledger";
+    const response = await fetch(`./transactions.json?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("local ledger unavailable");
+
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    if (!entries.length) return false;
+
+    replaceTransactionHistory(entries);
+    reconcilePaperStateFromHistory();
+    sharedHistoryStatusEl.textContent = `Local ledger loaded ${entries.length} row${entries.length === 1 ? "" : "s"}`;
+    calculateSignal();
+    return true;
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = "Local ledger unavailable";
+    return false;
+  }
 }
 
 function getTransactionKey(entry) {
@@ -3716,6 +3770,7 @@ function hasHistoryBackend() {
 }
 
 function initializeHistoryApiControls() {
+  backendHistoryReady = true;
   sharedHistoryStatusEl.textContent = "Backend auto-sync ready";
   setCoinbaseSandboxEnabled(true);
 }
@@ -4497,7 +4552,10 @@ async function loadSharedTransactionHistory(manual = false) {
     calculateSignal();
     return true;
   } catch (error) {
-    sharedHistoryStatusEl.textContent = manual ? "Backend sync failed" : "Backend offline";
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = manual ? "Backend sync failed; using local ledger" : "Backend offline; using local ledger";
+    if (!transactionHistory.length) await loadBundledTransactionHistory();
+    calculateSignal();
     return false;
   } finally {
     backendSyncInFlight = false;
@@ -4726,7 +4784,6 @@ async function closePaperTrade(commodity, exitPrice, reason) {
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   if (!tradePlan.priceReady) return;
   if (!hasHistoryBackend()) return;
-  if (!backendHistoryReady) return;
   reconcilePaperStateFromHistory();
 
   const openTrade = getOpenPaperTrade(commodity);
@@ -4780,13 +4837,6 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     return {
       title: "Backend not connected",
       detail: "The paper trader will not open or sync trades until the Backend API is connected."
-    };
-  }
-
-  if (!backendHistoryReady) {
-    return {
-      title: "Loading backend ledger",
-      detail: "The paper trader will start after the shared ledger is loaded."
     };
   }
 
@@ -5140,14 +5190,15 @@ function renderTransactionDetail(entry) {
 function renderPaperTrading(commodity, signal, tradePlan) {
   const scopedTransactions = getUserScopedTransactions();
   const openTrade = getOpenPaperTrade(commodity);
-  const openTrades = Array.from(openPaperTrades.values());
+  const openTrades = Array.from(openPaperTrades.values())
+    .filter((trade) => userCanTradeCommodity(trade.commodity));
   const hasOpenTradeWithoutPrice = openTrades.some((trade) => !isUsableMarketPrice(trade.commodity));
   const openPl = openTrades.reduce((total, trade) => {
     const currentPrice = getUsableMarketPrice(trade.commodity);
     if (!Number.isFinite(currentPrice)) return total;
     return total + getTradePnl(trade, currentPrice);
   }, 0);
-  const committedCapital = openTrades.reduce((total, trade) => total + trade.capital, 0);
+  const committedCapital = openTrade ? Number(openTrade.capital) || 0 : 0;
   const displayEquity = hasOpenTradeWithoutPrice ? null : paperEquity + openPl;
   const signalSide = getSignalSide(signal);
   const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
@@ -5163,7 +5214,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
-  paperCommittedEl.textContent = formatMoney(committedCapital);
+  paperCommittedEl.textContent = openTrade ? formatMoney(committedCapital) : formatMoney(nextCapital);
+  paperCommittedEl.previousElementSibling.textContent = openTrade ? "Committed capital" : "Next trade capital";
   paperOpenPlEl.textContent = hasOpenTradeWithoutPrice ? UNAVAILABLE_TEXT : formatSignedMoney(openPl);
   paperOpenPlEl.className = hasOpenTradeWithoutPrice ? "" : openPl >= 0 ? "gain" : "loss";
   paperMartingaleEl.textContent = `Step ${martingaleStep} / ${maxMartingaleStep} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
@@ -5535,6 +5587,7 @@ userSearchButtonEl.addEventListener("click", () => {
   renderUserManagement();
 });
 backToUsersButtonEl.addEventListener("click", closeUserDetail);
+userInlineDetailCloseEl?.addEventListener("click", closeUserDetail);
 userStatCards.forEach((card) => {
   card.addEventListener("click", () => {
     userListFilter = card.dataset.userListFilter || "all";
@@ -5600,6 +5653,9 @@ function initializeApp() {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
   renderAdvisoryFilterButtons();
+  if (!transactionHistory.length) {
+    loadBundledTransactionHistory();
+  }
   calculateSignal();
   initializeBackendState();
   connectCoinbaseWebSocket(commoditySelect.value);
