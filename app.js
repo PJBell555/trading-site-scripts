@@ -56,6 +56,13 @@ const saveOpenBrainEndpointEl = document.querySelector("#save-open-brain-endpoin
 const captureOpenBrainAdvisoryEl = document.querySelector("#capture-open-brain-advisory");
 const exportOpenBrainMemoryEl = document.querySelector("#export-open-brain-memory");
 const openBrainMemoryTableEl = document.querySelector("#open-brain-memory-table");
+const strategyEditorEl = document.querySelector("#strategy-editor");
+const strategyEditorCancelEl = document.querySelector("#strategy-editor-cancel");
+const strategyEditKeyEl = document.querySelector("#strategy-edit-key");
+const strategyEditTitleEl = document.querySelector("#strategy-edit-title");
+const strategyEditMetaEl = document.querySelector("#strategy-edit-meta");
+const strategyEditSummaryEl = document.querySelector("#strategy-edit-summary");
+const strategyEditNoteEl = document.querySelector("#strategy-edit-note");
 const commoditySelect = document.querySelector("#commodity");
 const primaryModelSelect = document.querySelector("#primary-model");
 const primaryModelStatEl = document.querySelector("#primary-model-stat");
@@ -179,7 +186,7 @@ const marketConfig = {
     productId: "NOL-18MAY26-CDE",
     contractMonth: "May 2026",
     productType: "Coinbase futures contract",
-    referencePrice: 101.32,
+    referencePrice: null,
     contractMultiplier: 10,
     marginRateLong: 0.1,
     marginRateShort: 0.12,
@@ -187,11 +194,11 @@ const marketConfig = {
     feeLabel: "Estimated exchange/brokerage fee",
     buyWindow: "09:45-10:30 ET"
   },
-  "natural-gas": { ticker: "NG reference", productId: "NATURAL-GAS-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 2.31, buyWindow: "10:00-11:00 ET" },
-  gold: { ticker: "Gold reference", productId: "GOLD-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 4818.0, buyWindow: "09:35-10:15 ET" },
-  silver: { ticker: "Silver reference", productId: "SILVER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 27.6, buyWindow: "09:35-10:15 ET" },
-  copper: { ticker: "Copper reference", productId: "COPPER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 4.58, buyWindow: "09:45-10:45 ET" },
-  platinum: { ticker: "Platinum reference", productId: "PLATINUM-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: 980.5, buyWindow: "10:00-11:00 ET" }
+  "natural-gas": { ticker: "NG reference", productId: "NATURAL-GAS-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "10:00-11:00 ET" },
+  gold: { ticker: "Gold reference", productId: "GOLD-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "09:35-10:15 ET" },
+  silver: { ticker: "Silver reference", productId: "SILVER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "09:35-10:15 ET" },
+  copper: { ticker: "Copper reference", productId: "COPPER-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "09:45-10:45 ET" },
+  platinum: { ticker: "Platinum reference", productId: "PLATINUM-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "10:00-11:00 ET" }
 };
 
 const advisoryModels = [
@@ -226,6 +233,7 @@ const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_WS_STALE_MS = 30000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
+const UNAVAILABLE_TEXT = "Not available";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
@@ -240,6 +248,7 @@ const SECOND_OPINION_MODELS_KEY = "atlas-second-opinion-models";
 const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
 const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
 const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
+const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const ADVISORY_CAPTURE_MS = 120000;
@@ -445,6 +454,7 @@ function renderOpenBrainMemory() {
 
 function captureCurrentAdvisoryMemory(source = "manual") {
   if (!lastPrimarySignal || !lastTradePlan || !lastCommodityMeta) return null;
+  if (!lastTradePlan.priceReady) return null;
   return recordOpenBrainEvent(
     "advisory",
     `${lastCommodityMeta.name} ${lastPrimarySignal.label} at ${formatPrice(lastTradePlan.livePrice)} using ${getModelById(primaryModelId).name}`,
@@ -507,6 +517,95 @@ function loadModelSettings() {
   } catch (error) {
     primaryModelId = "gpt-5-5";
   }
+}
+
+function loadStrategyEdits() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(STRATEGY_EDITS_KEY) || "{}");
+    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function saveStrategyEdits(edits) {
+  window.localStorage.setItem(STRATEGY_EDITS_KEY, JSON.stringify(edits));
+}
+
+function getStrategyCard(strategyKey) {
+  return Array.from(document.querySelectorAll("[data-strategy-key]"))
+    .find((card) => card.dataset.strategyKey === strategyKey) || null;
+}
+
+function getStrategyField(card, field) {
+  return card?.querySelector(`[data-strategy-field="${field}"]`) || null;
+}
+
+function readStrategyCard(card) {
+  return {
+    title: getStrategyField(card, "title")?.textContent.trim() || "",
+    meta: getStrategyField(card, "meta")?.textContent.trim() || "",
+    summary: getStrategyField(card, "summary")?.textContent.trim() || "",
+    note: getStrategyField(card, "note")?.textContent.trim() || ""
+  };
+}
+
+function updateStrategyCard(strategyKey, values) {
+  const card = getStrategyCard(strategyKey);
+  if (!card) return;
+
+  Object.entries(values).forEach(([field, value]) => {
+    const target = getStrategyField(card, field);
+    if (target) target.textContent = String(value || "").trim();
+  });
+}
+
+function applySavedStrategyEdits() {
+  const edits = loadStrategyEdits();
+  Object.entries(edits).forEach(([strategyKey, values]) => updateStrategyCard(strategyKey, values));
+}
+
+function openStrategyEditor(strategyKey) {
+  if (!strategyEditorEl || !strategyEditKeyEl) return;
+  const card = getStrategyCard(strategyKey);
+  if (!card) return;
+
+  const saved = loadStrategyEdits()[strategyKey] || {};
+  const current = { ...readStrategyCard(card), ...saved };
+  strategyEditKeyEl.value = strategyKey;
+  strategyEditTitleEl.value = current.title;
+  strategyEditMetaEl.value = current.meta;
+  strategyEditSummaryEl.value = current.summary;
+  strategyEditNoteEl.value = current.note;
+  strategyEditorEl.hidden = false;
+  strategyEditorEl.scrollIntoView({ behavior: "smooth", block: "center" });
+  strategyEditTitleEl.focus();
+}
+
+function closeStrategyEditor() {
+  if (!strategyEditorEl) return;
+  strategyEditorEl.hidden = true;
+  strategyEditorEl.reset();
+}
+
+function saveStrategyEditor(event) {
+  event.preventDefault();
+  if (!strategyEditKeyEl) return;
+
+  const strategyKey = strategyEditKeyEl.value;
+  if (!strategyKey) return;
+
+  const values = {
+    title: strategyEditTitleEl.value,
+    meta: strategyEditMetaEl.value,
+    summary: strategyEditSummaryEl.value,
+    note: strategyEditNoteEl.value
+  };
+  const edits = loadStrategyEdits();
+  edits[strategyKey] = values;
+  saveStrategyEdits(edits);
+  updateStrategyCard(strategyKey, values);
+  closeStrategyEditor();
 }
 
 function renderPrimaryModelSelector() {
@@ -625,12 +724,16 @@ function renderSecondOpinionResults(modelIds) {
     scoreEl.className = "opinion-score";
     scoreEl.textContent = String(score);
     meta.className = "opinion-data";
-    meta.textContent = `Data: ${formatPrice(tradePlan.livePrice)} via ${tradePlan.priceSource}`;
+    meta.textContent = tradePlan.priceReady
+      ? `Data: ${formatPrice(tradePlan.livePrice)} via ${tradePlan.priceSource}`
+      : `Data: ${UNAVAILABLE_TEXT}`;
 
     [
       `${model.name} ${directionText} on ${commodityMeta.name.toLowerCase()} with ${score}/100 conviction.`,
       `Primary advisory is ${signal.label.toLowerCase()} from ${getModelById(primaryModelId).name}.`,
-      `Entry ${formatPrice(tradePlan.buyPrice)}, target ${formatPrice(tradePlan.sellPrice)}, stop ${formatPrice(tradePlan.stopLoss)}.`,
+      tradePlan.priceReady
+        ? `Entry ${formatPrice(tradePlan.buyPrice)}, target ${formatPrice(tradePlan.sellPrice)}, stop ${formatPrice(tradePlan.stopLoss)}.`
+        : "Entry, target, and stop are not available until a valid price source is loaded.",
       tone === "wait" ? "Main risk: signal strength is not high enough for a clean independent confirmation." : "Main risk: validate price source, spread, and stop distance before using this as trade support."
     ].forEach((text) => {
       const item = document.createElement("li");
@@ -1725,7 +1828,6 @@ function openUserDetail(user) {
   expandedUserEmail = normalizeEmail(user.email);
   editingUserEmail = "";
   renderUserManagement();
-  renderUserProfileDialog(user);
 }
 
 function closeUserDetail() {
@@ -1738,9 +1840,19 @@ function closeUserDetail() {
 
 function renderSelectedUserProfile() {
   selectedUserProfileEl.innerHTML = "";
-  userRosterViewEl.hidden = false;
-  userDetailViewEl.hidden = true;
-  selectedUserProfileEl.hidden = true;
+  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
+
+  if (!selectedUser) {
+    userRosterViewEl.hidden = false;
+    userDetailViewEl.hidden = true;
+    selectedUserProfileEl.hidden = true;
+    return;
+  }
+
+  userRosterViewEl.hidden = true;
+  userDetailViewEl.hidden = false;
+  selectedUserProfileEl.hidden = false;
+  selectedUserProfileEl.append(createUserProfilePanel(selectedUser));
 }
 
 function getTransactionStateCode(entry) {
@@ -1785,8 +1897,8 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     signalSide ? formatSide(signalSide) : "-",
     `#${martingaleStep}`,
     marketConfig[commodity]?.ticker || tradePlan.ticker,
-    hasExecutablePrice ? formatPrice(queuedPrice) : "Waiting for live price",
-    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : "-",
+    hasExecutablePrice ? formatPrice(queuedPrice) : UNAVAILABLE_TEXT,
+    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
     decision.title
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -1812,8 +1924,8 @@ function buildQueuedLiveTradeRow() {
     side ? formatSide(side) : "-",
     liveAgentSelectEl?.value || "Manual only",
     tradePlan?.ticker || marketConfig[commoditySelect.value]?.ticker || "-",
-    hasExecutablePrice ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : "Waiting for live price",
-    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : "-",
+    hasExecutablePrice ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : UNAVAILABLE_TEXT,
+    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
     "Queued for trader review"
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -1849,7 +1961,12 @@ function renderUserManagement() {
     cell.textContent = "No users match the current search.";
     row.append(cell);
     userTableBodyEl.append(row);
-    renderSelectedUserProfile();
+    if (expandedUserEmail) renderSelectedUserProfile();
+    else {
+      userRosterViewEl.hidden = false;
+      userDetailViewEl.hidden = true;
+      selectedUserProfileEl.hidden = true;
+    }
     return;
   }
 
@@ -2434,15 +2551,18 @@ function scoreCommodity(commodity, baseSignals) {
 }
 
 function formatPrice(value) {
+  if (!Number.isFinite(value)) return UNAVAILABLE_TEXT;
   const decimals = value >= 100 ? 2 : value >= 10 ? 2 : 3;
   return `$${value.toFixed(decimals)}`;
 }
 
 function formatMoney(value) {
+  if (!Number.isFinite(value)) return UNAVAILABLE_TEXT;
   return `$${value.toFixed(2)}`;
 }
 
 function formatSignedMoney(value) {
+  if (!Number.isFinite(value)) return UNAVAILABLE_TEXT;
   const sign = value > 0 ? "+" : "";
   return `${sign}${formatMoney(value)}`;
 }
@@ -2662,6 +2782,7 @@ function getBaseRiskCapital() {
 }
 
 function getMartingaleCapital(minTradeValue) {
+  if (!Number.isFinite(minTradeValue) || minTradeValue <= 0) return null;
   const baseCapital = Math.max(minTradeValue, getBaseRiskCapital());
   return baseCapital * (2 ** (martingaleStep - 1));
 }
@@ -2676,6 +2797,7 @@ function getMarginRate(config, side) {
 }
 
 function getMarginRequirement(config, side, price) {
+  if (!Number.isFinite(price) || price <= 0) return null;
   const notional = price * getContractMultiplier(config);
   return notional * getMarginRate(config, side);
 }
@@ -2685,7 +2807,18 @@ function getFeePerContractSide(config) {
 }
 
 function getEstimatedFees(config, contracts, sides = 2) {
+  if (!Number.isFinite(contracts) || contracts <= 0) return null;
   return getFeePerContractSide(config) * contracts * sides;
+}
+
+function isUsableMarketPrice(commodity) {
+  const price = latestPrices.get(commodity);
+  const source = latestPriceSources.get(commodity);
+  return Number.isFinite(price) && price > 0 && source !== "Reference snapshot" && source !== "Unavailable snapshot";
+}
+
+function getUsableMarketPrice(commodity) {
+  return isUsableMarketPrice(commodity) ? latestPrices.get(commodity) : null;
 }
 
 function getTradeGrossPnl(trade, exitPrice) {
@@ -2787,9 +2920,8 @@ function buildTradePlan(commodity, signal) {
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
   const updatedAt = latestPriceTimes.get(commodity);
   const priceSource = latestPriceSources.get(commodity);
-  const hasKnownPrice = latestPrices.has(commodity);
-  const priceReady = hasKnownPrice && priceSource !== "Reference snapshot";
-  const livePrice = hasKnownPrice ? latestPrices.get(commodity) : config.referencePrice;
+  const priceReady = isUsableMarketPrice(commodity);
+  const livePrice = getUsableMarketPrice(commodity);
   const contractMultiplier = getContractMultiplier(config);
   const longBias = signal.tone === "long";
   const shortBias = signal.tone === "short";
@@ -2798,11 +2930,11 @@ function buildTradePlan(commodity, signal) {
   const entryOffset = waitBias ? 0.004 : 0.0025;
   const targetOffset = waitBias ? 0.006 : 0.01;
   const stopOffset = waitBias ? 0.005 : 0.0075;
-  const longEntry = livePrice * (1 - entryOffset);
-  const shortEntry = livePrice * (1 + entryOffset);
-  const buyPrice = longBias ? longEntry : shortBias ? shortEntry : livePrice * (1 - 0.001);
-  const sellPrice = longBias ? livePrice * (1 + targetOffset) : shortBias ? livePrice * (1 - targetOffset) : livePrice * (1 + 0.003);
-  const stopLoss = longBias ? livePrice * (1 - stopOffset) : shortBias ? livePrice * (1 + stopOffset) : livePrice * (1 - 0.0035);
+  const longEntry = priceReady ? livePrice * (1 - entryOffset) : null;
+  const shortEntry = priceReady ? livePrice * (1 + entryOffset) : null;
+  const buyPrice = priceReady ? (longBias ? longEntry : shortBias ? shortEntry : livePrice * (1 - 0.001)) : null;
+  const sellPrice = priceReady ? (longBias ? livePrice * (1 + targetOffset) : shortBias ? livePrice * (1 - targetOffset) : livePrice * (1 + 0.003)) : null;
+  const stopLoss = priceReady ? (longBias ? livePrice * (1 - stopOffset) : shortBias ? livePrice * (1 + stopOffset) : livePrice * (1 - 0.0035)) : null;
   const entryPrice = shortBias ? shortEntry : longEntry;
   const targetPrice = sellPrice;
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
@@ -2815,8 +2947,12 @@ function buildTradePlan(commodity, signal) {
   const minTradeValue = tradeSide === "short" ? shortMargin : longMargin;
   const feePerContractSide = getFeePerContractSide(config);
   const nextCapital = getMartingaleCapital(minTradeValue);
-  const plannedContracts = Math.max(1, Math.floor(nextCapital / minTradeValue));
-  const notionalValue = livePrice * contractMultiplier * plannedContracts;
+  const plannedContracts = Number.isFinite(nextCapital) && Number.isFinite(minTradeValue)
+    ? Math.max(1, Math.floor(nextCapital / minTradeValue))
+    : null;
+  const notionalValue = Number.isFinite(livePrice) && Number.isFinite(plannedContracts)
+    ? livePrice * contractMultiplier * plannedContracts
+    : null;
   const estimatedRoundTripFees = getEstimatedFees(config, plannedContracts, 2);
   const marginSource = config.productType === "Coinbase futures contract"
     ? "Estimated margin"
@@ -2853,18 +2989,18 @@ function buildTradePlan(commodity, signal) {
     stopLoss,
     buyWindow: `${formatTradeDate()} / ${config.buyWindow}`,
     priceReady,
-    priceSource: updatedAt ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : "Waiting for live price",
+    priceSource: updatedAt && priceReady ? `${priceSource || "Coinbase live"} / ${formatPriceTime(updatedAt)}` : UNAVAILABLE_TEXT,
     minTradeValue,
     minLong: `1 contract / ${formatMoney(longMargin)}`,
     minShort: `1 contract / ${formatMoney(shortMargin)}`,
     nextCapital,
     learnedThreshold,
     riskPct,
-    size: `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}`,
+    size: Number.isFinite(plannedContracts) ? `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}` : UNAVAILABLE_TEXT,
     status,
     steps: [
       `${strategyName}: auto-enter long or short when conviction clears the profile threshold of ${learnedThreshold}.`,
-      `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${plannedContracts} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
+      `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
     ]
@@ -3021,7 +3157,7 @@ async function refreshSnapshotPrice(commodity) {
 
     latestPrices.set(commodity, snapshotPrice);
     latestPriceTimes.set(commodity, new Date(snapshot.fetchedAt || data.generatedAt || Date.now()));
-    latestPriceSources.set(commodity, snapshot.ok ? "GitHub snapshot" : "Reference snapshot");
+    latestPriceSources.set(commodity, snapshot.ok ? "GitHub snapshot" : "Unavailable snapshot");
 
     const minimumTradeValue = Number(snapshot.minimumTradeValue);
     if (Number.isFinite(minimumTradeValue) && minimumTradeValue > 0) {
@@ -5002,12 +5138,14 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const scopedTransactions = getUserScopedTransactions();
   const openTrade = getOpenPaperTrade(commodity);
   const openTrades = Array.from(openPaperTrades.values());
+  const hasOpenTradeWithoutPrice = openTrades.some((trade) => !isUsableMarketPrice(trade.commodity));
   const openPl = openTrades.reduce((total, trade) => {
-    const currentPrice = latestPrices.get(trade.commodity) ?? trade.entryPrice;
+    const currentPrice = getUsableMarketPrice(trade.commodity);
+    if (!Number.isFinite(currentPrice)) return total;
     return total + getTradePnl(trade, currentPrice);
   }, 0);
   const committedCapital = openTrades.reduce((total, trade) => total + trade.capital, 0);
-  const displayEquity = paperEquity + openPl;
+  const displayEquity = hasOpenTradeWithoutPrice ? null : paperEquity + openPl;
   const signalSide = getSignalSide(signal);
   const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
   const decision = getPaperDecision(signal, tradePlan, openTrade);
@@ -5023,8 +5161,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
   paperCommittedEl.textContent = formatMoney(committedCapital);
-  paperOpenPlEl.textContent = formatSignedMoney(openPl);
-  paperOpenPlEl.className = openPl >= 0 ? "gain" : "loss";
+  paperOpenPlEl.textContent = hasOpenTradeWithoutPrice ? UNAVAILABLE_TEXT : formatSignedMoney(openPl);
+  paperOpenPlEl.className = hasOpenTradeWithoutPrice ? "" : openPl >= 0 ? "gain" : "loss";
   paperMartingaleEl.textContent = `Step ${martingaleStep} / ${maxMartingaleStep} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
   if (paperMarketStatusEl) {
     paperMarketStatusEl.textContent = `${marketStatus.label}: ${marketStatus.detail}`;
@@ -5229,16 +5367,16 @@ function calculateSignal() {
   actionEl.textContent = primarySignal.action;
   tickerEl.textContent = tradePlan.ticker;
   contractMonthEl.textContent = tradePlan.contractMonth;
-  priceEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.livePrice) : "Waiting for live price";
+  priceEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.livePrice) : UNAVAILABLE_TEXT;
   entryLabelEl.textContent = tradePlan.entryLabel;
   targetLabelEl.textContent = tradePlan.targetLabel;
-  targetBuyEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.buyPrice) : "-";
-  targetSellEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.sellPrice) : "-";
-  stopLossEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.stopLoss) : "-";
+  targetBuyEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.buyPrice) : UNAVAILABLE_TEXT;
+  targetSellEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.sellPrice) : UNAVAILABLE_TEXT;
+  stopLossEl.textContent = tradePlan.priceReady ? formatPrice(tradePlan.stopLoss) : UNAVAILABLE_TEXT;
   buyWindowEl.textContent = tradePlan.buyWindow;
   priceSourceEl.textContent = tradePlan.priceSource;
-  minLongEl.textContent = tradePlan.priceReady ? tradePlan.minLong : "-";
-  minShortEl.textContent = tradePlan.priceReady ? tradePlan.minShort : "-";
+  minLongEl.textContent = tradePlan.priceReady ? tradePlan.minLong : UNAVAILABLE_TEXT;
+  minShortEl.textContent = tradePlan.priceReady ? tradePlan.minShort : UNAVAILABLE_TEXT;
   riskCopyEl.textContent = riskNotes[commodity];
   reasonsEl.innerHTML = "";
   paperStepsEl.innerHTML = "";
@@ -5371,6 +5509,11 @@ captureOpenBrainAdvisoryEl.addEventListener("click", () => {
   openBrainStatusEl.textContent = event ? "Advisory captured" : "No advisory to capture";
 });
 exportOpenBrainMemoryEl.addEventListener("click", downloadOpenBrainMemory);
+strategyEditorEl?.addEventListener("submit", saveStrategyEditor);
+strategyEditorCancelEl?.addEventListener("click", closeStrategyEditor);
+document.querySelectorAll("[data-strategy-edit]").forEach((button) => {
+  button.addEventListener("click", () => openStrategyEditor(button.dataset.strategyEdit));
+});
 appShellEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-section-target]");
   if (!button || !appShellEl.contains(button)) return;
@@ -5433,6 +5576,7 @@ function initializeApp() {
   loadPaperState();
   applyCurrentUserPaperSettings();
   loadModelSettings();
+  applySavedStrategyEdits();
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
   loadFeatureRequests();

@@ -119,6 +119,22 @@ body {
   display: none;
 }
 
+.app-shell[data-active-section] [data-app-section] {
+  display: none !important;
+}
+
+.app-shell[data-active-section="advisories"] [data-app-section="advisories"],
+.app-shell[data-active-section="second-opinion"] [data-app-section="second-opinion"],
+.app-shell[data-active-section="trading"] [data-app-section="trading"],
+.app-shell[data-active-section="actual-trades"] [data-app-section="actual-trades"],
+.app-shell[data-active-section="strategies"] [data-app-section="strategies"],
+.app-shell[data-active-section="skills"] [data-app-section="skills"],
+.app-shell[data-active-section="open-brain"] [data-app-section="open-brain"],
+.app-shell[data-active-section="features"] [data-app-section="features"],
+.app-shell[data-active-section="users"] [data-app-section="users"] {
+  display: grid !important;
+}
+
 .app-shell:not([data-active-section="home"]) .hero,
 .app-shell:not([data-active-section="home"]) .notice {
   display: none;
@@ -1016,6 +1032,60 @@ body {
   color: #ecfdf5;
 }
 
+.strategy-editor {
+  background: #111827;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.strategy-editor[hidden] {
+  display: none;
+}
+
+.strategy-editor-head {
+  align-items: start;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.strategy-editor-head strong {
+  color: #f8fafc;
+  display: block;
+  font-size: 1.05rem;
+}
+
+.strategy-editor-head span {
+  color: #9fb4d1;
+  display: block;
+  margin-top: 3px;
+}
+
+.strategy-editor label {
+  color: #bfdbfe;
+  display: grid;
+  font-weight: 800;
+  gap: 7px;
+}
+
+.strategy-editor input,
+.strategy-editor textarea {
+  background: #071326;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 8px;
+  color: #f8fafc;
+  font: inherit;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.strategy-editor textarea {
+  resize: vertical;
+}
+
 .strategy-section-label,
 .strategy-adopt-label,
 .strategy-adapt-label {
@@ -1109,6 +1179,18 @@ body {
   background: rgba(16, 185, 129, 0.16);
   border-color: rgba(16, 185, 129, 0.38);
   color: #34d399;
+}
+
+.strategy-edit-button {
+  background: rgba(37, 99, 235, 0.2);
+  border-color: rgba(96, 165, 250, 0.48);
+  color: #bfdbfe;
+  cursor: pointer;
+}
+
+.strategy-edit-button:hover {
+  background: rgba(37, 99, 235, 0.32);
+  color: #eff6ff;
 }
 
 .strategy-callout,
@@ -1697,6 +1779,73 @@ select {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 24px;
+}
+
+.trade-system-details {
+  grid-column: 1 / -1;
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 8px;
+  background: #111827;
+}
+
+.trade-system-details summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  cursor: pointer;
+  color: var(--ink);
+  font-weight: 900;
+  list-style: none;
+}
+
+.trade-system-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.trade-system-details summary::before {
+  content: "+";
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: 0 0 26px;
+  border-radius: 6px;
+  background: rgba(59, 130, 246, 0.16);
+  color: #93c5fd;
+  border: 1px solid rgba(96, 165, 250, 0.28);
+}
+
+.trade-system-details[open] summary::before {
+  content: "-";
+}
+
+.trade-system-details summary span {
+  margin-right: auto;
+}
+
+.trade-system-details summary strong {
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+.trade-system-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 24px;
+  padding: 0 16px 16px;
+}
+
+.live-system-details {
+  border-color: rgba(248, 113, 113, 0.26);
+  background: #141722;
+}
+
+.live-system-details summary::before {
+  background: rgba(239, 68, 68, 0.16);
+  color: #fecaca;
+  border-color: rgba(248, 113, 113, 0.3);
 }
 
 .paper-grid {
@@ -2634,9 +2783,19 @@ textarea::placeholder {
   .intro,
   .workspace,
   .roadmap,
+  .trade-system-detail-grid,
   .strategy-card-grid,
   .skills-workspace {
     grid-template-columns: 1fr;
+  }
+
+  .trade-system-details summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .trade-system-details summary::before {
+    display: none;
   }
 
   .strategy-arsenal-head,

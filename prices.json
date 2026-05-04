@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-04T01:25:34.456Z",
+  "generatedAt": "2026-05-04T02:13:06.483Z",
   "source": "github-actions-coinbase-rest-snapshot",
   "prices": {
     "oil": {
@@ -7,72 +7,72 @@
       "ticker": "NOL-18MAY26-CDE",
       "productId": "NOL-18MAY26-CDE",
       "productType": "Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.294Z",
-      "minimumTradeValue": 101.32,
+      "fetchedAt": "2026-05-04T02:13:06.278Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 101.32,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     },
     "natural-gas": {
       "id": "natural-gas",
       "ticker": "NG reference",
       "productId": "NATURAL-GAS-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.397Z",
-      "minimumTradeValue": 2.31,
+      "fetchedAt": "2026-05-04T02:13:06.336Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 2.31,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     },
     "gold": {
       "id": "gold",
       "ticker": "Gold reference",
       "productId": "GOLD-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.399Z",
-      "minimumTradeValue": 4818,
+      "fetchedAt": "2026-05-04T02:13:06.337Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 4818,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     },
     "silver": {
       "id": "silver",
       "ticker": "Silver reference",
       "productId": "SILVER-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.401Z",
-      "minimumTradeValue": 27.6,
+      "fetchedAt": "2026-05-04T02:13:06.338Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 27.6,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     },
     "copper": {
       "id": "copper",
       "ticker": "Copper reference",
       "productId": "COPPER-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.402Z",
-      "minimumTradeValue": 4.58,
+      "fetchedAt": "2026-05-04T02:13:06.339Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 4.58,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     },
     "platinum": {
       "id": "platinum",
       "ticker": "Platinum reference",
       "productId": "PLATINUM-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T01:25:34.403Z",
-      "minimumTradeValue": 980.5,
+      "fetchedAt": "2026-05-04T02:13:06.340Z",
+      "minimumTradeValue": null,
       "ok": false,
-      "price": 980.5,
+      "price": null,
       "error": "fetch failed",
-      "method": "reference_fallback"
+      "method": "unavailable"
     }
   }
 }

@@ -6,42 +6,42 @@ const commodities = [
     ticker: "NOL-18MAY26-CDE",
     productId: "NOL-18MAY26-CDE",
     productType: "Coinbase futures contract",
-    referencePrice: 101.32
+    referencePrice: null
   },
   {
     id: "natural-gas",
     ticker: "NG reference",
     productId: "NATURAL-GAS-USD",
     productType: "Reference price, not a listed Coinbase futures contract",
-    referencePrice: 2.31
+    referencePrice: null
   },
   {
     id: "gold",
     ticker: "Gold reference",
     productId: "GOLD-USD",
     productType: "Reference price, not a listed Coinbase futures contract",
-    referencePrice: 4818.0
+    referencePrice: null
   },
   {
     id: "silver",
     ticker: "Silver reference",
     productId: "SILVER-USD",
     productType: "Reference price, not a listed Coinbase futures contract",
-    referencePrice: 27.6
+    referencePrice: null
   },
   {
     id: "copper",
     ticker: "Copper reference",
     productId: "COPPER-USD",
     productType: "Reference price, not a listed Coinbase futures contract",
-    referencePrice: 4.58
+    referencePrice: null
   },
   {
     id: "platinum",
     ticker: "Platinum reference",
     productId: "PLATINUM-USD",
     productType: "Reference price, not a listed Coinbase futures contract",
-    referencePrice: 980.5
+    referencePrice: null
   }
 ];
 
@@ -150,11 +150,11 @@ async function getSnapshot(commodity) {
       productId: commodity.productId,
       productType: commodity.productType,
       fetchedAt,
-      minimumTradeValue: commodity.referencePrice,
+      minimumTradeValue: null,
       ok: false,
-      price: commodity.referencePrice,
+      price: null,
       error: error.message,
-      method: "reference_fallback"
+      method: "unavailable"
     };
   }
 }

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-live-price-cache-16">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-routing-user-detail-20">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -387,54 +387,92 @@
       </div>
 
       <div class="strategy-adopt-label">Adopt - use these</div>
-      <article class="strategy-feature-card">
+      <form class="strategy-editor" id="strategy-editor" hidden>
+        <div class="strategy-editor-head">
+          <div>
+            <strong>Edit strategy</strong>
+            <span>Update the card copy shown in the strategy arsenal.</span>
+          </div>
+          <button class="filter-button" id="strategy-editor-cancel" type="button">Cancel</button>
+        </div>
+        <input id="strategy-edit-key" type="hidden">
+        <label>
+          Strategy name
+          <input id="strategy-edit-title" type="text" required>
+        </label>
+        <label>
+          Score / status
+          <input id="strategy-edit-meta" type="text" required>
+        </label>
+        <label>
+          Summary
+          <textarea id="strategy-edit-summary" rows="3" required></textarea>
+        </label>
+        <label>
+          Execution note
+          <textarea id="strategy-edit-note" rows="3" required></textarea>
+        </label>
+        <button class="primary-action" type="submit">Save strategy</button>
+      </form>
+
+      <article class="strategy-feature-card" data-strategy-key="martingale-karpathy">
         <div class="strategy-feature-head">
           <div>
             <span class="strategy-card-kicker">Active</span>
-            <h3>Martingale + Karpathy Loop</h3>
-            <p>Risk recovery / 8/10 / in use</p>
+            <h3 data-strategy-field="title">Martingale + Karpathy Loop</h3>
+            <p data-strategy-field="meta">Risk recovery / 8/10 / in use</p>
           </div>
           <div class="strategy-card-actions">
             <span class="strategy-pill">Reference</span>
+            <button class="strategy-pill strategy-edit-button" type="button" data-strategy-edit="martingale-karpathy">Edit</button>
             <button class="strategy-pill strategy-pill-strong" type="button">Adopted</button>
           </div>
         </div>
-        <p>
+        <p data-strategy-field="summary">
           Four-step Martingale sizing tied to user equity and risk settings. The Karpathy loop studies closed trades and adjusts the advisory threshold only after enough evaluated outcomes exist.
         </p>
-        <div class="strategy-callout">
+        <div class="strategy-callout" data-strategy-field="note">
           Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.
         </div>
       </article>
 
       <div class="strategy-adapt-label">Adapt - extract methodology</div>
       <div class="strategy-card-grid">
-        <article class="strategy-method-card">
+        <article class="strategy-method-card" data-strategy-key="fixed-fractional-risk">
           <div>
-            <h3>Fixed fractional risk</h3>
-            <span>Risk / 7/10</span>
+            <h3 data-strategy-field="title">Fixed fractional risk</h3>
+            <span data-strategy-field="meta">Risk / 7/10</span>
           </div>
-          <p>Size each trade from account equity and stop distance. Strong baseline for users who do not want Martingale recovery.</p>
-          <div class="strategy-note">Use profile equity and risk percentage. Cap live exposure before any brokerage call.</div>
-          <button class="strategy-pill" type="button">Adapt</button>
+          <p data-strategy-field="summary">Size each trade from account equity and stop distance. Strong baseline for users who do not want Martingale recovery.</p>
+          <div class="strategy-note" data-strategy-field="note">Use profile equity and risk percentage. Cap live exposure before any brokerage call.</div>
+          <div class="strategy-card-actions">
+            <button class="strategy-pill strategy-edit-button" type="button" data-strategy-edit="fixed-fractional-risk">Edit</button>
+            <button class="strategy-pill" type="button">Adapt</button>
+          </div>
         </article>
-        <article class="strategy-method-card">
+        <article class="strategy-method-card" data-strategy-key="threshold-only-advisory">
           <div>
-            <h3>Threshold-only advisory</h3>
-            <span>Advisory / 6/10</span>
+            <h3 data-strategy-field="title">Threshold-only advisory</h3>
+            <span data-strategy-field="meta">Advisory / 6/10</span>
           </div>
-          <p>Only trade long or short when model conviction clears a user-defined minimum. Wait signals never open trades.</p>
-          <div class="strategy-note">Good fallback when trade history is thin and the learned threshold has not stabilized.</div>
-          <button class="strategy-pill" type="button">Adapt</button>
+          <p data-strategy-field="summary">Only trade long or short when model conviction clears a user-defined minimum. Wait signals never open trades.</p>
+          <div class="strategy-note" data-strategy-field="note">Good fallback when trade history is thin and the learned threshold has not stabilized.</div>
+          <div class="strategy-card-actions">
+            <button class="strategy-pill strategy-edit-button" type="button" data-strategy-edit="threshold-only-advisory">Edit</button>
+            <button class="strategy-pill" type="button">Adapt</button>
+          </div>
         </article>
-        <article class="strategy-method-card">
+        <article class="strategy-method-card" data-strategy-key="manual-confirmation">
           <div>
-            <h3>Manual confirmation</h3>
-            <span>Live trading / 8/10</span>
+            <h3 data-strategy-field="title">Manual confirmation</h3>
+            <span data-strategy-field="meta">Live trading / 8/10</span>
           </div>
-          <p>Notify the trader through OpenClaw or Hermes, then require manual Coinbase confirmation before any live trade is recorded.</p>
-          <div class="strategy-note">Recommended for Actual Trades until broker permissions, secret storage, and kill switches are complete.</div>
-          <button class="strategy-pill" type="button">Adapt</button>
+          <p data-strategy-field="summary">Notify the trader through OpenClaw or Hermes, then require manual Coinbase confirmation before any live trade is recorded.</p>
+          <div class="strategy-note" data-strategy-field="note">Recommended for Actual Trades until broker permissions, secret storage, and kill switches are complete.</div>
+          <div class="strategy-card-actions">
+            <button class="strategy-pill strategy-edit-button" type="button" data-strategy-edit="manual-confirmation">Edit</button>
+            <button class="strategy-pill" type="button">Adapt</button>
+          </div>
         </article>
       </div>
     </section>
@@ -541,19 +579,19 @@
             </div>
             <div>
               <span class="stat-label">Coinbase price</span>
-              <strong id="price">$88.75</strong>
+              <strong id="price">Not available</strong>
             </div>
             <div>
               <span class="stat-label" id="entry-label">Entry</span>
-              <strong id="target-buy">$88.53</strong>
+              <strong id="target-buy">Not available</strong>
             </div>
             <div>
               <span class="stat-label" id="target-label">Profit target</span>
-              <strong id="target-sell">$89.64</strong>
+              <strong id="target-sell">Not available</strong>
             </div>
             <div>
               <span class="stat-label">Stop loss</span>
-              <strong id="stop-loss">$88.08</strong>
+              <strong id="stop-loss">Not available</strong>
             </div>
             <div>
               <span class="stat-label">Buy window</span>
@@ -561,15 +599,15 @@
             </div>
             <div>
               <span class="stat-label">Price source</span>
-              <strong id="price-source">Reference (snapshot unavailable)</strong>
+              <strong id="price-source">Not available</strong>
             </div>
             <div>
               <span class="stat-label">Min long</span>
-              <strong id="min-long">1 contract / $88.53</strong>
+              <strong id="min-long">Not available</strong>
             </div>
             <div>
               <span class="stat-label">Min short</span>
-              <strong id="min-short">1 contract / $88.97</strong>
+              <strong id="min-short">Not available</strong>
             </div>
           </div>
 
@@ -586,85 +624,92 @@
       </section>
 
       <section class="band roadmap" data-app-section="trading">
-        <div>
-          <h2>Paper trading system</h2>
-          <p class="trade-user-context" id="paper-user-context">Viewing shared paper trades</p>
-          <div class="paper-grid">
-            <div class="paper-card">
-              <label class="paper-edit-field">
-                <span class="stat-label">Paper equity</span>
-                <input id="paper-equity-input" type="number" min="0" step="100" value="100000">
-              </label>
-              <strong id="paper-equity">$100,000</strong>
-            </div>
-            <div class="paper-card">
-              <label class="paper-edit-field">
-                <span class="stat-label">Risk per trade</span>
-                <input id="paper-risk-input" type="number" min="0.1" max="25" step="0.1" value="0.75">
-              </label>
-              <strong id="paper-risk">0.75%</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Position size</span>
-              <strong id="paper-size">1 contract</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">System status</span>
-              <strong id="paper-status">Armed</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Committed capital</span>
-              <strong id="paper-committed">$0.00</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Open P/L</span>
-              <strong id="paper-open-pl">$0.00</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Martingale step</span>
-              <strong id="paper-martingale">Step 1 / 4</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Market status</span>
-              <strong id="paper-market-status">Checking market</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Karpathy loop</span>
-              <strong id="paper-karpathy">Learning idle</strong>
-            </div>
-            <div class="paper-card">
-              <span class="stat-label">Coinbase sandbox</span>
-              <strong id="coinbase-sandbox-status">Off</strong>
-            </div>
-          </div>
-          <div class="trade-decision" aria-label="Current paper trade decision">
-            <span class="stat-label">Trade decision</span>
-            <strong id="paper-decision-title">Waiting for signal</strong>
-            <p id="paper-decision-detail">The next paper trade will open when the advisory clears the learned threshold.</p>
-          </div>
-        </div>
-        <div>
-          <h2>Strategy execution plan</h2>
-          <ol id="paper-steps">
-            <li>Auto-enter long or short when conviction clears the learned threshold.</li>
-            <li>Double committed capital after each loser through the 4th Martingale step.</li>
-            <li>Reset to the Coinbase minimum after a winner or after a losing 4th trade.</li>
-          </ol>
-          <div class="karpathy-loop">
+        <details class="trade-system-details">
+          <summary>
+            <span>Paper trading system details</span>
+            <strong id="paper-user-context">Viewing shared paper trades</strong>
+          </summary>
+          <div class="trade-system-detail-grid">
             <div>
-              <span class="stat-label">Collect</span>
-              <strong id="loop-collect">0 closed trades</strong>
+              <h2>Paper trading system</h2>
+              <div class="paper-grid">
+                <div class="paper-card">
+                  <label class="paper-edit-field">
+                    <span class="stat-label">Paper equity</span>
+                    <input id="paper-equity-input" type="number" min="0" step="100" value="100000">
+                  </label>
+                  <strong id="paper-equity">$100,000</strong>
+                </div>
+                <div class="paper-card">
+                  <label class="paper-edit-field">
+                    <span class="stat-label">Risk per trade</span>
+                    <input id="paper-risk-input" type="number" min="0.1" max="25" step="0.1" value="0.75">
+                  </label>
+                  <strong id="paper-risk">0.75%</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Position size</span>
+                  <strong id="paper-size">1 contract</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">System status</span>
+                  <strong id="paper-status">Armed</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Committed capital</span>
+                  <strong id="paper-committed">$0.00</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Open P/L</span>
+                  <strong id="paper-open-pl">$0.00</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Martingale step</span>
+                  <strong id="paper-martingale">Step 1 / 4</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Market status</span>
+                  <strong id="paper-market-status">Checking market</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Karpathy loop</span>
+                  <strong id="paper-karpathy">Learning idle</strong>
+                </div>
+                <div class="paper-card">
+                  <span class="stat-label">Coinbase sandbox</span>
+                  <strong id="coinbase-sandbox-status">Off</strong>
+                </div>
+              </div>
+              <div class="trade-decision" aria-label="Current paper trade decision">
+                <span class="stat-label">Trade decision</span>
+                <strong id="paper-decision-title">Waiting for signal</strong>
+                <p id="paper-decision-detail">The next paper trade will open when the advisory clears the learned threshold.</p>
+              </div>
             </div>
             <div>
-              <span class="stat-label">Evaluate</span>
-              <strong id="loop-evaluate">No sample yet</strong>
-            </div>
-            <div>
-              <span class="stat-label">Adjust</span>
-              <strong id="loop-adjust">Threshold 50</strong>
+              <h2>Strategy execution plan</h2>
+              <ol id="paper-steps">
+                <li>Auto-enter long or short when conviction clears the learned threshold.</li>
+                <li>Double committed capital after each loser through the 4th Martingale step.</li>
+                <li>Reset to the Coinbase minimum after a winner or after a losing 4th trade.</li>
+              </ol>
+              <div class="karpathy-loop">
+                <div>
+                  <span class="stat-label">Collect</span>
+                  <strong id="loop-collect">0 closed trades</strong>
+                </div>
+                <div>
+                  <span class="stat-label">Evaluate</span>
+                  <strong id="loop-evaluate">No sample yet</strong>
+                </div>
+                <div>
+                  <span class="stat-label">Adjust</span>
+                  <strong id="loop-adjust">Threshold 50</strong>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </details>
         <div class="paper-ledger">
           <h2>Transaction history</h2>
           <div id="paper-trade-summary" class="trade-summary">No paper trades yet.</div>
@@ -748,65 +793,70 @@
       </section>
 
       <section class="band roadmap actual-trades-page" data-app-section="actual-trades">
-        <div>
-          <h2>Actual trading system</h2>
-          <p class="trade-user-context live-user-context">Live trading workspace. No orders are placed by this page yet.</p>
-          <div class="paper-grid live-grid">
-            <div class="paper-card live-card">
-              <span class="stat-label">Live equity</span>
-              <strong>Connect brokerage</strong>
+        <details class="trade-system-details live-system-details">
+          <summary>
+            <span>Actual trading system details</span>
+            <strong>Live trading workspace. No orders are placed by this page yet.</strong>
+          </summary>
+          <div class="trade-system-detail-grid">
+            <div>
+              <h2>Actual trading system</h2>
+              <div class="paper-grid live-grid">
+                <div class="paper-card live-card">
+                  <span class="stat-label">Live equity</span>
+                  <strong>Connect brokerage</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Risk per live trade</span>
+                  <strong>User defined</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Position size</span>
+                  <strong>Manual confirm</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">System status</span>
+                  <strong>Live guardrails required</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Committed live capital</span>
+                  <strong>$0.00</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Open live P/L</span>
+                  <strong>$0.00</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Martingale step</span>
+                  <strong>Disabled until approved</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Market status</span>
+                  <strong>Uses paper-market clock</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Live ledger</span>
+                  <strong>Separate database required</strong>
+                </div>
+                <div class="paper-card live-card">
+                  <span class="stat-label">Trade mode</span>
+                  <strong>Notify trader only</strong>
+                </div>
+              </div>
+              <div class="trade-decision live-decision" aria-label="Current live trade decision">
+                <span class="stat-label">Live trade decision</span>
+                <strong>Waiting for live-trading integration</strong>
+                <p>The live system should notify the trader to log on and place the trade. Automatic live order placement is intentionally not wired here.</p>
+              </div>
             </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Risk per live trade</span>
-              <strong>User defined</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Position size</span>
-              <strong>Manual confirm</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">System status</span>
-              <strong>Live guardrails required</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Committed live capital</span>
-              <strong>$0.00</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Open live P/L</span>
-              <strong>$0.00</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Martingale step</span>
-              <strong>Disabled until approved</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Market status</span>
-              <strong>Uses paper-market clock</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Live ledger</span>
-              <strong>Separate database required</strong>
-            </div>
-            <div class="paper-card live-card">
-              <span class="stat-label">Trade mode</span>
-              <strong>Notify trader only</strong>
-            </div>
-          </div>
-          <div class="trade-decision live-decision" aria-label="Current live trade decision">
-            <span class="stat-label">Live trade decision</span>
-            <strong>Waiting for live-trading integration</strong>
-            <p>The live system should notify the trader to log on and place the trade. Automatic live order placement is intentionally not wired here.</p>
-          </div>
-        </div>
-        <div>
-          <h2>Live execution plan</h2>
-          <ol class="live-execution-plan">
-            <li>Use a separate live trade ledger from paper trades.</li>
-            <li>Require explicit user approval before any live brokerage integration is enabled.</li>
-            <li>Notify the trader when advisory, market status, and risk rules agree.</li>
-          </ol>
-          <div class="karpathy-loop live-notification-config">
+            <div>
+              <h2>Live execution plan</h2>
+              <ol class="live-execution-plan">
+                <li>Use a separate live trade ledger from paper trades.</li>
+                <li>Require explicit user approval before any live brokerage integration is enabled.</li>
+                <li>Notify the trader when advisory, market status, and risk rules agree.</li>
+              </ol>
+              <div class="karpathy-loop live-notification-config">
             <div>
               <span class="stat-label">Agent</span>
               <select id="live-agent-select" name="agent" aria-label="Live trade notification agent">
@@ -834,8 +884,10 @@
                 <option>Manual review only</option>
               </select>
             </div>
+              </div>
+            </div>
           </div>
-        </div>
+        </details>
         <div class="paper-ledger live-ledger">
           <h2>Live trade history</h2>
           <div class="trade-summary live-summary" id="live-trade-summary">No live trades recorded. This ledger will be separate from paper trade history.</div>
@@ -897,23 +949,23 @@
             </label>
             <label>
               Coinbase trade value
-              <input id="live-trade-value" name="tradeValue" type="number" min="0" step="0.01" placeholder="105.50">
+              <input id="live-trade-value" name="tradeValue" type="number" min="0" step="0.01" placeholder="Enter actual value">
             </label>
             <label>
               Entry price
-              <input id="live-trade-entry" name="entryPrice" type="number" step="0.01" placeholder="105.50">
+              <input id="live-trade-entry" name="entryPrice" type="number" step="0.01" placeholder="Enter actual entry">
             </label>
             <label>
               Limit price
-              <input id="live-trade-limit" name="limitPrice" type="number" step="0.01" placeholder="105.50">
+              <input id="live-trade-limit" name="limitPrice" type="number" step="0.01" placeholder="Enter actual limit">
             </label>
             <label>
               Stop price
-              <input id="live-trade-stop" name="stopPrice" type="number" step="0.01" placeholder="104.75">
+              <input id="live-trade-stop" name="stopPrice" type="number" step="0.01" placeholder="Enter actual stop">
             </label>
             <label>
               Target price
-              <input id="live-trade-target" name="targetPrice" type="number" step="0.01" placeholder="106.50">
+              <input id="live-trade-target" name="targetPrice" type="number" step="0.01" placeholder="Enter actual target">
             </label>
             <label>
               Time in force
@@ -1122,6 +1174,6 @@
     <option value="https://pjbell555.github.io/trading-site-scripts/">GitHub Pages app only</option>
   </datalist>
 
-  <script src="./app.js?v=comhedge-live-price-cache-16"></script>
+  <script src="./app.js?v=comhedge-routing-user-detail-20"></script>
 </body>
 </html>
