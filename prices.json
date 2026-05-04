@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-04T02:13:06.483Z",
+  "generatedAt": "2026-05-04T08:06:11.371Z",
   "source": "github-actions-coinbase-rest-snapshot",
   "prices": {
     "oil": {
@@ -7,23 +7,25 @@
       "ticker": "NOL-18MAY26-CDE",
       "productId": "NOL-18MAY26-CDE",
       "productType": "Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.278Z",
-      "minimumTradeValue": null,
-      "ok": false,
-      "price": null,
-      "error": "fetch failed",
-      "method": "unavailable"
+      "fetchedAt": "2026-05-04T08:06:11.119Z",
+      "minimumTradeValue": 103.975,
+      "ok": true,
+      "price": 103.975,
+      "bestBid": 103.96,
+      "bestAsk": 103.99,
+      "lastTrade": 104,
+      "method": "bid_ask_midpoint"
     },
     "natural-gas": {
       "id": "natural-gas",
       "ticker": "NG reference",
       "productId": "NATURAL-GAS-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.336Z",
+      "fetchedAt": "2026-05-04T08:06:11.184Z",
       "minimumTradeValue": null,
       "ok": false,
       "price": null,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "unavailable"
     },
     "gold": {
@@ -31,11 +33,11 @@
       "ticker": "Gold reference",
       "productId": "GOLD-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.337Z",
+      "fetchedAt": "2026-05-04T08:06:11.185Z",
       "minimumTradeValue": null,
       "ok": false,
       "price": null,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "unavailable"
     },
     "silver": {
@@ -43,11 +45,11 @@
       "ticker": "Silver reference",
       "productId": "SILVER-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.338Z",
+      "fetchedAt": "2026-05-04T08:06:11.186Z",
       "minimumTradeValue": null,
       "ok": false,
       "price": null,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "unavailable"
     },
     "copper": {
@@ -55,11 +57,11 @@
       "ticker": "Copper reference",
       "productId": "COPPER-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.339Z",
+      "fetchedAt": "2026-05-04T08:06:11.186Z",
       "minimumTradeValue": null,
       "ok": false,
       "price": null,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "unavailable"
     },
     "platinum": {
@@ -67,11 +69,11 @@
       "ticker": "Platinum reference",
       "productId": "PLATINUM-USD",
       "productType": "Reference price, not a listed Coinbase futures contract",
-      "fetchedAt": "2026-05-04T02:13:06.340Z",
+      "fetchedAt": "2026-05-04T08:06:11.187Z",
       "minimumTradeValue": null,
       "ok": false,
       "price": null,
-      "error": "fetch failed",
+      "error": "404 Not Found",
       "method": "unavailable"
     }
   }
