@@ -157,7 +157,8 @@ const inputs = {
   dollar: document.querySelector("#dollar"),
   geopolitics: document.querySelector("#geopolitics"),
   curve: document.querySelector("#curve"),
-  horizon: document.querySelector("#horizon")
+  horizon: document.querySelector("#horizon"),
+  manualConviction: document.querySelector("#manual-conviction")
 };
 
 const horizonWeight = {
@@ -255,6 +256,7 @@ const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
 const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
+const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
 const ADVISORY_CAPTURE_MS = 120000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -966,12 +968,17 @@ function getAllCommodityIds() {
   return commodities.map(({ id }) => id);
 }
 
-function normalizeCommodityIds(values) {
+function normalizeCommodityIds(values, fallbackIds = getAllCommodityIds()) {
   const allowed = new Set(getAllCommodityIds());
   const normalized = (Array.isArray(values) ? values : [])
     .map((value) => String(value || "").trim())
     .filter((value) => allowed.has(value));
-  return normalized.length ? Array.from(new Set(normalized)) : getAllCommodityIds();
+  if (normalized.length) return Array.from(new Set(normalized));
+  return Array.isArray(fallbackIds) ? fallbackIds.slice() : [];
+}
+
+function normalizeSavedCommodityIds(values) {
+  return normalizeCommodityIds(values, []);
 }
 
 function normalizeUserStrategy(strategy = {}) {
@@ -1070,14 +1077,17 @@ function saveCurrentUserPaperSettings() {
 
 function getSharedUserProfilesPayload() {
   return userRoster.reduce((profiles, user) => {
-    profiles[user.email] = {
+    const profile = {
       paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
       paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
-      commodities: normalizeCommodityIds(user.commodities),
+      commodities: normalizeSavedCommodityIds(user.commodities),
       strategy: normalizeUserStrategy(user.strategy),
-      brokerAccount: normalizeBrokerAccount(user.brokerAccount),
-      avatarDataUrl: String(user.avatarDataUrl || "").startsWith("data:image/") ? user.avatarDataUrl : ""
+      brokerAccount: normalizeBrokerAccount(user.brokerAccount)
     };
+    if (String(user.avatarDataUrl || "").startsWith("data:image/")) {
+      profile.avatarDataUrl = user.avatarDataUrl;
+    }
+    profiles[user.email] = profile;
     return profiles;
   }, {});
 }
@@ -1111,7 +1121,9 @@ function mergeUserRecords(existing, incoming) {
     paperRiskPct: Number.isFinite(Number(incoming.paperRiskPct))
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
-    commodities: normalizeCommodityIds(incoming.commodities || existing.commodities),
+    commodities: Array.isArray(incoming.commodities)
+      ? normalizeSavedCommodityIds(incoming.commodities)
+      : normalizeCommodityIds(existing.commodities),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
@@ -1171,7 +1183,7 @@ function mergeSharedUserProfiles(profiles) {
       changed = true;
     }
     if (Array.isArray(profile.commodities)) {
-      const nextCommodities = normalizeCommodityIds(profile.commodities);
+      const nextCommodities = normalizeSavedCommodityIds(profile.commodities);
       if (JSON.stringify(nextCommodities) !== JSON.stringify(normalizeCommodityIds(user.commodities))) {
         user.commodities = nextCommodities;
         changed = true;
@@ -1393,7 +1405,13 @@ function saveExpandedUserProfile(user, nameInput, emailInput) {
 function saveUserCommoditySelection(user, container) {
   const selected = Array.from(container.querySelectorAll("input[type='checkbox']:checked"))
     .map((input) => input.value);
-  user.commodities = normalizeCommodityIds(selected);
+  const nextCommodities = normalizeSavedCommodityIds(selected);
+  if (!nextCommodities.length) {
+    userManagementStatusEl.textContent = "Choose at least one commodity";
+    return;
+  }
+
+  user.commodities = nextCommodities;
   saveUserRoster();
   saveSharedSettings();
   applyCurrentUserPaperSettings();
@@ -1910,6 +1928,29 @@ function appendStateCell(row, code, label) {
 
 function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   const row = document.createElement("tr");
+  const openTrade = getOpenPaperTrade(commodity);
+
+  if (openTrade) {
+    row.className = "transaction-row open-trade-row";
+    appendStateCell(row, "O", "Open");
+    [
+      formatTradeTime(openTrade.openedAt || openTrade.time),
+      `${formatSide(openTrade.side)} open`,
+      formatSide(openTrade.side),
+      `#${openTrade.martingaleStep || openTrade.step || martingaleStep}`,
+      openTrade.contract || marketConfig[commodity]?.ticker || tradePlan.ticker,
+      Number.isFinite(Number(openTrade.entryPrice)) ? formatPrice(Number(openTrade.entryPrice)) : UNAVAILABLE_TEXT,
+      Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
+      `Watching target ${formatPrice(openTrade.targetPrice)} / stop ${formatPrice(openTrade.stopPrice)}`
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+
+    return row;
+  }
+
   const signalSide = getSignalSide(signal);
   const hasExecutablePrice = Boolean(tradePlan?.priceReady && signalSide);
   const clearsThreshold = signalSide && signal.conviction >= tradePlan.entryThreshold;
@@ -2530,6 +2571,42 @@ function readBaseSignals() {
   };
 }
 
+function getManualConvictionOverrides() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(MANUAL_CONVICTION_OVERRIDES_KEY) || "{}");
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch (error) {
+    return {};
+  }
+}
+
+function getManualConvictionOverride(commodity) {
+  const value = Number(getManualConvictionOverrides()[commodity]);
+  return Number.isFinite(value) ? clamp(Math.round(value), 0, 100) : null;
+}
+
+function setManualConvictionOverride(commodity, value) {
+  const overrides = getManualConvictionOverrides();
+  if (value === null || value === "") {
+    delete overrides[commodity];
+    window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(overrides));
+    return;
+  }
+  const score = Number(value);
+  if (Number.isFinite(score)) {
+    overrides[commodity] = clamp(Math.round(score), 0, 100);
+  } else {
+    delete overrides[commodity];
+  }
+  window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(overrides));
+}
+
+function renderManualConvictionInput(commodity) {
+  if (!inputs.manualConviction) return;
+  const override = getManualConvictionOverride(commodity);
+  inputs.manualConviction.value = override === null ? "" : String(override);
+}
+
 function scoreCommodity(commodity, baseSignals) {
   const tweak = commodityTweaks[commodity] || { trend: 0, inventory: 0, geopolitics: 0, dollar: 0, curve: 0 };
   const baseScore = (
@@ -2539,8 +2616,14 @@ function scoreCommodity(commodity, baseSignals) {
     baseSignals.geopolitics + tweak.geopolitics +
     baseSignals.curve + tweak.curve
   ) * baseSignals.horizon;
-  const bounded = Math.max(-100, Math.min(100, Math.round(baseScore)));
-  const conviction = Math.min(100, 40 + Math.abs(bounded));
+  const automaticBounded = Math.max(-100, Math.min(100, Math.round(baseScore)));
+  const manualConviction = getManualConvictionOverride(commodity);
+  const bounded = manualConviction === null
+    ? automaticBounded
+    : Math.sign(automaticBounded || 1) * Math.max(0, manualConviction - 40);
+  const conviction = manualConviction === null
+    ? Math.min(100, 40 + Math.abs(bounded))
+    : manualConviction;
 
   let label = "Wait";
   let chipLabel = "Wait";
@@ -2574,7 +2657,7 @@ function scoreCommodity(commodity, baseSignals) {
     tone = "short";
   }
 
-  return { bounded, conviction, label, chipLabel, action, color, tone };
+  return { bounded, conviction, automaticBounded, manualOverride: manualConviction, label, chipLabel, action, color, tone };
 }
 
 function formatPrice(value) {
@@ -2966,7 +3049,7 @@ function buildTradePlan(commodity, signal) {
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
-  const entryThreshold = learnedThreshold;
+  const entryThreshold = advisoryScoreThreshold;
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
   const longMargin = getMarginRequirement(config, "long", livePrice);
@@ -3027,7 +3110,7 @@ function buildTradePlan(commodity, signal) {
     size: Number.isFinite(plannedContracts) ? `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}` : UNAVAILABLE_TEXT,
     status,
     steps: [
-      `${strategyName}: auto-enter long or short when conviction clears the learned Karpathy threshold of ${entryThreshold}.`,
+      `${strategyName}: auto-enter long or short when conviction clears the manual trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
       `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
@@ -4144,6 +4227,9 @@ function saveAdvisoryScoreThreshold() {
   window.localStorage.setItem(ADVISORY_SCORE_THRESHOLD_KEY, String(advisoryScoreThreshold));
   advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
   accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+  if (lastPrimarySignal && lastTradePlan) {
+    calculateSignal();
+  }
   renderAdvisoryChart();
 }
 
@@ -4831,7 +4917,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   const signalSide = getSignalSide(signal);
   const priceText = formatPrice(tradePlan.livePrice);
   const thresholdText = `${signal.conviction}/${tradePlan.entryThreshold}`;
-  const karpathyText = ` Advisory conviction is ${signal.conviction}; learned Karpathy trading threshold is ${tradePlan.learnedThreshold}.`;
+  const karpathyText = ` Advisory conviction is ${signal.conviction}; manual trading threshold is ${tradePlan.entryThreshold}; learned Karpathy recommendation is ${tradePlan.learnedThreshold}.`;
 
   if (!hasHistoryBackend()) {
     return {
@@ -4886,17 +4972,17 @@ function renderKarpathyLoop(signal, tradePlan) {
   const winRateText = loop.sampleCount ? `${Math.round(loop.winRate * 100)}% win` : "No sample";
   const avgPnlText = loop.sampleCount ? `${formatSignedMoney(loop.avgPnl)} avg` : "No sample yet";
 
-  paperKarpathyEl.textContent = `Threshold ${loop.threshold}`;
+  paperKarpathyEl.textContent = `Manual ${tradePlan.entryThreshold} / Karpathy ${loop.threshold}`;
   loopCollectEl.textContent = `${loop.closedCount} closed trades`;
   loopEvaluateEl.textContent = `${winRateText} / ${avgPnlText}`;
-  loopAdjustEl.textContent = `Threshold ${loop.threshold}, losses ${loop.lossStreak}`;
+  loopAdjustEl.textContent = `Manual ${tradePlan.entryThreshold}, recommendation ${loop.threshold}, losses ${loop.lossStreak}`;
 
   if (loop.sampleCount < 3) {
-    loopAdjustEl.textContent = `Threshold ${PAPER_MIN_CONVICTION}, needs 3 trades`;
+    loopAdjustEl.textContent = `Manual ${tradePlan.entryThreshold}, needs 3 trades`;
   } else if (tradePlan.learnedThreshold > PAPER_MIN_CONVICTION) {
-    loopAdjustEl.textContent = `More selective: ${loop.threshold}`;
+    loopAdjustEl.textContent = `Karpathy suggests more selective: ${loop.threshold}`;
   } else if (tradePlan.learnedThreshold < PAPER_MIN_CONVICTION) {
-    loopAdjustEl.textContent = `More permissive: ${loop.threshold}`;
+    loopAdjustEl.textContent = `Karpathy suggests more permissive: ${loop.threshold}`;
   }
 }
 
@@ -5370,6 +5456,7 @@ function calculateSignal() {
 
   const commodity = commoditySelect.value;
   const commodityMeta = commodities.find(({ id }) => id === commodity) || commodities[0];
+  renderManualConvictionInput(commodity);
   const baseSignals = readBaseSignals();
   const primarySignal = scoreCommodity(commodity, baseSignals);
   const tradePlan = buildTradePlan(commodity, primarySignal);
@@ -5418,7 +5505,9 @@ function calculateSignal() {
   primaryModelStatEl.textContent = getModelById(primaryModelId).name;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
-  convictionEl.textContent = `${primarySignal.conviction} / 100`;
+  convictionEl.textContent = primarySignal.manualOverride === null
+    ? `${primarySignal.conviction} / 100`
+    : `${primarySignal.conviction} / 100 manual`;
   actionEl.textContent = primarySignal.action;
   tickerEl.textContent = tradePlan.ticker;
   contractMonthEl.textContent = tradePlan.contractMonth;
@@ -5467,6 +5556,17 @@ function calculateSignal() {
   element.addEventListener("input", calculateSignal);
   element.addEventListener("change", calculateSignal);
 });
+
+if (inputs.manualConviction) {
+  inputs.manualConviction.addEventListener("input", () => {
+    setManualConvictionOverride(commoditySelect.value, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
+    calculateSignal();
+  });
+  inputs.manualConviction.addEventListener("change", () => {
+    setManualConvictionOverride(commoditySelect.value, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
+    calculateSignal();
+  });
+}
 
 primaryModelSelect.addEventListener("change", () => {
   primaryModelId = primaryModelSelect.value;

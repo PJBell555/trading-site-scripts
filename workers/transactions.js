@@ -479,6 +479,33 @@ async function saveSettingsFile(env, file, path, payload) {
   );
 }
 
+function mergeUserProfiles(existingProfiles = {}, incomingProfiles = {}) {
+  const merged = { ...existingProfiles };
+
+  for (const [email, incomingProfile] of Object.entries(incomingProfiles)) {
+    if (!incomingProfile || typeof incomingProfile !== "object" || Array.isArray(incomingProfile)) continue;
+
+    const existingProfile = existingProfiles[email] && typeof existingProfiles[email] === "object"
+      ? existingProfiles[email]
+      : {};
+    const nextProfile = {
+      ...existingProfile,
+      ...incomingProfile
+    };
+
+    if (
+      String(existingProfile.avatarDataUrl || "").startsWith("data:image/")
+      && !String(incomingProfile.avatarDataUrl || "").startsWith("data:image/")
+    ) {
+      nextProfile.avatarDataUrl = existingProfile.avatarDataUrl;
+    }
+
+    merged[email] = nextProfile;
+  }
+
+  return merged;
+}
+
 async function saveAdvisoryFile(env, file, path, payload) {
   return saveJsonFile(
     env,
@@ -541,7 +568,7 @@ export default {
           coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled),
           users: Array.isArray(body.users) ? body.users : payload.users || [],
           userProfiles: body.userProfiles && typeof body.userProfiles === "object" && !Array.isArray(body.userProfiles)
-            ? body.userProfiles
+            ? mergeUserProfiles(payload.userProfiles || {}, body.userProfiles)
             : payload.userProfiles || {}
         };
         const result = await saveSettingsFile(env, file, path, settings);
