@@ -873,6 +873,11 @@ function normalizeUserRecord(user, fallback = {}) {
     ? user.sessionHistory
     : Array.isArray(fallback.sessionHistory) ? fallback.sessionHistory : [];
   const commoditiesForUser = normalizeCommodityIds(user?.commodities ?? fallback.commodities);
+  const commodityAllocations = normalizeCommodityAllocations(
+    user?.commodityAllocations ?? fallback.commodityAllocations,
+    commoditiesForUser,
+    profileEquity
+  );
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -885,6 +890,7 @@ function normalizeUserRecord(user, fallback = {}) {
     paperRiskPct: Number.isFinite(profileRiskPct) ? clamp(profileRiskPct, 0.1, 25) : PAPER_DEFAULT_RISK_PCT,
     avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
     commodities: commoditiesForUser,
+    commodityAllocations,
     strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
     brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
     sessionHistory: sessionHistory
@@ -979,6 +985,27 @@ function normalizeCommodityIds(values, fallbackIds = getAllCommodityIds()) {
 
 function normalizeSavedCommodityIds(values) {
   return normalizeCommodityIds(values, []);
+}
+
+function normalizeCommodityAllocations(allocations = {}, selectedIds = getAllCommodityIds(), defaultStartCapital = PAPER_START_EQUITY) {
+  const selected = normalizeCommodityIds(selectedIds);
+  const selectedSet = new Set(selected);
+  const source = allocations && typeof allocations === "object" && !Array.isArray(allocations) ? allocations : {};
+  const defaultPerSelected = selected.length
+    ? Math.round((Math.max(0, Number(defaultStartCapital) || 0) / selected.length) * 100) / 100
+    : 0;
+
+  return commodities.reduce((result, { id }) => {
+    const raw = source[id];
+    const rawStart = raw && typeof raw === "object" ? raw.startCapital : raw;
+    const startCapital = Number(rawStart);
+    result[id] = {
+      startCapital: Number.isFinite(startCapital)
+        ? Math.max(0, startCapital)
+        : selectedSet.has(id) ? defaultPerSelected : 0
+    };
+    return result;
+  }, {});
 }
 
 function normalizeUserStrategy(strategy = {}) {
@@ -1081,6 +1108,7 @@ function getSharedUserProfilesPayload() {
       paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
       paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
       commodities: normalizeSavedCommodityIds(user.commodities),
+      commodityAllocations: normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity),
       strategy: normalizeUserStrategy(user.strategy),
       brokerAccount: normalizeBrokerAccount(user.brokerAccount)
     };
@@ -1124,6 +1152,11 @@ function mergeUserRecords(existing, incoming) {
     commodities: Array.isArray(incoming.commodities)
       ? normalizeSavedCommodityIds(incoming.commodities)
       : normalizeCommodityIds(existing.commodities),
+    commodityAllocations: normalizeCommodityAllocations(
+      incoming.commodityAllocations || existing.commodityAllocations,
+      Array.isArray(incoming.commodities) ? incoming.commodities : existing.commodities,
+      Number.isFinite(Number(incoming.paperBaseEquity)) ? incoming.paperBaseEquity : existing.paperBaseEquity
+    ),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
@@ -1186,6 +1219,13 @@ function mergeSharedUserProfiles(profiles) {
       const nextCommodities = normalizeSavedCommodityIds(profile.commodities);
       if (JSON.stringify(nextCommodities) !== JSON.stringify(normalizeCommodityIds(user.commodities))) {
         user.commodities = nextCommodities;
+        changed = true;
+      }
+    }
+    if (profile.commodityAllocations && typeof profile.commodityAllocations === "object") {
+      const nextAllocations = normalizeCommodityAllocations(profile.commodityAllocations, user.commodities, user.paperBaseEquity);
+      if (JSON.stringify(nextAllocations) !== JSON.stringify(normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity))) {
+        user.commodityAllocations = nextAllocations;
         changed = true;
       }
     }
@@ -1305,6 +1345,54 @@ function getUserSessionHistory(user) {
   }];
 }
 
+function entryBelongsToUser(entry, user) {
+  const userEmail = normalizeEmail(user?.email);
+  if (!userEmail) return false;
+  const entryEmail = normalizeEmail(entry.userEmail || entry.profileEmail || entry.accountEmail || "");
+  if (entryEmail) return entryEmail === userEmail;
+  return userEmail === LEGACY_LEDGER_USER_EMAIL || userEmail.startsWith("pete@") || userEmail.startsWith("peter@");
+}
+
+function getUserCommodityPnl(user, commodity = null) {
+  return transactionHistory
+    .filter((entry) => entryBelongsToUser(entry, user))
+    .filter((entry) => !commodity || entry.commodity === commodity)
+    .reduce((total, entry) => total + getDisplayPnl(entry), 0);
+}
+
+function getCurrentProfileStartCapital() {
+  const user = getCurrentUserProfile();
+  if (!user) return Number(paperBaseEquity) || PAPER_START_EQUITY;
+
+  const selected = normalizeCommodityIds(user.commodities);
+  const allocations = normalizeCommodityAllocations(user.commodityAllocations, selected, user.paperBaseEquity);
+  const allocatedCapital = selected.reduce((total, id) => total + (Number(allocations[id]?.startCapital) || 0), 0);
+  if (allocatedCapital > 0) return allocatedCapital;
+
+  const profileEquity = Number(user.paperBaseEquity);
+  return Number.isFinite(profileEquity) ? profileEquity : PAPER_START_EQUITY;
+}
+
+function getCurrentProfileStartCapitalForCommodity(commodity = "all") {
+  const user = getCurrentUserProfile();
+  const normalizedCommodity = normalizeCommodityId(commodity);
+  if (!user || !normalizedCommodity || normalizedCommodity === "all") {
+    return getCurrentProfileStartCapital();
+  }
+
+  const selected = normalizeCommodityIds(user.commodities);
+  const allocations = normalizeCommodityAllocations(user.commodityAllocations, selected, user.paperBaseEquity);
+  const allocation = Number(allocations[normalizedCommodity]?.startCapital);
+  return Number.isFinite(allocation) ? Math.max(0, allocation) : 0;
+}
+
+function renderPnlWithCapital(element, pnl, startCapital = getCurrentProfileStartCapital()) {
+  if (!element) return;
+  const currentCapital = Math.max(0, (Number(startCapital) || 0) + (Number(pnl) || 0));
+  element.innerHTML = `<span>${formatSignedMoney(pnl)}</span><small>Capital ${formatMoney(currentCapital)}</small>`;
+  element.className = pnl >= 0 ? "gain" : "loss";
+}
+
 function getUniqueSessionCount(user, field) {
   const values = getUserSessionHistory(user)
     .map((session) => String(session[field] || "").trim().toLowerCase())
@@ -1403,21 +1491,35 @@ function saveExpandedUserProfile(user, nameInput, emailInput) {
 }
 
 function saveUserCommoditySelection(user, container) {
-  const selected = Array.from(container.querySelectorAll("input[type='checkbox']:checked"))
-    .map((input) => input.value);
+  const rows = Array.from(container.querySelectorAll("[data-commodity-row]"));
+  const selected = rows
+    .filter((row) => row.querySelector("[data-commodity-enabled]")?.checked)
+    .map((row) => row.dataset.commodityRow);
   const nextCommodities = normalizeSavedCommodityIds(selected);
   if (!nextCommodities.length) {
     userManagementStatusEl.textContent = "Choose at least one commodity";
     return;
   }
 
+  const nextAllocations = rows.reduce((allocations, row) => {
+    const id = row.dataset.commodityRow;
+    const startCapital = Number(row.querySelector("[data-commodity-capital]")?.value);
+    allocations[id] = {
+      startCapital: Number.isFinite(startCapital) ? Math.max(0, startCapital) : 0
+    };
+    return allocations;
+  }, {});
+  const accountStartCapital = nextCommodities.reduce((total, id) => total + (Number(nextAllocations[id]?.startCapital) || 0), 0);
+
   user.commodities = nextCommodities;
+  user.commodityAllocations = normalizeCommodityAllocations(nextAllocations, nextCommodities, accountStartCapital);
+  user.paperBaseEquity = accountStartCapital;
   saveUserRoster();
   saveSharedSettings();
   applyCurrentUserPaperSettings();
   calculateSignal();
   renderUserManagement();
-  userManagementStatusEl.textContent = `${user.name || user.email} commodity access saved`;
+  userManagementStatusEl.textContent = `${user.name || user.email} commodity allocations saved`;
 }
 
 function saveUserStrategySettings(user, container) {
@@ -1601,24 +1703,67 @@ function createUserProfilePanel(user) {
 
   commoditiesCard.className = "user-profile-subcard";
   commoditiesCard.innerHTML = "<h3>Commodities Traded</h3>";
-  const commodityGrid = document.createElement("div");
+  const commodityEditor = document.createElement("div");
+  const accountSummary = document.createElement("div");
   const commoditySave = document.createElement("button");
-  commodityGrid.className = "profile-commodity-grid";
+  commodityEditor.className = "profile-commodity-list";
+  accountSummary.className = "profile-account-capital";
   const selectedCommodities = new Set(normalizeCommodityIds(user.commodities));
+  const allocations = normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity);
+  const accountPnl = getUserCommodityPnl(user);
+  let accountStartCapital = 0;
   commodities.forEach(({ id, name }) => {
-    const label = document.createElement("label");
-    const input = document.createElement("input");
-    input.type = "checkbox";
-    input.value = id;
-    input.checked = selectedCommodities.has(id);
-    label.append(input, document.createTextNode(name));
-    commodityGrid.append(label);
+    const isSelected = selectedCommodities.has(id);
+    const startCapital = isSelected ? Number(allocations[id]?.startCapital) || 0 : 0;
+    const pnl = getUserCommodityPnl(user, id);
+    accountStartCapital += startCapital;
+
+    const row = document.createElement("div");
+    const tradedLabel = document.createElement("label");
+    const checkbox = document.createElement("input");
+    const capitalLabel = document.createElement("label");
+    const capitalInput = document.createElement("input");
+    const pnlCell = document.createElement("div");
+    const totalCell = document.createElement("div");
+
+    row.className = "profile-commodity-row";
+    row.dataset.commodityRow = id;
+    checkbox.type = "checkbox";
+    checkbox.dataset.commodityEnabled = "true";
+    checkbox.checked = isSelected;
+    capitalInput.type = "number";
+    capitalInput.min = "0";
+    capitalInput.step = "0.01";
+    capitalInput.value = Number.isFinite(startCapital) ? startCapital.toFixed(2) : "0.00";
+    capitalInput.dataset.commodityCapital = "true";
+
+    tradedLabel.className = "profile-commodity-name";
+    tradedLabel.append(checkbox, document.createTextNode(name));
+    capitalLabel.className = "profile-commodity-capital-field";
+    capitalLabel.append(document.createTextNode("Start capital"), capitalInput);
+    pnlCell.className = pnl >= 0 ? "profile-capital-gain" : "profile-capital-loss";
+    pnlCell.innerHTML = `<span>Profit / loss</span><strong>${formatSignedMoney(pnl)}</strong>`;
+    totalCell.innerHTML = `<span>Total capital</span><strong>${formatMoney(startCapital + pnl)}</strong>`;
+
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked && Number(capitalInput.value) === 0) {
+        capitalInput.value = "1000.00";
+      }
+    });
+
+    row.append(tradedLabel, capitalLabel, pnlCell, totalCell);
+    commodityEditor.append(row);
   });
+  accountSummary.innerHTML = `
+    <div><span>Account start capital</span><strong>${formatMoney(accountStartCapital)}</strong></div>
+    <div class="${accountPnl >= 0 ? "profile-capital-gain" : "profile-capital-loss"}"><span>Account profit / loss</span><strong>${formatSignedMoney(accountPnl)}</strong></div>
+    <div><span>Total account capital</span><strong>${formatMoney(accountStartCapital + accountPnl)}</strong></div>
+  `;
   commoditySave.type = "button";
   commoditySave.className = "filter-button profile-commodity-save";
-  commoditySave.textContent = "Save commodities";
-  commoditySave.addEventListener("click", () => saveUserCommoditySelection(user, commodityGrid));
-  commoditiesCard.append(commodityGrid, commoditySave);
+  commoditySave.textContent = "Save commodity allocations";
+  commoditySave.addEventListener("click", () => saveUserCommoditySelection(user, commodityEditor));
+  commoditiesCard.append(commodityEditor, accountSummary, commoditySave);
 
   const strategy = normalizeUserStrategy(user.strategy);
   strategyCard.className = "user-profile-subcard profile-strategy-card";
@@ -1941,6 +2086,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       openTrade.contract || marketConfig[commodity]?.ticker || tradePlan.ticker,
       Number.isFinite(Number(openTrade.entryPrice)) ? formatPrice(Number(openTrade.entryPrice)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
+      Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
       `Watching target ${formatPrice(openTrade.targetPrice)} / stop ${formatPrice(openTrade.stopPrice)}`
     ].forEach((value) => {
       const cell = document.createElement("td");
@@ -1971,6 +2117,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     marketConfig[commodity]?.ticker || tradePlan.ticker,
     hasExecutablePrice ? formatPrice(queuedPrice) : UNAVAILABLE_TEXT,
     hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
+    hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT,
     decision.title
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -1998,6 +2145,7 @@ function buildQueuedLiveTradeRow() {
     tradePlan?.ticker || marketConfig[commoditySelect.value]?.ticker || "-",
     hasExecutablePrice ? formatPrice(side === "short" ? tradePlan.entryPrice : tradePlan.buyPrice) : UNAVAILABLE_TEXT,
     hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
+    hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT,
     "Queued for trader review"
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -3417,6 +3565,14 @@ function saveLiveTradeLedger() {
   if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `Local live ledger saved ${liveTradeLedger.length} rows`;
 }
 
+function getLiveTradeTargetOrExitPrice(trade) {
+  const isClosed = String(trade.action || "").toUpperCase().includes("CLOSE");
+  const price = isClosed
+    ? Number(trade.exitPrice ?? trade.entryPrice ?? trade.limitPrice)
+    : Number(trade.targetPrice);
+  return Number.isFinite(price) ? formatPrice(price) : UNAVAILABLE_TEXT;
+}
+
 function appendLiveTradeDetail(parent, label, value) {
   const item = document.createElement("div");
   const labelEl = document.createElement("span");
@@ -3436,8 +3592,8 @@ function renderLiveTradeLedger() {
   const totalPl = scopedTrades.reduce((total, trade) => total + (Number(trade.pnl) || 0), 0);
   const committed = scopedTrades.reduce((total, trade) => total + (Number(trade.tradeValue) || 0), 0);
 
-  if (liveTotalPlEl) liveTotalPlEl.textContent = formatSignedMoney(totalPl);
-  if (liveFilteredPlEl) liveFilteredPlEl.textContent = formatSignedMoney(totalPl);
+  renderPnlWithCapital(liveTotalPlEl, totalPl);
+  renderPnlWithCapital(liveFilteredPlEl, totalPl);
   if (liveTradeCountEl) liveTradeCountEl.textContent = `${scopedTrades.length} row${scopedTrades.length === 1 ? "" : "s"}`;
   if (liveTradeSummaryEl) {
     liveTradeSummaryEl.textContent = scopedTrades.length
@@ -3452,7 +3608,7 @@ function renderLiveTradeLedger() {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     liveTradeHistoryEl.append(buildQueuedLiveTradeRow());
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.textContent = "No live trades recorded yet. Use the Coinbase mirror entry form above to capture actual trade details.";
     row.append(cell);
     liveTradeHistoryEl.append(row);
@@ -3471,6 +3627,7 @@ function renderLiveTradeLedger() {
       trade.contract || "-",
       formatOptionalMoney(trade.entryPrice ?? trade.limitPrice),
       formatOptionalMoney(trade.tradeValue),
+      getLiveTradeTargetOrExitPrice(trade),
       formatSignedMoney(Number(trade.pnl) || 0)
     ].forEach((value) => {
       const cell = document.createElement("td");
@@ -3481,7 +3638,7 @@ function renderLiveTradeLedger() {
     const detailRow = document.createElement("tr");
     detailRow.className = "live-trade-detail";
     const detailCell = document.createElement("td");
-    detailCell.colSpan = 9;
+    detailCell.colSpan = 10;
     const detailGrid = document.createElement("div");
     detailGrid.className = "transaction-detail-grid live-detail-grid";
 
@@ -3630,6 +3787,18 @@ function mergeTransactionHistory(entries, options = {}) {
   }
 
   return added;
+}
+
+function getMergedTransactionEntries(incomingEntries = []) {
+  const byKey = new Map();
+
+  [...incomingEntries, ...transactionHistory].map(normalizeTransactionEntry).forEach((entry) => {
+    const sharedKey = getTransactionKey(entry);
+    byKey.set(sharedKey, { ...entry, sharedKey });
+  });
+
+  return Array.from(byKey.values())
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
 function getTradeLifecycleKey(entry) {
@@ -4631,10 +4800,18 @@ async function loadSharedTransactionHistory(manual = false) {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    replaceTransactionHistory(entries);
+    const mergedEntries = getMergedTransactionEntries(entries);
+    const hasLocalOnlyRows = mergedEntries.length > entries.length;
+    replaceTransactionHistory(mergedEntries);
     reconcilePaperStateFromHistory();
-    sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     backendHistoryReady = true;
+    if (hasLocalOnlyRows) {
+      pendingHistorySaveRetry = true;
+      saveSharedTransactionHistory();
+      sharedHistoryStatusEl.textContent = `Backend merged ${mergedEntries.length} rows`;
+    } else {
+      sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
+    }
     calculateSignal();
     return true;
   } catch (error) {
@@ -5030,6 +5207,30 @@ function isClosingTransaction(entry) {
   return Number(entry.pnl) !== 0 || ["TARGET", "STOP"].some((word) => entry.action?.includes(word));
 }
 
+function getTransactionTargetOrExitPrice(entry) {
+  if (isClosingTransaction(entry)) {
+    const exitPrice = Number(entry.exitPrice ?? entry.price);
+    return Number.isFinite(exitPrice) ? formatPrice(exitPrice) : UNAVAILABLE_TEXT;
+  }
+
+  const entryTradeId = entry.tradeId || entry.id;
+  if (entryTradeId) {
+    const matchingClose = getUserScopedTransactions().find((candidate) => (
+      candidate !== entry
+      && isClosingTransaction(candidate)
+      && (candidate.tradeId || candidate.id) === entryTradeId
+    ));
+
+    if (matchingClose) {
+      const exitPrice = Number(matchingClose.exitPrice ?? matchingClose.price);
+      return Number.isFinite(exitPrice) ? formatPrice(exitPrice) : UNAVAILABLE_TEXT;
+    }
+  }
+
+  const targetPrice = Number(entry.targetPrice);
+  return Number.isFinite(targetPrice) ? formatPrice(targetPrice) : UNAVAILABLE_TEXT;
+}
+
 function isOpeningTransaction(entry) {
   return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
 }
@@ -5339,13 +5540,11 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   if (!scopedTransactions.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    historyTotalAllEl.textContent = "$0.00";
-    historyTotalAllEl.className = "";
-    historyTotalFilteredEl.textContent = "$0.00";
-    historyTotalFilteredEl.className = "";
+    renderPnlWithCapital(historyTotalAllEl, 0);
+    renderPnlWithCapital(historyTotalFilteredEl, 0, getCurrentProfileStartCapitalForCommodity(historyCommodityFilter));
     historyTotalCountEl.textContent = "0 rows";
     transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.textContent = "Waiting for a long or short advisory above 50 conviction.";
     row.append(cell);
     transactionHistoryEl.append(row);
@@ -5357,17 +5556,15 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const allTotal = getProfitTotal(periodEntries);
   const filteredTotal = getProfitTotal(filteredEntries);
 
-  historyTotalAllEl.textContent = formatSignedMoney(allTotal);
-  historyTotalAllEl.className = allTotal >= 0 ? "gain" : "loss";
-  historyTotalFilteredEl.textContent = formatSignedMoney(filteredTotal);
-  historyTotalFilteredEl.className = filteredTotal >= 0 ? "gain" : "loss";
+  renderPnlWithCapital(historyTotalAllEl, allTotal);
+  renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getCurrentProfileStartCapitalForCommodity(historyCommodityFilter));
   historyTotalCountEl.textContent = `${filteredEntries.length} row${filteredEntries.length === 1 ? "" : "s"}`;
 
   if (!filteredEntries.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.textContent = "No transactions match the selected filters.";
     row.append(cell);
     transactionHistoryEl.append(row);
@@ -5389,6 +5586,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       entry.contract,
       formatPrice(entry.price),
       formatMoney(entry.capital),
+      getTransactionTargetOrExitPrice(entry),
       formatSignedMoney(displayPnl)
     ];
 
@@ -5428,7 +5626,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       } else {
         cell.textContent = value;
       }
-      if (index === 7 && pnlClass) cell.className = pnlClass;
+      if (index === 8 && pnlClass) cell.className = pnlClass;
       row.append(cell);
     });
     transactionHistoryEl.append(row);
@@ -5438,7 +5636,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       const detailCell = document.createElement("td");
 
       detailRow.className = "transaction-detail";
-      detailCell.colSpan = 9;
+      detailCell.colSpan = 10;
       detailCell.append(renderTransactionDetail(entry));
       detailRow.append(detailCell);
       transactionHistoryEl.append(detailRow);

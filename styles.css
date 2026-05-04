@@ -647,13 +647,6 @@ body {
   padding: 18px 28px;
 }
 
-.profile-commodity-grid {
-  display: grid;
-  gap: 12px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  padding: 18px 28px 8px;
-}
-
 .profile-strategy-grid {
   display: grid;
   gap: 14px;
@@ -707,24 +700,85 @@ body {
   line-height: 1.4;
 }
 
-.profile-commodity-grid label {
+.profile-commodity-list {
+  display: grid;
+  gap: 10px;
+  padding: 18px 28px 8px;
+}
+
+.profile-commodity-row {
   align-items: center;
   background: var(--panel-soft);
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
-  color: #dbeafe;
-  display: flex;
-  gap: 10px;
-  font-weight: 800;
+  display: grid;
+  gap: 14px;
+  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr);
   padding: 12px 14px;
 }
 
-.profile-commodity-grid input {
+.profile-commodity-name,
+.profile-commodity-capital-field {
+  color: #dbeafe;
+  display: grid;
+  gap: 6px;
+  font-weight: 800;
+}
+
+.profile-commodity-name {
+  align-items: center;
+  display: flex;
+  gap: 10px;
+}
+
+.profile-commodity-name input {
   accent-color: var(--accent);
 }
 
+.profile-commodity-capital-field input {
+  width: 100%;
+  border-color: rgba(96, 165, 250, 0.24);
+  background: #081225;
+  color: #f8fafc;
+}
+
+.profile-commodity-row span,
+.profile-account-capital span {
+  color: var(--muted);
+  display: block;
+  font-weight: 800;
+  margin-bottom: 4px;
+}
+
+.profile-commodity-row strong,
+.profile-account-capital strong {
+  color: #f8fafc;
+}
+
+.profile-capital-gain strong {
+  color: var(--accent);
+}
+
+.profile-capital-loss strong {
+  color: var(--danger);
+}
+
+.profile-account-capital {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: 10px 28px 8px;
+}
+
+.profile-account-capital div {
+  background: #081225;
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 8px;
+  padding: 12px 14px;
+}
+
 .profile-commodity-save {
-  margin: 0 28px 18px;
+  margin: 10px 28px 18px;
 }
 
 .profile-stat-grid div {
@@ -2229,8 +2283,8 @@ select {
 
 .ledger-totals div {
   padding: 12px 14px;
-  background: rgba(255, 255, 255, 0.58);
-  border: 1px solid rgba(17, 32, 43, 0.08);
+  background: var(--panel);
+  border: 1px solid var(--line);
   border-radius: 8px;
 }
 
@@ -2239,6 +2293,18 @@ select {
   margin-top: 4px;
   color: var(--ink);
   font-size: 1rem;
+}
+
+.ledger-totals strong span,
+.ledger-totals strong small {
+  display: block;
+}
+
+.ledger-totals strong small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
 }
 
 .advisory-lab {
@@ -2900,11 +2966,12 @@ textarea::placeholder {
   .profile-edit-fields,
   .profile-stat-grid,
   .profile-admin-actions,
-  .profile-strategy-grid {
+  .profile-strategy-grid,
+  .profile-account-capital {
     grid-template-columns: 1fr;
   }
 
-  .profile-commodity-grid {
+  .profile-commodity-row {
     grid-template-columns: 1fr;
   }
 
