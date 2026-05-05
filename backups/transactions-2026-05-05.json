@@ -1,7 +1,53 @@
 {
-  "generatedAt": "2026-05-05T06:24:34.184Z",
+  "generatedAt": "2026-05-05T06:24:36.253Z",
   "source": "cloudflare-github-daily-paper-trading-ledger-backup",
   "transactions": [
+    {
+      "id": 103,
+      "time": "2026-05-05T06:24:36.035Z",
+      "userEmail": "peter@pjbell.com",
+      "userName": "Peter Bell",
+      "tradeId": 102,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "SELL TARGET",
+      "side": "long",
+      "step": 4,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 105.19,
+      "entryPrice": 104.11,
+      "targetEntryPrice": 103.849725,
+      "targetPrice": 105.1511,
+      "stopPrice": 103.329175,
+      "contractMultiplier": 10,
+      "contracts": 8,
+      "marginRequirement": 104.11,
+      "notionalValue": 8328.8,
+      "openFee": 2,
+      "closeFee": 2,
+      "estimatedExitFee": 2,
+      "totalEstimatedFees": 4,
+      "feePerContractSide": 0.25,
+      "feeLabel": "Estimated exchange/brokerage fee",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "close",
+        "error": "Coinbase sandbox close timed out",
+        "productId": "NOL-18MAY26-CDE",
+        "side": "SELL",
+        "sentAt": "2026-05-05T06:24:36.035Z"
+      },
+      "grossPnl": 86.39999999999986,
+      "netPnl": 82.39999999999986,
+      "exitPrice": 105.19,
+      "openedAt": "2026-05-05T02:43:04.687Z",
+      "closedAt": "2026-05-05T06:24:29.457Z",
+      "durationMs": 13284770,
+      "capital": 832.88,
+      "pnl": 82.39999999999986,
+      "note": "Oil long closed from $104.11",
+      "sharedKey": "102|SELL TARGET|NOL-18MAY26-CDE|2026-05-05T06:24:36.035Z|105.1900"
+    },
     {
       "id": 105,
       "time": "2026-05-05T06:24:33.818Z",
@@ -1734,6 +1780,6 @@
       "userEmail": "peter@pjbell.com"
     }
   ],
-  "backupGeneratedAt": "2026-05-05T06:24:35.410Z",
+  "backupGeneratedAt": "2026-05-05T06:24:37.403Z",
   "backupDate": "2026-05-05"
 }
