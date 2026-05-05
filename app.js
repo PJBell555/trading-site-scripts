@@ -73,6 +73,9 @@ const primaryModelStatEl = document.querySelector("#primary-model-stat");
 const commodityStrip = document.querySelector("#commodity-strip");
 const inputsTitle = document.querySelector("#inputs-title");
 const outputTitle = document.querySelector("#output-title");
+const llmRunBtn = document.querySelector("#llm-run-btn");
+const llmStatusEl = document.querySelector("#llm-status");
+const llmVerificationBody = document.querySelector("#llm-verification-body");
 const signalBadge = document.querySelector("#signal-badge");
 const convictionEl = document.querySelector("#conviction");
 const actionEl = document.querySelector("#action");
@@ -6196,6 +6199,105 @@ if (inputs.manualConviction) {
     setManualConvictionOverride(commoditySelect.value, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
     calculateSignal();
   });
+}
+
+function escapeHtml(value) {
+  return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "\"": "&quot;",
+    "'": "&#39;"
+  })[ch]);
+}
+
+function getLiveAdvisoryContext() {
+  const commodity = commoditySelect ? commoditySelect.value : "oil";
+  const baseSignals = readBaseSignals ? readBaseSignals() : {};
+  const livePrice = lastTradePlan && lastTradePlan.priceReady ? lastTradePlan.livePrice : null;
+  return {
+    commodity,
+    horizon: "intraday",
+    context: {
+      currentPrice: livePrice,
+      signals: baseSignals,
+      uiPrimaryModel: getModelById(primaryModelId).name,
+      uiSecondaryModel: getModelById(secondaryModelId).name
+    }
+  };
+}
+
+function renderLLMVerification(data, requestPayload) {
+  if (!llmVerificationBody) return;
+  const primary = data && data.primary ? data.primary : {};
+  const critic = data && data.critic ? data.critic : {};
+  const consolidated = data && data.consolidated ? data.consolidated : (primary && primary.advisory) || {};
+  const advisory = primary.advisory || {};
+  const review = critic.review || {};
+  const primaryUsage = primary.usage || {};
+  const criticUsage = critic.usage || {};
+  const totalCost = (Number(primaryUsage.cost) || 0) + (Number(criticUsage.cost) || 0);
+  const fmt = (n) => (typeof n === "number" && isFinite(n)) ? n.toFixed(4) : "?";
+
+  llmVerificationBody.hidden = false;
+  llmVerificationBody.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:12px;">
+      <div style="background:#0a0e15;border:1px solid #1f2530;border-radius:8px;padding:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;opacity:.6;">Primary (verified from API)</div>
+        <div style="font-family:ui-monospace,monospace;font-size:12px;margin-top:4px;color:#5eead4;">${escapeHtml(primary.model || "?")}</div>
+        <div style="margin-top:8px;font-size:13px;">conviction: <strong>${escapeHtml(advisory.conviction ?? "?")}</strong> &middot; tone: <strong>${escapeHtml(advisory.tone ?? "?")}</strong></div>
+        <div style="margin-top:6px;font-size:12px;opacity:.7;">cost: $${fmt(primaryUsage.cost)} &middot; latency: ${primary.elapsedMs ?? "?"}ms &middot; ${primaryUsage.total_tokens ?? "?"} tokens</div>
+      </div>
+      <div style="background:#0a0e15;border:1px solid #1f2530;border-radius:8px;padding:12px;">
+        <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;opacity:.6;">Critic (verified from API)</div>
+        <div style="font-family:ui-monospace,monospace;font-size:12px;margin-top:4px;color:#5eead4;">${escapeHtml(critic.model || "?")}</div>
+        <div style="margin-top:8px;font-size:13px;">agree: <strong>${escapeHtml(review.agree ?? "?")}</strong> &middot; adjustedConviction: <strong>${escapeHtml(review.adjustedConviction ?? "?")}</strong></div>
+        <div style="margin-top:6px;font-size:12px;opacity:.7;">cost: $${fmt(criticUsage.cost)} &middot; latency: ${critic.elapsedMs ?? "?"}ms &middot; ${criticUsage.total_tokens ?? "?"} tokens</div>
+      </div>
+    </div>
+    <div style="background:rgba(94,234,212,0.06);border:1px solid rgba(94,234,212,0.25);border-radius:8px;padding:12px;margin-bottom:8px;">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#5eead4;">Consolidated (averaged, tone falls to wait on disagreement)</div>
+      <div style="margin-top:6px;font-size:14px;">conviction: <strong>${escapeHtml(consolidated.conviction ?? "?")}</strong> &middot; tone: <strong>${escapeHtml(consolidated.tone ?? "?")}</strong> &middot; total cost this advisory: <strong>$${fmt(totalCost)}</strong></div>
+    </div>
+    ${advisory.summary ? `<div style="margin-top:8px;font-size:13px;line-height:1.5;">${escapeHtml(advisory.summary)}</div>` : ""}
+    <details style="margin-top:12px;">
+      <summary style="cursor:pointer;font-size:12px;opacity:.7;">Show raw API response (proof)</summary>
+      <pre style="background:#05080d;border:1px solid #1f2530;border-radius:6px;padding:10px;font-size:11px;line-height:1.4;white-space:pre-wrap;word-break:break-word;margin-top:8px;max-height:400px;overflow:auto;">${escapeHtml(JSON.stringify({ request: requestPayload, response: data }, null, 2))}</pre>
+    </details>
+  `;
+}
+
+async function runLiveLLMAdvisor() {
+  if (!llmRunBtn || !llmStatusEl) return;
+  llmRunBtn.disabled = true;
+  llmStatusEl.textContent = "calling Sonnet 4.6 + GPT-5-mini critic…";
+  const payload = getLiveAdvisoryContext();
+  const t0 = Date.now();
+  try {
+    const url = `${getMasterHistoryUrl()}/models/openrouter/advisory`;
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
+    renderLLMVerification(data, payload);
+    const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+    llmStatusEl.textContent = `done in ${elapsed}s · ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    if (llmVerificationBody) {
+      llmVerificationBody.hidden = false;
+      llmVerificationBody.innerHTML = `<div style="color:#f87171;font-size:13px;padding:10px;background:rgba(248,113,113,0.08);border-radius:6px;">Error: ${escapeHtml(err.message)}</div>`;
+    }
+    llmStatusEl.textContent = "failed";
+  } finally {
+    llmRunBtn.disabled = false;
+  }
+}
+
+if (llmRunBtn) {
+  llmRunBtn.addEventListener("click", runLiveLLMAdvisor);
 }
 
 primaryModelSelect.addEventListener("change", () => {
