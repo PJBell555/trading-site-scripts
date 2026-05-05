@@ -12,3 +12,8 @@ ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
 OPENROUTER_APP_NAME = "ComHedge 2"
+
+[[secrets_store_secrets]]
+binding = "OPENROUTER_API_KEY"
+store_id = "64990a5fc9b64196b63cfe82555e6fd4"
+secret_name = "OPENROUTER_API_KEY"

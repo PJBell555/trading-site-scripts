@@ -260,6 +260,15 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
+const FREE_MODEL_DEFAULT = "google/gemma-4-31b-it:free";
+
+function getOpenRouterFreeModel(modelId = "") {
+  if (typeof modelId === "string" && modelId.endsWith(":free")) {
+    return modelId;
+  }
+  return FREE_MODEL_DEFAULT;
+}
+
 function buildOpenRouterOpinionMessages(body = {}) {
   const prompt = String(body.prompt || "Master Technician Analysis");
   const context = body.context || {};
@@ -286,9 +295,93 @@ function buildOpenRouterOpinionMessages(body = {}) {
   ];
 }
 
+function buildOpenRouterAdvisoryMessages(body = {}) {
+  const commodity = body.commodity || body.commodityName || "the selected commodity";
+  const horizon = body.horizon || "intraday";
+  const context = body.context || {};
+
+  const systemContent = [
+    "You are an experienced commodity futures advisor producing calibrated directional advisories.",
+    "This is educational market commentary, not personalized investment advice.",
+    "Return compact JSON only with keys: conviction, tone, summary, reasons, risks.",
+    "conviction must be an integer 0-100 representing your calibrated directional confidence.",
+    "tone must be exactly one of: long, short, wait.",
+    "If signals are mixed or weak, prefer wait or a low conviction over forcing a direction.",
+    "Reasons should cite specific signal values, not generic statements.",
+    "Risks should be concrete events that would invalidate the call."
+  ].join(" ");
+
+  const userContent = JSON.stringify({
+    task: `Produce a ${horizon}-horizon advisory for ${commodity}.`,
+    commodity,
+    horizon,
+    context
+  });
+
+  return [
+    { role: "system", content: systemContent },
+    { role: "user", content: userContent }
+  ];
+}
+
+async function createOpenRouterAdvisory(env, body = {}) {
+  const apiKey = env.OPENROUTER_API_KEY ? await env.OPENROUTER_API_KEY.get() : null;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY Secrets Store binding or value");
+  }
+
+  const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
+  const model = getOpenRouterFreeModel(body.model || body.modelId);
+  const startedAt = Date.now();
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.OPENROUTER_SITE_URL || env.ALLOWED_ORIGIN || "https://pjbell555.github.io",
+      "X-Title": env.OPENROUTER_APP_NAME || "ComHedge 2"
+    },
+    body: JSON.stringify({
+      model,
+      messages: buildOpenRouterAdvisoryMessages(body),
+      temperature: 0.2,
+      max_tokens: 600,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    const baseMsg = data?.error?.message || data?.message || `OpenRouter request failed: ${response.status}`;
+    const meta = data?.error?.metadata;
+    const detail = meta ? ` | provider=${meta.providerName || "?"} raw=${meta.raw || JSON.stringify(meta)}` : "";
+    throw new Error(`${baseMsg}${detail}`);
+  }
+
+  const content = data?.choices?.[0]?.message?.content || "{}";
+  let advisory = {};
+  try {
+    advisory = JSON.parse(content);
+  } catch (error) {
+    advisory = { summary: content };
+  }
+
+  return {
+    provider: "OpenRouter",
+    model,
+    advisory,
+    usage: data.usage || null,
+    elapsedMs: Date.now() - startedAt
+  };
+}
+
 async function createOpenRouterOpinion(env, body = {}) {
-  if (!env.OPENROUTER_API_KEY) {
-    throw new Error("Missing OPENROUTER_API_KEY Worker secret");
+  const apiKey = env.OPENROUTER_API_KEY ? await env.OPENROUTER_API_KEY.get() : null;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY Secrets Store binding or value");
   }
 
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
@@ -296,7 +389,7 @@ async function createOpenRouterOpinion(env, body = {}) {
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${env.OPENROUTER_API_KEY}`,
+      "Authorization": `Bearer ${apiKey}`,
       "Content-Type": "application/json",
       "HTTP-Referer": env.OPENROUTER_SITE_URL || env.ALLOWED_ORIGIN || "https://pjbell555.github.io",
       "X-Title": env.OPENROUTER_APP_NAME || "ComHedge 2"
@@ -547,6 +640,16 @@ export default {
         const body = await request.json().catch(() => ({}));
         const opinion = await createOpenRouterOpinion(env, body);
         return jsonResponse(opinion, 200, origin);
+      }
+
+      if (url.pathname === "/models/openrouter/advisory") {
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const advisory = await createOpenRouterAdvisory(env, body);
+        return jsonResponse(advisory, 200, origin);
       }
 
       if (url.pathname === "/settings") {
