@@ -228,20 +228,24 @@ const opinionPromptLabels = {
 const latestPrices = new Map();
 const latestPriceTimes = new Map();
 const latestPriceSources = new Map();
+const confirmedLivePrices = new Map();
+const confirmedLivePriceTimes = new Map();
+const confirmedLivePriceSources = new Map();
 const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
-const BACKEND_TRANSACTION_SYNC_MS = 15000;
-const BACKEND_SETTINGS_SYNC_MS = 30000;
-const BACKEND_ADVISORY_SYNC_MS = 60000;
+const BACKEND_TRANSACTION_SYNC_MS = 60000;
+const BACKEND_SETTINGS_SYNC_MS = 120000;
+const BACKEND_ADVISORY_SYNC_MS = 300000;
+const BACKEND_FAILURE_BACKOFF_MS = 300000;
 const PAPER_START_EQUITY = 100000;
 const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
-const COINBASE_WS_STALE_MS = 30000;
-const PAPER_EXIT_PRICE_STALE_MS = 45000;
+const COINBASE_WS_STALE_MS = 180000;
+const PAPER_EXIT_PRICE_STALE_MS = 180000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const UNAVAILABLE_TEXT = "Not available";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
@@ -339,6 +343,9 @@ let backendSettingsSyncInFlight = false;
 let backendAdvisorySyncInFlight = false;
 let backendHistoryReady = false;
 let pendingHistorySaveRetry = false;
+let nextBackendTransactionSyncAt = 0;
+let nextBackendSettingsSyncAt = 0;
+let nextBackendAdvisorySyncAt = 0;
 let lastPrimarySignal = null;
 let lastTradePlan = null;
 let lastCommodityMeta = commodities[0];
@@ -3174,17 +3181,56 @@ function getEstimatedFees(config, contracts, sides = 2) {
 }
 
 function isUsableMarketPrice(commodity) {
-  const price = latestPrices.get(commodity);
-  const source = latestPriceSources.get(commodity);
-  const updatedAt = latestPriceTimes.get(commodity);
-  const ageMs = updatedAt instanceof Date ? Date.now() - updatedAt.getTime() : Infinity;
+  const price = confirmedLivePrices.has(commodity)
+    ? confirmedLivePrices.get(commodity)
+    : latestPrices.get(commodity);
+  const source = confirmedLivePriceSources.has(commodity)
+    ? confirmedLivePriceSources.get(commodity)
+    : latestPriceSources.get(commodity);
+  const updatedAt = confirmedLivePriceTimes.has(commodity)
+    ? confirmedLivePriceTimes.get(commodity)
+    : latestPriceTimes.get(commodity);
+  const updatedDate = updatedAt ? getTransactionDate(updatedAt) : null;
+  const ageMs = updatedDate && Number.isFinite(updatedDate.getTime()) ? Date.now() - updatedDate.getTime() : Infinity;
   const liveSource = source === "Coinbase WebSocket" || source === "Coinbase live";
   const freshEnough = liveSource && ageMs <= PAPER_EXIT_PRICE_STALE_MS;
   return Number.isFinite(price) && price > 0 && freshEnough;
 }
 
 function getUsableMarketPrice(commodity) {
-  return isUsableMarketPrice(commodity) ? latestPrices.get(commodity) : null;
+  if (!isUsableMarketPrice(commodity)) return null;
+  return confirmedLivePrices.has(commodity) ? confirmedLivePrices.get(commodity) : latestPrices.get(commodity);
+}
+
+function getUsableMarketPriceTime(commodity) {
+  if (!isUsableMarketPrice(commodity)) return null;
+  return confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
+}
+
+function getUsableMarketPriceSource(commodity) {
+  if (!isUsableMarketPrice(commodity)) return null;
+  return confirmedLivePriceSources.has(commodity) ? confirmedLivePriceSources.get(commodity) : latestPriceSources.get(commodity);
+}
+
+function rememberConfirmedLivePrice(commodity, price, source) {
+  if (!Number.isFinite(price) || price <= 0) return;
+  const now = new Date();
+  latestPrices.set(commodity, price);
+  latestPriceTimes.set(commodity, now);
+  latestPriceSources.set(commodity, source);
+  confirmedLivePrices.set(commodity, price);
+  confirmedLivePriceTimes.set(commodity, now);
+  confirmedLivePriceSources.set(commodity, source);
+}
+
+function isBackendBackoffActive(syncAt) {
+  return Number.isFinite(syncAt) && syncAt > Date.now();
+}
+
+function getBackendBackoffText(syncAt) {
+  const seconds = Math.max(1, Math.ceil((syncAt - Date.now()) / 1000));
+  const minutes = Math.ceil(seconds / 60);
+  return `Backend offline; retrying in ${minutes} min`;
 }
 
 function getTradeGrossPnl(trade, exitPrice) {
@@ -3284,9 +3330,9 @@ function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const userStrategy = getCurrentUserStrategy();
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
-  const updatedAt = latestPriceTimes.get(commodity);
-  const priceSource = latestPriceSources.get(commodity);
   const priceReady = isUsableMarketPrice(commodity);
+  const updatedAt = getUsableMarketPriceTime(commodity);
+  const priceSource = getUsableMarketPriceSource(commodity);
   const livePrice = getUsableMarketPrice(commodity);
   const contractMultiplier = getContractMultiplier(config);
   const longBias = signal.tone === "long";
@@ -3412,9 +3458,7 @@ async function refreshCoinbasePrice(commodity, options = {}) {
     const data = await response.json();
     const livePrice = getCoinbasePrice(data);
     if (livePrice) {
-      latestPrices.set(commodity, livePrice);
-      latestPriceTimes.set(commodity, new Date());
-      latestPriceSources.set(commodity, "Coinbase live");
+      rememberConfirmedLivePrice(commodity, livePrice, "Coinbase live");
       await refreshCoinbaseProductDetails(commodity, livePrice);
       if (runCloseSweep) closeOnlyPaperSweep();
       if (commoditySelect.value === commodity) calculateSignal();
@@ -3482,9 +3526,7 @@ function connectCoinbaseWebSocket(commodity) {
       const socketPrice = getCoinbaseWebSocketPrice(data);
       if (!socketPrice) return;
 
-      latestPrices.set(commodity, socketPrice);
-      latestPriceTimes.set(commodity, new Date());
-      latestPriceSources.set(commodity, "Coinbase WebSocket");
+      rememberConfirmedLivePrice(commodity, socketPrice, "Coinbase WebSocket");
       refreshCoinbaseProductDetails(commodity, socketPrice);
       closeOnlyPaperSweep();
 
@@ -3814,7 +3856,26 @@ function addLiveTradeFromForm(event) {
 }
 
 function getUserScopedTransactions() {
-  return transactionHistory;
+  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  return source.filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
+}
+
+function getBundledTransactionEntries() {
+  const bundledLedger = window.COMHEDGE_BUNDLED_TRANSACTIONS;
+  const bundledEntries = Array.isArray(bundledLedger?.transactions) ? bundledLedger.transactions : [];
+  if (!bundledEntries.length) return [];
+  return bundledEntries
+    .map(normalizeTransactionEntry)
+    .filter(Boolean)
+    .map((entry) => ({
+      ...entry,
+      sharedKey: entry.sharedKey || getTransactionKey(entry),
+    }))
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+}
+
+function getDisplayTransactionSource() {
+  return getUserScopedTransactions().slice();
 }
 
 async function loadBundledTransactionHistory() {
@@ -4228,6 +4289,7 @@ async function submitCoinbaseSandboxOrder(trade, side, intent) {
 
 async function loadSharedSettings(manual = false) {
   if (!hasHistoryBackend()) return false;
+  if (!manual && isBackendBackoffActive(nextBackendSettingsSyncAt)) return false;
   if (backendSettingsSyncInFlight) return false;
   backendSettingsSyncInFlight = true;
 
@@ -4244,8 +4306,10 @@ async function loadSharedSettings(manual = false) {
     }
     setCoinbaseSandboxEnabled(true);
     calculateSignal();
+    nextBackendSettingsSyncAt = 0;
     return true;
   } catch (error) {
+    nextBackendSettingsSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     if (manual) coinbaseSandboxStatusEl.textContent = "Settings sync failed";
     return false;
   } finally {
@@ -4276,6 +4340,7 @@ async function saveSharedSettings() {
     setCoinbaseSandboxEnabled(true);
     return true;
   } catch (error) {
+    nextBackendSettingsSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     coinbaseSandboxStatusEl.textContent = "Settings save failed";
     return false;
   }
@@ -4313,6 +4378,7 @@ async function loadSharedAdvisoryHistory(manual = false) {
     renderAdvisoryChart();
     return false;
   }
+  if (!manual && isBackendBackoffActive(nextBackendAdvisorySyncAt)) return false;
   if (backendAdvisorySyncInFlight) return false;
   backendAdvisorySyncInFlight = true;
 
@@ -4325,10 +4391,12 @@ async function loadSharedAdvisoryHistory(manual = false) {
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
     advisoryHistoryStatusEl.textContent = `Chart synced ${advisoryHistory.length} sample${advisoryHistory.length === 1 ? "" : "s"}`;
     renderAdvisoryChart();
+    nextBackendAdvisorySyncAt = 0;
     return true;
   } catch (error) {
+    nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     advisoryHistoryStatusEl.textContent = advisoryHistory.length
-      ? `Chart using ${advisoryHistory.length} local sample${advisoryHistory.length === 1 ? "" : "s"}; backend offline`
+      ? `Chart using ${advisoryHistory.length} local sample${advisoryHistory.length === 1 ? "" : "s"}; ${getBackendBackoffText(nextBackendAdvisorySyncAt)}`
       : manual ? "Chart sync failed" : "Chart backend offline";
     renderAdvisoryChart();
     return false;
@@ -4355,6 +4423,7 @@ async function saveSharedAdvisorySnapshots(snapshots) {
     renderAdvisoryChart();
     return true;
   } catch (error) {
+    nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     advisoryHistoryStatusEl.textContent = "Chart save failed";
     return false;
   }
@@ -4867,11 +4936,13 @@ async function saveSharedTransactionHistory() {
     reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
     backendHistoryReady = true;
+    nextBackendTransactionSyncAt = 0;
     pendingHistorySaveRetry = false;
     return true;
   } catch (error) {
+    nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     pendingHistorySaveRetry = true;
-    sharedHistoryStatusEl.textContent = "Backend save failed; retrying automatically";
+    sharedHistoryStatusEl.textContent = getBackendBackoffText(nextBackendTransactionSyncAt);
     return false;
   } finally {
     backendHistoryWriteInFlight = false;
@@ -4913,6 +4984,7 @@ async function loadSharedTransactionHistory(manual = false) {
     sharedHistoryStatusEl.textContent = "Backend required";
     return false;
   }
+  if (!manual && isBackendBackoffActive(nextBackendTransactionSyncAt)) return false;
   if (backendSyncInFlight || backendHistoryWriteInFlight) return false;
   backendSyncInFlight = true;
 
@@ -4935,11 +5007,15 @@ async function loadSharedTransactionHistory(manual = false) {
     } else {
       sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     }
+    nextBackendTransactionSyncAt = 0;
     calculateSignal();
     return true;
   } catch (error) {
     backendHistoryReady = true;
-    sharedHistoryStatusEl.textContent = manual ? "Backend sync failed; using local ledger" : "Backend offline; using local ledger";
+    nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    sharedHistoryStatusEl.textContent = manual
+      ? "Backend sync failed; using local ledger"
+      : `Backend offline; using local ledger. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
     await loadBundledTransactionHistory();
     calculateSignal();
     return false;
@@ -4950,6 +5026,7 @@ async function loadSharedTransactionHistory(manual = false) {
 
 async function autoSyncTransactionHistory() {
   if (!hasHistoryBackend() || backendSyncInFlight || backendHistoryWriteInFlight) return false;
+  if (isBackendBackoffActive(nextBackendTransactionSyncAt)) return false;
 
   if (pendingHistorySaveRetry) {
     const saved = await saveSharedTransactionHistory();
@@ -5689,7 +5766,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
 
-  const displaySourceEntries = transactionHistory.length ? transactionHistory.slice() : scopedTransactions.slice();
+  const displaySourceEntries = getDisplayTransactionSource();
 
   if (!displaySourceEntries.length) {
     const row = document.createElement("tr");
