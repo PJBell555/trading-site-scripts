@@ -214,14 +214,14 @@ const marketConfig = {
 };
 
 const advisoryModels = [
-  { id: "sonnet-4.6", name: "Sonnet 4.6", provider: "Anthropic", badge: "C", tilt: -1, style: "calibrated reasoning (live LLM via OpenRouter)" },
-  { id: "haiku-4.5", name: "Haiku 4.5", provider: "Anthropic", badge: "C", tilt: 0, style: "fast LLM via OpenRouter" },
-  { id: "gpt-5-mini", name: "GPT-5-mini", provider: "OpenAI", badge: "O", tilt: 0, style: "reasoning model (critic / second opinion)" },
-  { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter" },
-  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "balanced reasoning (legacy local-rules label)" },
-  { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI fallback" },
-  { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "source-heavy market scan" },
-  { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "broad macro cross-check" },
+  { id: "sonnet-4.6", name: "Sonnet 4.6", provider: "Anthropic", badge: "C", tilt: -1, style: "calibrated reasoning (live LLM via OpenRouter)", openrouterId: "anthropic/claude-sonnet-4.6" },
+  { id: "haiku-4.5", name: "Haiku 4.5", provider: "Anthropic", badge: "C", tilt: 0, style: "fast LLM via OpenRouter", openrouterId: "anthropic/claude-haiku-4.5" },
+  { id: "gpt-5-mini", name: "GPT-5-mini", provider: "OpenAI", badge: "O", tilt: 0, style: "reasoning model (critic / second opinion)", openrouterId: "openai/gpt-5-mini" },
+  { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter", openrouterId: "google/gemini-2.5-flash" },
+  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "mapped to gpt-5-mini on the live API", openrouterId: "openai/gpt-5-mini" },
+  { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "mapped to gpt-5-nano on the live API", openrouterId: "openai/gpt-5-nano" },
+  { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "(falls back to Sonnet 4.6 on the live API for now)" },
+  { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "mapped to gemini-2.5-flash on the live API", openrouterId: "google/gemini-2.5-flash" },
   { id: "claude", name: "Claude", provider: "Anthropic", badge: "C", tilt: -1, style: "risk-first critique" },
   { id: "grok", name: "Grok", provider: "xAI", badge: "X", tilt: 5, style: "momentum and narrative scan" }
 ];
@@ -6138,8 +6138,8 @@ function calculateSignal() {
     outputTitle.textContent = `Advisor output: ${commodityMeta.name} — VERIFIED ${verified.primaryModel} + ${verified.criticModel} at ${verified.time}`;
     primaryModelStatEl.textContent = `${verified.primaryModel} + ${verified.criticModel} (verified)`;
   } else {
-    outputTitle.textContent = `Advisor output: ${commodityMeta.name} — local-JS heuristic (selected: ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""})`;
-    primaryModelStatEl.textContent = "local-JS heuristic";
+    outputTitle.textContent = `Advisor output: ${commodityMeta.name} — Loading ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName + " critic" : ""}…`;
+    primaryModelStatEl.textContent = `Loading ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""}…`;
   }
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
@@ -6222,16 +6222,33 @@ function getLiveAdvisoryContext() {
   const commodity = commoditySelect ? commoditySelect.value : "oil";
   const baseSignals = readBaseSignals ? readBaseSignals() : {};
   const livePrice = lastTradePlan && lastTradePlan.priceReady ? lastTradePlan.livePrice : null;
-  return {
+  const primaryEntry = getModelById(primaryModelId);
+  const secondaryEntry = getModelById(secondaryModelId);
+  const body = {
     commodity,
     horizon: "intraday",
     context: {
       currentPrice: livePrice,
       signals: baseSignals,
-      uiPrimaryModel: getModelById(primaryModelId).name,
-      uiSecondaryModel: getModelById(secondaryModelId).name
+      uiPrimaryModel: primaryEntry.name,
+      uiSecondaryModel: secondaryEntry.name
     }
   };
+  if (primaryEntry.openrouterId) body.model = primaryEntry.openrouterId;
+  if (secondaryEntry.openrouterId) body.critic = secondaryEntry.openrouterId;
+  return body;
+}
+
+function formatVerifiedTime(date) {
+  try {
+    return new Intl.DateTimeFormat("en-US", {
+      hour: "numeric",
+      minute: "2-digit",
+      timeZoneName: "short"
+    }).format(date);
+  } catch (_e) {
+    return date.toLocaleTimeString();
+  }
 }
 
 function renderLLMVerification(data, requestPayload) {
@@ -6294,19 +6311,39 @@ function llmDerivedColor(tone) {
   return "#a47b22";
 }
 
-function applyLLMDisplayOverride(commodity) {
-  if (!lastVerifiedLLMRun || lastVerifiedLLMRun.commodity !== commodity) return;
-  const adv = lastVerifiedLLMRun.advisory;
-  if (!adv || typeof adv !== "object") return;
+function applyLoadingPlaceholders() {
+  const primaryName = getModelById(primaryModelId).name;
+  const secondaryName = secondaryModelId ? getModelById(secondaryModelId).name : "";
+  convictionEl.textContent = "Loading…";
+  signalBadge.textContent = "Loading";
+  signalBadge.style.background = "#374151";
+  actionEl.textContent = `Calling ${primaryName}${secondaryName ? " + " + secondaryName + " critic" : ""}…`;
+  reasonsEl.innerHTML = `<li style="opacity:.7">Calling ${escapeHtml(primaryName)} primary${secondaryName ? " + " + escapeHtml(secondaryName) + " critic" : ""} via OpenRouter…</li>`;
+  riskCopyEl.textContent = "Risks pending — LLM call in flight.";
+}
 
-  const conviction = Number(adv.conviction);
-  const tone = String(adv.tone || "wait").toLowerCase();
-  if (Number.isFinite(conviction)) {
-    convictionEl.textContent = `${conviction} / 100 (LLM)`;
+function applyLLMDisplayOverride(commodity) {
+  const haveVerified = lastVerifiedLLMRun
+    && lastVerifiedLLMRun.commodity === commodity
+    && lastVerifiedLLMRun.advisory
+    && typeof lastVerifiedLLMRun.advisory === "object";
+
+  if (!haveVerified) {
+    applyLoadingPlaceholders();
+    return;
   }
-  signalBadge.textContent = llmDerivedLabel(tone, conviction);
+
+  const adv = lastVerifiedLLMRun.advisory;
+  const convictionRaw = Number(adv.conviction);
+  const conviction = Number.isFinite(convictionRaw) ? convictionRaw : null;
+  const tone = String(adv.tone || "wait").toLowerCase();
+
+  convictionEl.textContent = conviction !== null
+    ? `${conviction} / 100 (LLM)`
+    : "— / 100 (LLM returned no numeric conviction)";
+  signalBadge.textContent = llmDerivedLabel(tone, conviction ?? 50);
   signalBadge.style.background = llmDerivedColor(tone);
-  actionEl.textContent = llmDerivedAction(tone, conviction);
+  actionEl.textContent = llmDerivedAction(tone, conviction ?? 50);
 
   if (Array.isArray(adv.reasons) && adv.reasons.length) {
     reasonsEl.innerHTML = "";
@@ -6315,11 +6352,15 @@ function applyLLMDisplayOverride(commodity) {
       item.textContent = String(reason);
       reasonsEl.append(item);
     });
+  } else {
+    reasonsEl.innerHTML = '<li style="opacity:.6">(LLM returned no reasons array)</li>';
   }
   if (Array.isArray(adv.risks) && adv.risks.length) {
     riskCopyEl.textContent = adv.risks.join(" ");
   } else if (typeof adv.summary === "string") {
     riskCopyEl.textContent = adv.summary;
+  } else {
+    riskCopyEl.textContent = "(LLM returned no risks)";
   }
 }
 
@@ -6347,7 +6388,7 @@ async function runLiveLLMAdvisor() {
       commodity: payload.commodity,
       primaryModel: (data.primary && data.primary.model) || "?",
       criticModel: (data.critic && data.critic.model) || "?",
-      time: new Date().toLocaleTimeString(),
+      time: formatVerifiedTime(new Date()),
       advisory: {
         conviction: consolidatedAdv.conviction ?? primaryAdv.conviction,
         tone: consolidatedAdv.tone ?? primaryAdv.tone,
@@ -6402,6 +6443,8 @@ if (llmRunBtn) {
 
 primaryModelSelect.addEventListener("change", () => {
   primaryModelId = primaryModelSelect.value;
+  lastVerifiedLLMRun = null;
+  llmAutoCommodityKey = null;
   renderSecondOpinionControls();
   saveModelSettings();
   calculateSignal();
