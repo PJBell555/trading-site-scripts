@@ -260,13 +260,61 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
-const FREE_MODEL_DEFAULT = "google/gemma-4-31b-it:free";
+const ADVISORY_MODEL_DEFAULT = "anthropic/claude-haiku-4.5";
 
-function getOpenRouterFreeModel(modelId = "") {
-  if (typeof modelId === "string" && modelId.endsWith(":free")) {
+const APPROVED_ADVISORY_MODELS = new Set([
+  "anthropic/claude-haiku-4.5",
+  "anthropic/claude-3.5-haiku",
+  "anthropic/claude-sonnet-4.6",
+  "google/gemini-2.5-flash",
+  "google/gemini-2.5-flash-lite",
+  "openai/gpt-5-nano",
+  "openai/gpt-5-mini",
+  "openai/gpt-4o-mini",
+  "openai/gpt-4.1-mini",
+  "google/gemma-4-31b-it:free",
+  "qwen/qwen3-next-80b-a3b-instruct:free",
+  "nvidia/nemotron-3-super-120b-a12b:free",
+  "google/gemma-3-4b-it:free"
+]);
+
+function getOpenRouterAdvisoryModel(modelId = "") {
+  if (typeof modelId === "string" && APPROVED_ADVISORY_MODELS.has(modelId)) {
     return modelId;
   }
-  return FREE_MODEL_DEFAULT;
+  return ADVISORY_MODEL_DEFAULT;
+}
+
+function parseAdvisoryContent(content = "") {
+  const tryParse = (text) => {
+    try {
+      return JSON.parse(text);
+    } catch (_error) {
+      return null;
+    }
+  };
+
+  let parsed = tryParse(content);
+
+  if (parsed && typeof parsed === "object" && Object.keys(parsed).length === 1
+    && typeof parsed.summary === "string") {
+    const inner = tryParse(parsed.summary);
+    if (inner && typeof inner === "object") {
+      parsed = inner;
+    }
+  }
+
+  if (!parsed) {
+    const fence = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fence) parsed = tryParse(fence[1]);
+  }
+
+  if (!parsed) {
+    const braced = content.match(/\{[\s\S]*\}/);
+    if (braced) parsed = tryParse(braced[0]);
+  }
+
+  return parsed && typeof parsed === "object" ? parsed : { summary: content };
 }
 
 function buildOpenRouterOpinionMessages(body = {}) {
@@ -331,7 +379,7 @@ async function createOpenRouterAdvisory(env, body = {}) {
   }
 
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
-  const model = getOpenRouterFreeModel(body.model || body.modelId);
+  const model = getOpenRouterAdvisoryModel(body.model || body.modelId);
   const startedAt = Date.now();
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -362,12 +410,7 @@ async function createOpenRouterAdvisory(env, body = {}) {
   }
 
   const content = data?.choices?.[0]?.message?.content || "{}";
-  let advisory = {};
-  try {
-    advisory = JSON.parse(content);
-  } catch (error) {
-    advisory = { summary: content };
-  }
+  const advisory = parseAdvisoryContent(content);
 
   return {
     provider: "OpenRouter",
