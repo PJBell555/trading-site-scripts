@@ -317,6 +317,7 @@ let activePriceSocketCommodity = null;
 let activePriceSocketReconnectTimer = null;
 let historyCommodityFilter = "all";
 let historyPeriodFilter = "all";
+let historyFiltersTouched = false;
 let expandedTransactionId = null;
 let advisoryCommodityFilter = "oil";
 let advisoryHorizonFilter = "intraday";
@@ -1065,12 +1066,20 @@ function userCanTradeCommodity(commodity) {
   return getCurrentUserCommodityIds().includes(commodity);
 }
 
+function normalizeHistoryCommodityFilter() {
+  const allowed = new Set(["all", ...getCurrentUserCommodityIds()]);
+  if (!allowed.has(historyCommodityFilter)) {
+    historyCommodityFilter = "all";
+  }
+  return historyCommodityFilter;
+}
+
 function ensureSelectedCommodityAllowed() {
   const allowed = getCurrentUserCommodityIds();
   if (allowed.includes(commoditySelect.value)) return false;
 
   commoditySelect.value = allowed[0] || "oil";
-  historyCommodityFilter = allowed.includes(historyCommodityFilter) ? historyCommodityFilter : "all";
+  normalizeHistoryCommodityFilter();
   advisoryCommodityFilter = allowed.includes(advisoryCommodityFilter) ? advisoryCommodityFilter : commoditySelect.value;
   return true;
 }
@@ -1410,6 +1419,15 @@ function renderPnlWithCapital(element, pnl, startCapital = getCurrentProfileStar
   const currentCapital = Math.max(0, (Number(startCapital) || 0) + (Number(pnl) || 0));
   element.innerHTML = `<span>${formatSignedMoney(pnl)}</span><small>Capital ${formatMoney(currentCapital)}</small>`;
   element.className = pnl >= 0 ? "gain" : "loss";
+}
+
+function getSafeHistoryStartCapital(commodity = "all") {
+  try {
+    return getCurrentProfileStartCapitalForCommodity(commodity);
+  } catch (error) {
+    console.warn("Using account start capital because profile allocation data could not be read.", error);
+    return getCurrentProfileStartCapital();
+  }
 }
 
 function getUniqueSessionCount(user, field) {
@@ -2158,6 +2176,60 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   return row;
 }
 
+function buildFallbackPaperTradeRow(message) {
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = 10;
+  cell.textContent = message;
+  row.append(cell);
+  return row;
+}
+
+function appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
+  if (!transactionHistoryEl) return;
+  try {
+    const queuedRow = buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
+    if (queuedRow) {
+      transactionHistoryEl.append(queuedRow);
+      return;
+    }
+  } catch (error) {
+    console.warn("Paper trade queue row failed to render", error);
+  }
+
+  transactionHistoryEl.append(buildFallbackPaperTradeRow("Trade queue is waiting for a complete live price and advisory."));
+}
+
+function appendSimplePaperHistoryRows(entries) {
+  entries.slice(0, 50).forEach((entry) => {
+    const row = document.createElement("tr");
+    const pnl = getDisplayPnl(entry);
+
+    appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
+    [
+      entry?.time ? formatTradeTime(entry.time) : "-",
+      entry?.action || "Trade",
+      entry?.side ? formatSide(entry.side) : "-",
+      entry?.step ? `#${entry.step}` : "-",
+      entry?.contract || "-",
+      Number.isFinite(Number(entry?.price)) ? formatPrice(Number(entry.price)) : UNAVAILABLE_TEXT,
+      Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
+      getTransactionTargetOrExitPrice(entry),
+      Number.isFinite(pnl) ? formatSignedMoney(pnl) : "-"
+    ].forEach((value, index) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      if (index === 8) {
+        if (pnl > 0) cell.className = "gain";
+        if (pnl < 0) cell.className = "loss";
+      }
+      row.append(cell);
+    });
+
+    transactionHistoryEl.append(row);
+  });
+}
+
 function buildQueuedLiveTradeRow() {
   const row = document.createElement("tr");
   const signal = lastPrimarySignal;
@@ -2671,6 +2743,7 @@ function renderHistoryFilterButtons() {
   historyCommodityFiltersEl.innerHTML = "";
 
   const visibleCommodities = commodities.filter(({ id }) => userCanTradeCommodity(id));
+  normalizeHistoryCommodityFilter();
   const filters = [
     { id: "all", name: "All" },
     ...visibleCommodities.map(({ id, name }) => ({ id, name }))
@@ -2688,6 +2761,7 @@ function renderHistoryFilterButtons() {
     check.textContent = historyCommodityFilter === id ? "✓" : "";
     button.append(check, document.createTextNode(name));
     button.addEventListener("click", () => {
+      historyFiltersTouched = true;
       historyCommodityFilter = id;
       expandedTransactionId = null;
       renderHistoryFilterButtons();
@@ -3738,6 +3812,18 @@ function getUserScopedTransactions() {
 }
 
 async function loadBundledTransactionHistory() {
+  const bundledLedger = window.COMHEDGE_BUNDLED_TRANSACTIONS;
+  const bundledEntries = Array.isArray(bundledLedger?.transactions) ? bundledLedger.transactions : [];
+  if (bundledEntries.length) {
+    const before = transactionHistory.length;
+    const added = mergeTransactionHistory(bundledEntries, { persist: false });
+    if (!before && !added) replaceTransactionHistory(bundledEntries);
+    reconcilePaperStateFromHistory();
+    sharedHistoryStatusEl.textContent = `Local ledger loaded ${transactionHistory.length} row${transactionHistory.length === 1 ? "" : "s"}`;
+    calculateSignal();
+    return added > 0 || !before;
+  }
+
   if (transactionHistory.length) return false;
 
   try {
@@ -4848,7 +4934,7 @@ async function loadSharedTransactionHistory(manual = false) {
   } catch (error) {
     backendHistoryReady = true;
     sharedHistoryStatusEl.textContent = manual ? "Backend sync failed; using local ledger" : "Backend offline; using local ledger";
-    if (!transactionHistory.length) await loadBundledTransactionHistory();
+    await loadBundledTransactionHistory();
     calculateSignal();
     return false;
   } finally {
@@ -4868,9 +4954,19 @@ async function autoSyncTransactionHistory() {
 }
 
 async function initializeBackendState() {
-  await loadSharedSettings();
-  const loadedHistory = await autoSyncTransactionHistory();
-  await loadSharedAdvisoryHistory();
+  if (hasHistoryBackend()) {
+    sharedHistoryStatusEl.textContent = "Loading backend ledger";
+  }
+
+  const historyLoad = autoSyncTransactionHistory();
+  const settingsLoad = loadSharedSettings();
+  const advisoryLoad = loadSharedAdvisoryHistory();
+  const [loadedHistory] = await Promise.all([
+    historyLoad,
+    settingsLoad,
+    advisoryLoad
+  ]);
+
   calculateSignal();
   closeOnlyPaperSweep();
   return loadedHistory;
@@ -5235,10 +5331,11 @@ function getPeriodStart(period) {
 
 function isEntryInPeriod(entry, period) {
   const start = getPeriodStart(period);
-  return !start || entry.time >= start;
+  return !start || getTransactionDate(entry.time).getTime() >= start.getTime();
 }
 
 function getFilteredTransactions() {
+  normalizeHistoryCommodityFilter();
   return getUserScopedTransactions().filter((entry) => {
     const commodityMatch = historyCommodityFilter === "all" || entry.commodity === historyCommodityFilter;
     return commodityMatch && isEntryInPeriod(entry, historyPeriodFilter);
@@ -5578,16 +5675,22 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   transactionHistoryEl.innerHTML = "";
+  if (!historyFiltersTouched) {
+    historyCommodityFilter = "all";
+    historyPeriodFilter = "all";
+  }
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
 
-  if (!scopedTransactions.length) {
+  const displaySourceEntries = transactionHistory.length ? transactionHistory.slice() : scopedTransactions.slice();
+
+  if (!displaySourceEntries.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     renderPnlWithCapital(historyTotalAllEl, 0);
-    renderPnlWithCapital(historyTotalFilteredEl, 0, getCurrentProfileStartCapitalForCommodity(historyCommodityFilter));
+    renderPnlWithCapital(historyTotalFilteredEl, 0, getSafeHistoryStartCapital(historyCommodityFilter));
     historyTotalCountEl.textContent = "0 rows";
-    transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
+    appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
     cell.colSpan = 10;
     cell.textContent = "Waiting for a long or short advisory above 50 conviction.";
     row.append(cell);
@@ -5595,19 +5698,57 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     return;
   }
 
-  const periodEntries = scopedTransactions.filter((entry) => isEntryInPeriod(entry, historyPeriodFilter));
-  const filteredEntries = getFilteredTransactions();
-  const allTotal = getProfitTotal(periodEntries);
-  const filteredTotal = getProfitTotal(filteredEntries);
+  let periodEntries = displaySourceEntries.slice();
+  let rowsToRender = displaySourceEntries.slice();
+
+  if (historyFiltersTouched) {
+    periodEntries = displaySourceEntries.filter((entry) => isEntryInPeriod(entry, historyPeriodFilter));
+    if (!periodEntries.length) periodEntries = displaySourceEntries.slice();
+
+    rowsToRender = historyCommodityFilter === "all"
+      ? periodEntries.slice()
+      : periodEntries.filter((entry) => entry.commodity === historyCommodityFilter);
+
+    if (!rowsToRender.length) {
+      historyCommodityFilter = "all";
+      historyPeriodFilter = "all";
+      historyFiltersTouched = false;
+      renderHistoryFilterButtons();
+      renderPeriodFilterButtons();
+      periodEntries = displaySourceEntries.slice();
+      rowsToRender = displaySourceEntries.slice();
+    }
+  }
+
+  if (!rowsToRender.length && displaySourceEntries.length) {
+    historyCommodityFilter = "all";
+    historyPeriodFilter = "all";
+    historyFiltersTouched = false;
+    renderHistoryFilterButtons();
+    renderPeriodFilterButtons();
+    periodEntries = displaySourceEntries.slice();
+    rowsToRender = displaySourceEntries.slice();
+  }
+
+  if (!rowsToRender.length && displaySourceEntries.length) {
+    rowsToRender = displaySourceEntries.slice();
+    periodEntries = displaySourceEntries.slice();
+  }
+
+  const allTotal = getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries);
+  const filteredTotal = getProfitTotal(rowsToRender);
 
   renderPnlWithCapital(historyTotalAllEl, allTotal);
-  renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getCurrentProfileStartCapitalForCommodity(historyCommodityFilter));
-  historyTotalCountEl.textContent = `${filteredEntries.length} row${filteredEntries.length === 1 ? "" : "s"}`;
+  renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
+  historyTotalCountEl.textContent = `${rowsToRender.length} row${rowsToRender.length === 1 ? "" : "s"}`;
+  if (sharedHistoryStatusEl && displaySourceEntries.length) {
+    sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
+  }
 
-  if (!filteredEntries.length) {
+  if (!rowsToRender.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
+    appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
     cell.colSpan = 10;
     cell.textContent = "No transactions match the selected filters.";
     row.append(cell);
@@ -5615,77 +5756,118 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     return;
   }
 
-  transactionHistoryEl.append(buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision));
-  filteredEntries.slice(0, 50).forEach((entry) => {
-    const row = document.createElement("tr");
-    const displayPnl = getDisplayPnl(entry);
-    const pnlClass = displayPnl > 0 ? "gain" : displayPnl < 0 ? "loss" : "";
-    const expanded = expandedTransactionId === entry.id;
-    appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
-    const values = [
-      formatTradeTime(entry.time),
-      null,
-      entry.side ? formatSide(entry.side) : "-",
-      entry.step ? `#${entry.step}` : "-",
-      entry.contract,
-      formatPrice(entry.price),
-      formatMoney(entry.capital),
-      getTransactionTargetOrExitPrice(entry),
-      formatSignedMoney(displayPnl)
-    ];
+  appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
+  const rowsBeforeHistory = transactionHistoryEl.children.length;
+  rowsToRender.slice(0, 50).forEach((entry) => {
+    try {
+      const row = document.createElement("tr");
+      const displayPnl = getDisplayPnl(entry);
+      const pnlClass = displayPnl > 0 ? "gain" : displayPnl < 0 ? "loss" : "";
+      const expanded = expandedTransactionId === entry.id;
+      appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
+      const values = [
+        formatTradeTime(entry.time),
+        null,
+        entry.side ? formatSide(entry.side) : "-",
+        entry.step ? `#${entry.step}` : "-",
+        entry.contract,
+        formatPrice(entry.price),
+        formatMoney(entry.capital),
+        getTransactionTargetOrExitPrice(entry),
+        formatSignedMoney(displayPnl)
+      ];
 
-    row.className = "transaction-row";
-    row.tabIndex = 0;
-    row.setAttribute("aria-expanded", String(expanded));
-    row.addEventListener("click", () => {
-      expandedTransactionId = expanded ? null : entry.id;
-      calculateSignal();
-    });
-    row.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
+      row.className = "transaction-row";
+      row.tabIndex = 0;
+      row.setAttribute("aria-expanded", String(expanded));
+      row.addEventListener("click", () => {
         expandedTransactionId = expanded ? null : entry.id;
         calculateSignal();
-      }
-    });
-
-    values.forEach((value, index) => {
-      const cell = document.createElement("td");
-      if (index === 1) {
-        const toggle = document.createElement("button");
-        const chevron = document.createElement("span");
-
-        toggle.type = "button";
-        toggle.className = "transaction-toggle";
-        toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${entry.action} transaction`);
-        chevron.className = "chevron";
-        chevron.textContent = expanded ? "▾" : "▸";
-        toggle.append(chevron, document.createTextNode(entry.action));
-        toggle.addEventListener("click", (event) => {
-          event.stopPropagation();
+      });
+      row.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
           expandedTransactionId = expanded ? null : entry.id;
           calculateSignal();
-        });
-        cell.append(toggle);
-      } else {
-        cell.textContent = value;
+        }
+      });
+
+      values.forEach((value, index) => {
+        const cell = document.createElement("td");
+        if (index === 1) {
+          const toggle = document.createElement("button");
+          const chevron = document.createElement("span");
+
+          toggle.type = "button";
+          toggle.className = "transaction-toggle";
+          toggle.setAttribute("aria-label", `${expanded ? "Collapse" : "Expand"} ${entry.action || "trade"} transaction`);
+          chevron.className = "chevron";
+          chevron.textContent = expanded ? "▾" : "▸";
+          toggle.append(chevron, document.createTextNode(entry.action || "Trade"));
+          toggle.addEventListener("click", (event) => {
+            event.stopPropagation();
+            expandedTransactionId = expanded ? null : entry.id;
+            calculateSignal();
+          });
+          cell.append(toggle);
+        } else {
+          cell.textContent = value;
+        }
+        if (index === 8 && pnlClass) cell.className = pnlClass;
+        row.append(cell);
+      });
+      transactionHistoryEl.append(row);
+
+      if (expanded) {
+        const detailRow = document.createElement("tr");
+        const detailCell = document.createElement("td");
+
+        detailRow.className = "transaction-detail";
+        detailCell.colSpan = 10;
+        detailCell.append(renderTransactionDetail(entry));
+        detailRow.append(detailCell);
+        transactionHistoryEl.append(detailRow);
       }
-      if (index === 8 && pnlClass) cell.className = pnlClass;
-      row.append(cell);
-    });
-    transactionHistoryEl.append(row);
-
-    if (expanded) {
-      const detailRow = document.createElement("tr");
-      const detailCell = document.createElement("td");
-
-      detailRow.className = "transaction-detail";
-      detailCell.colSpan = 10;
-      detailCell.append(renderTransactionDetail(entry));
-      detailRow.append(detailCell);
-      transactionHistoryEl.append(detailRow);
+    } catch (error) {
+      console.warn("Transaction row failed to render; using fallback row.", error, entry);
+      const row = document.createElement("tr");
+      appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
+      [
+        entry?.time ? formatTradeTime(entry.time) : "-",
+        entry?.action || "Trade",
+        entry?.side ? formatSide(entry.side) : "-",
+        entry?.step ? `#${entry.step}` : "-",
+        entry?.contract || "-",
+        Number.isFinite(Number(entry?.price)) ? formatPrice(Number(entry.price)) : UNAVAILABLE_TEXT,
+        Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
+        "-",
+        Number.isFinite(Number(entry?.pnl)) ? formatSignedMoney(Number(entry.pnl)) : "-"
+      ].forEach((value, index) => {
+        const cell = document.createElement("td");
+        cell.textContent = value;
+        if (index === 8) {
+          const pnl = Number(entry?.pnl);
+          if (pnl > 0) cell.className = "gain";
+          if (pnl < 0) cell.className = "loss";
+        }
+        row.append(cell);
+      });
+      transactionHistoryEl.append(row);
     }
   });
+
+  if (rowsToRender.length && transactionHistoryEl.children.length === rowsBeforeHistory) {
+    console.warn("Paper history renderer appended no rows; using simple fallback renderer.", {
+      loaded: displaySourceEntries.length,
+      filtered: rowsToRender.length,
+      historyCommodityFilter,
+      historyPeriodFilter
+    });
+    appendSimplePaperHistoryRows(rowsToRender);
+    if (sharedHistoryStatusEl) {
+      sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; fallback rendered ${Math.min(rowsToRender.length, 50)}`;
+    }
+  }
 }
 
 function calculateSignal() {
@@ -5828,6 +6010,7 @@ historyPeriodFiltersEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-period]");
   if (!button) return;
 
+  historyFiltersTouched = true;
   historyPeriodFilter = button.dataset.period;
   expandedTransactionId = null;
   calculateSignal();
@@ -5995,9 +6178,7 @@ function initializeApp() {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
   renderAdvisoryFilterButtons();
-  if (!transactionHistory.length) {
-    loadBundledTransactionHistory();
-  }
+  loadBundledTransactionHistory();
   calculateSignal();
   initializeBackendState();
   connectCoinbaseWebSocket(commoditySelect.value);
