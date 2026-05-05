@@ -346,6 +346,8 @@ let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
 let secondaryModelId = "gpt-5-mini";
 let lastVerifiedLLMRun = null;
+let llmInFlight = false;
+let llmAutoCommodityKey = null;
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
 let advisoryScoreThresholdIsManual = false;
 let backendSyncInFlight = false;
@@ -6177,6 +6179,8 @@ function calculateSignal() {
   renderKarpathyLoop(primarySignal, tradePlan);
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
+  applyLLMDisplayOverride(commodity);
+  maybeAutoTriggerLLM();
 }
 
 [
@@ -6270,8 +6274,59 @@ function renderLLMVerification(data, requestPayload) {
   `;
 }
 
+function llmDerivedLabel(tone, conviction) {
+  const c = Math.max(0, Math.min(100, Number(conviction) || 50));
+  if (tone === "long") return c >= 70 ? "Strong Long" : c >= 50 ? "Moderate Long" : "Lean Long";
+  if (tone === "short") return c >= 70 ? "Strong Short" : c >= 50 ? "Moderate Short" : "Lean Short";
+  return "Wait";
+}
+
+function llmDerivedAction(tone, conviction) {
+  const c = Math.max(0, Math.min(100, Number(conviction) || 50));
+  if (tone === "long") return c >= 70 ? "Long, full size" : c >= 50 ? "Lean long small" : "Lean long minimal";
+  if (tone === "short") return c >= 70 ? "Short, full size" : c >= 50 ? "Lean short small" : "Lean short minimal";
+  return "Wait for clarity";
+}
+
+function llmDerivedColor(tone) {
+  if (tone === "long") return "#1d8456";
+  if (tone === "short") return "#c4524d";
+  return "#a47b22";
+}
+
+function applyLLMDisplayOverride(commodity) {
+  if (!lastVerifiedLLMRun || lastVerifiedLLMRun.commodity !== commodity) return;
+  const adv = lastVerifiedLLMRun.advisory;
+  if (!adv || typeof adv !== "object") return;
+
+  const conviction = Number(adv.conviction);
+  const tone = String(adv.tone || "wait").toLowerCase();
+  if (Number.isFinite(conviction)) {
+    convictionEl.textContent = `${conviction} / 100 (LLM)`;
+  }
+  signalBadge.textContent = llmDerivedLabel(tone, conviction);
+  signalBadge.style.background = llmDerivedColor(tone);
+  actionEl.textContent = llmDerivedAction(tone, conviction);
+
+  if (Array.isArray(adv.reasons) && adv.reasons.length) {
+    reasonsEl.innerHTML = "";
+    adv.reasons.slice(0, 6).forEach((reason) => {
+      const item = document.createElement("li");
+      item.textContent = String(reason);
+      reasonsEl.append(item);
+    });
+  }
+  if (Array.isArray(adv.risks) && adv.risks.length) {
+    riskCopyEl.textContent = adv.risks.join(" ");
+  } else if (typeof adv.summary === "string") {
+    riskCopyEl.textContent = adv.summary;
+  }
+}
+
 async function runLiveLLMAdvisor() {
   if (!llmRunBtn || !llmStatusEl) return;
+  if (llmInFlight) return;
+  llmInFlight = true;
   llmRunBtn.disabled = true;
   llmStatusEl.textContent = "calling Sonnet 4.6 + GPT-5-mini critic…";
   const payload = getLiveAdvisoryContext();
@@ -6286,11 +6341,20 @@ async function runLiveLLMAdvisor() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     renderLLMVerification(data, payload);
+    const consolidatedAdv = (data && data.consolidated) || (data && data.primary && data.primary.advisory) || {};
+    const primaryAdv = (data && data.primary && data.primary.advisory) || {};
     lastVerifiedLLMRun = {
       commodity: payload.commodity,
       primaryModel: (data.primary && data.primary.model) || "?",
       criticModel: (data.critic && data.critic.model) || "?",
-      time: new Date().toLocaleTimeString()
+      time: new Date().toLocaleTimeString(),
+      advisory: {
+        conviction: consolidatedAdv.conviction ?? primaryAdv.conviction,
+        tone: consolidatedAdv.tone ?? primaryAdv.tone,
+        summary: primaryAdv.summary,
+        reasons: primaryAdv.reasons,
+        risks: primaryAdv.risks
+      }
     };
     if (typeof calculateSignal === "function") calculateSignal();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
@@ -6302,8 +6366,20 @@ async function runLiveLLMAdvisor() {
     }
     llmStatusEl.textContent = "failed";
   } finally {
+    llmInFlight = false;
     llmRunBtn.disabled = false;
   }
+}
+
+function maybeAutoTriggerLLM(force) {
+  const commodity = commoditySelect ? commoditySelect.value : null;
+  if (!commodity) return;
+  const key = `${commodity}|${primaryModelId}|${secondaryModelId}`;
+  if (!force && key === llmAutoCommodityKey) return;
+  llmAutoCommodityKey = key;
+  if (llmInFlight) return;
+  if (lastVerifiedLLMRun && lastVerifiedLLMRun.commodity === commodity) return;
+  setTimeout(() => { runLiveLLMAdvisor(); }, 50);
 }
 
 [
