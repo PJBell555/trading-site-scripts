@@ -6133,7 +6133,11 @@ function calculateSignal() {
   inputsTitle.textContent = `Advisor inputs: ${commodityMeta.name}`;
   const primaryModelName = getModelById(primaryModelId).name;
   const secondaryModelName = secondaryModelId ? getModelById(secondaryModelId).name : "";
-  const verified = lastVerifiedLLMRun && lastVerifiedLLMRun.commodity === commodity ? lastVerifiedLLMRun : null;
+  const expectedPrimaryOpenrouter = getModelById(primaryModelId).openrouterId || null;
+  const verified = lastVerifiedLLMRun
+    && lastVerifiedLLMRun.commodity === commodity
+    && (!expectedPrimaryOpenrouter || lastVerifiedLLMRun.primaryModel === expectedPrimaryOpenrouter)
+    ? lastVerifiedLLMRun : null;
   if (verified) {
     outputTitle.textContent = `Advisor output: ${commodityMeta.name} — VERIFIED ${verified.primaryModel} + ${verified.criticModel} at ${verified.time}`;
     primaryModelStatEl.textContent = `${verified.primaryModel} + ${verified.criticModel} (verified)`;
@@ -6425,6 +6429,14 @@ async function runLiveLLMAdvisor() {
   } finally {
     llmInFlight = false;
     llmRunBtn.disabled = false;
+    // Race-condition guard: if user changed primary model selection during the
+    // call, the result we just stored is for the OLD model. Retrigger so the
+    // displayed verification matches what the user picked.
+    const currentPrimary = getModelById(primaryModelId).openrouterId || null;
+    if (currentPrimary && lastVerifiedLLMRun && lastVerifiedLLMRun.primaryModel !== currentPrimary) {
+      llmAutoCommodityKey = null;
+      setTimeout(() => maybeAutoTriggerLLM(true), 50);
+    }
   }
 }
 
@@ -6435,7 +6447,14 @@ function maybeAutoTriggerLLM(force) {
   if (!force && key === llmAutoCommodityKey) return;
   llmAutoCommodityKey = key;
   if (llmInFlight) return;
-  if (lastVerifiedLLMRun && lastVerifiedLLMRun.commodity === commodity) return;
+  // Skip if we already have a verified result that matches the CURRENT
+  // commodity AND the currently-selected primary model. Different model
+  // selection requires a new call.
+  const expectedPrimary = getModelById(primaryModelId).openrouterId || null;
+  if (lastVerifiedLLMRun
+      && lastVerifiedLLMRun.commodity === commodity
+      && expectedPrimary
+      && lastVerifiedLLMRun.primaryModel === expectedPrimary) return;
   setTimeout(() => { runLiveLLMAdvisor(); }, 50);
 }
 
