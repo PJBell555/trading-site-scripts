@@ -1,7 +1,84 @@
 {
-  "generatedAt": "2026-05-05T06:22:30.925Z",
+  "generatedAt": "2026-05-05T06:24:28.339Z",
   "source": "cloudflare-github-daily-paper-trading-ledger-backup",
   "transactions": [
+    {
+      "id": 103,
+      "time": "2026-05-05T06:24:27.967Z",
+      "userEmail": "ai4ses@gmail.com",
+      "userName": "Christopher Roberts",
+      "tradeId": 102,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "SELL TARGET",
+      "side": "long",
+      "step": 4,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 105.17,
+      "entryPrice": 104.11,
+      "targetEntryPrice": 103.849725,
+      "targetPrice": 105.1511,
+      "stopPrice": 103.329175,
+      "contractMultiplier": 10,
+      "contracts": 8,
+      "marginRequirement": 104.11,
+      "notionalValue": 8328.8,
+      "openFee": 2,
+      "closeFee": 2,
+      "estimatedExitFee": 2,
+      "totalEstimatedFees": 4,
+      "feePerContractSide": 0.25,
+      "feeLabel": "Estimated exchange/brokerage fee",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "close",
+        "orderId": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+        "productId": "NOL-18MAY26-CDE",
+        "submittedProductId": "NOL-18MAY26-CDE",
+        "returnedProductId": "BTC-USD",
+        "side": "SELL",
+        "sentAt": "2026-05-05T06:24:27.966Z",
+        "request": {
+          "client_order_id": "atlas-close-102-1777962267710",
+          "product_id": "NOL-18MAY26-CDE",
+          "side": "SELL",
+          "order_configuration": {
+            "market_market_ioc": {
+              "base_size": "8"
+            }
+          }
+        },
+        "response": {
+          "success": true,
+          "success_response": {
+            "order_id": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+            "product_id": "BTC-USD",
+            "side": "SELL",
+            "client_order_id": "sandbox_success_order",
+            "attached_order_id": ""
+          },
+          "order_configuration": {
+            "limit_limit_gtc": {
+              "base_size": "1",
+              "limit_price": "70000.44",
+              "post_only": false,
+              "rfq_disabled": false,
+              "reduce_only": false
+            }
+          }
+        }
+      },
+      "grossPnl": 84.80000000000018,
+      "netPnl": 80.80000000000018,
+      "exitPrice": 105.17,
+      "openedAt": "2026-05-05T02:43:04.687Z",
+      "closedAt": "2026-05-05T06:24:27.710Z",
+      "durationMs": 13283023,
+      "capital": 832.88,
+      "pnl": 80.80000000000018,
+      "note": "Oil long closed from $104.11",
+      "sharedKey": "102|SELL TARGET|NOL-18MAY26-CDE|2026-05-05T06:24:27.967Z|105.1700"
+    },
     {
       "id": 102,
       "time": "2026-05-05T02:43:20.057Z",
@@ -1503,6 +1580,6 @@
       "userEmail": "peter@pjbell.com"
     }
   ],
-  "backupGeneratedAt": "2026-05-05T06:22:32.137Z",
+  "backupGeneratedAt": "2026-05-05T06:24:29.590Z",
   "backupDate": "2026-05-05"
 }
