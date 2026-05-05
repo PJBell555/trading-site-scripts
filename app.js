@@ -241,6 +241,7 @@ const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_WS_STALE_MS = 30000;
+const PAPER_EXIT_PRICE_STALE_MS = 45000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const UNAVAILABLE_TEXT = "Not available";
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
@@ -3175,7 +3176,11 @@ function getEstimatedFees(config, contracts, sides = 2) {
 function isUsableMarketPrice(commodity) {
   const price = latestPrices.get(commodity);
   const source = latestPriceSources.get(commodity);
-  return Number.isFinite(price) && price > 0 && source !== "Reference snapshot" && source !== "Unavailable snapshot";
+  const updatedAt = latestPriceTimes.get(commodity);
+  const ageMs = updatedAt instanceof Date ? Date.now() - updatedAt.getTime() : Infinity;
+  const liveSource = source === "Coinbase WebSocket" || source === "Coinbase live";
+  const freshEnough = liveSource && ageMs <= PAPER_EXIT_PRICE_STALE_MS;
+  return Number.isFinite(price) && price > 0 && freshEnough;
 }
 
 function getUsableMarketPrice(commodity) {
@@ -3370,7 +3375,8 @@ function buildTradePlan(commodity, signal) {
   };
 }
 
-async function refreshCoinbasePrice(commodity) {
+async function refreshCoinbasePrice(commodity, options = {}) {
+  const runCloseSweep = options.runCloseSweep !== false;
   const lastWebSocketUpdate = latestPriceTimes.get(commodity);
   const webSocketFresh = lastWebSocketUpdate
     && Date.now() - getTransactionDate(lastWebSocketUpdate).getTime() <= COINBASE_WS_STALE_MS;
@@ -3410,7 +3416,7 @@ async function refreshCoinbasePrice(commodity) {
       latestPriceTimes.set(commodity, new Date());
       latestPriceSources.set(commodity, "Coinbase live");
       await refreshCoinbaseProductDetails(commodity, livePrice);
-      closeOnlyPaperSweep();
+      if (runCloseSweep) closeOnlyPaperSweep();
       if (commoditySelect.value === commodity) calculateSignal();
     }
   } catch (error) {
@@ -5188,7 +5194,6 @@ async function closePaperTrade(commodity, exitPrice, reason) {
 
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   if (!tradePlan.priceReady) return;
-  if (!hasHistoryBackend()) return;
   reconcilePaperStateFromHistory();
 
   const openTrade = getOpenPaperTrade(commodity);
@@ -5218,18 +5223,20 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
   }
 }
 
-function closeOnlyPaperSweep() {
-  if (!hasHistoryBackend()) return;
-
+async function closeOnlyPaperSweep() {
   const baseSignals = readBaseSignals();
-  commodities.filter(({ id }) => userCanTradeCommodity(id)).forEach((commodityMeta) => {
+  for (const commodityMeta of commodities.filter(({ id }) => userCanTradeCommodity(id))) {
     const commodity = commodityMeta.id;
-    if (!openPaperTrades.has(commodity)) return;
+    if (!openPaperTrades.has(commodity)) continue;
+
+    if (!isUsableMarketPrice(commodity)) {
+      await refreshCoinbasePrice(commodity, { runCloseSweep: false });
+    }
 
     const signal = scoreCommodity(commodity, baseSignals);
     const tradePlan = buildTradePlan(commodity, signal);
     executePaperTrading(commodity, commodityMeta, signal, tradePlan, { allowOpen: false });
-  });
+  }
 }
 
 function getPaperDecision(signal, tradePlan, openTrade) {
