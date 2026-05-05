@@ -337,6 +337,7 @@ let activeSection = "home";
 let featureTypeFilter = "all";
 let primaryModelId = "gpt-5-5";
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
+let advisoryScoreThresholdIsManual = false;
 let backendSyncInFlight = false;
 let backendHistoryWriteInFlight = false;
 let backendSettingsSyncInFlight = false;
@@ -3326,6 +3327,15 @@ function getKarpathyLoop(side) {
   };
 }
 
+function getPaperEntryThreshold(side) {
+  const learnedThreshold = getKarpathyLoop(side).threshold;
+  return advisoryScoreThresholdIsManual ? advisoryScoreThreshold : learnedThreshold;
+}
+
+function getPaperEntryThresholdSource() {
+  return advisoryScoreThresholdIsManual ? "manual" : "Karpathy";
+}
+
 function buildTradePlan(commodity, signal) {
   const config = marketConfig[commodity];
   const userStrategy = getCurrentUserStrategy();
@@ -3352,7 +3362,8 @@ function buildTradePlan(commodity, signal) {
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
-  const entryThreshold = advisoryScoreThreshold;
+  const entryThreshold = getPaperEntryThreshold(getSignalSide(signal));
+  const entryThresholdSource = getPaperEntryThresholdSource();
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
   const longMargin = getMarginRequirement(config, "long", livePrice);
@@ -3408,12 +3419,13 @@ function buildTradePlan(commodity, signal) {
     minShort: `1 contract / ${formatMoney(shortMargin)}`,
     nextCapital,
     learnedThreshold,
+    entryThresholdSource,
     entryThreshold,
     riskPct,
     size: Number.isFinite(plannedContracts) ? `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}` : UNAVAILABLE_TEXT,
     status,
     steps: [
-      `${strategyName}: auto-enter long or short when conviction clears the manual trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
+      `${strategyName}: auto-enter long or short when conviction clears the ${entryThresholdSource} trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
       `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
@@ -4572,7 +4584,12 @@ function formatPercent(value) {
 }
 
 function loadAdvisoryScoreThreshold() {
-  const stored = Number(window.localStorage.getItem(ADVISORY_SCORE_THRESHOLD_KEY));
+  const rawStored = window.localStorage.getItem(ADVISORY_SCORE_THRESHOLD_KEY);
+  const stored = Number(rawStored);
+  // Older builds wrote the default 60 to localStorage even when the user had not
+  // intentionally chosen a trading threshold. Treat that value as "use Karpathy"
+  // so the paper trader does not silently wait behind an obsolete default.
+  advisoryScoreThresholdIsManual = rawStored !== null && stored !== DEFAULT_ADVISORY_SCORE_THRESHOLD;
   advisoryScoreThreshold = Number.isFinite(stored)
     ? clamp(Math.round(stored), 0, 100)
     : DEFAULT_ADVISORY_SCORE_THRESHOLD;
@@ -4582,6 +4599,7 @@ function loadAdvisoryScoreThreshold() {
 
 function saveAdvisoryScoreThreshold() {
   const value = Number(advisoryScoreThresholdEl.value);
+  advisoryScoreThresholdIsManual = true;
   advisoryScoreThreshold = Number.isFinite(value)
     ? clamp(Math.round(value), 0, 100)
     : DEFAULT_ADVISORY_SCORE_THRESHOLD;
@@ -5320,7 +5338,8 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   const signalSide = getSignalSide(signal);
   const priceText = formatPrice(tradePlan.livePrice);
   const thresholdText = `${signal.conviction}/${tradePlan.entryThreshold}`;
-  const karpathyText = ` Advisory conviction is ${signal.conviction}; manual trading threshold is ${tradePlan.entryThreshold}; learned Karpathy recommendation is ${tradePlan.learnedThreshold}.`;
+  const thresholdSource = tradePlan.entryThresholdSource || "trading";
+  const karpathyText = ` Advisory conviction is ${signal.conviction}; ${thresholdSource} trading threshold is ${tradePlan.entryThreshold}; learned Karpathy recommendation is ${tradePlan.learnedThreshold}.`;
 
   if (!hasHistoryBackend()) {
     return {
@@ -5353,7 +5372,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   if (signal.conviction < tradePlan.entryThreshold) {
     return {
       title: `No trade: conviction ${thresholdText}`,
-      detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches ${tradePlan.entryThreshold}. Current price is ${priceText}.${karpathyText}`
+      detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches the ${thresholdSource} threshold of ${tradePlan.entryThreshold}. Current price is ${priceText}.${karpathyText}`
     };
   }
 
@@ -5366,7 +5385,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
 
   return {
     title: `Ready to open ${signalSide}`,
-    detail: `Conviction ${thresholdText} clears the trading threshold. Step ${martingaleStep} would commit about ${formatMoney(tradePlan.nextCapital)} at ${priceText}.${karpathyText}`
+    detail: `Conviction ${thresholdText} clears the ${thresholdSource} trading threshold. Step ${martingaleStep} would commit about ${formatMoney(tradePlan.nextCapital)} at ${priceText}.${karpathyText}`
   };
 }
 
@@ -5375,13 +5394,13 @@ function renderKarpathyLoop(signal, tradePlan) {
   const winRateText = loop.sampleCount ? `${Math.round(loop.winRate * 100)}% win` : "No sample";
   const avgPnlText = loop.sampleCount ? `${formatSignedMoney(loop.avgPnl)} avg` : "No sample yet";
 
-  paperKarpathyEl.textContent = `Manual ${tradePlan.entryThreshold} / Karpathy ${loop.threshold}`;
+  paperKarpathyEl.textContent = `${tradePlan.entryThresholdSource || "Trading"} ${tradePlan.entryThreshold} / Karpathy ${loop.threshold}`;
   loopCollectEl.textContent = `${loop.closedCount} closed trades`;
   loopEvaluateEl.textContent = `${winRateText} / ${avgPnlText}`;
-  loopAdjustEl.textContent = `Manual ${tradePlan.entryThreshold}, recommendation ${loop.threshold}, losses ${loop.lossStreak}`;
+  loopAdjustEl.textContent = `${tradePlan.entryThresholdSource || "Trading"} ${tradePlan.entryThreshold}, recommendation ${loop.threshold}, losses ${loop.lossStreak}`;
 
   if (loop.sampleCount < 3) {
-    loopAdjustEl.textContent = `Manual ${tradePlan.entryThreshold}, needs 3 trades`;
+    loopAdjustEl.textContent = `${tradePlan.entryThresholdSource || "Trading"} ${tradePlan.entryThreshold}, needs 3 trades`;
   } else if (tradePlan.learnedThreshold > PAPER_MIN_CONVICTION) {
     loopAdjustEl.textContent = `Karpathy suggests more selective: ${loop.threshold}`;
   } else if (tradePlan.learnedThreshold < PAPER_MIN_CONVICTION) {
