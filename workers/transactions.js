@@ -447,7 +447,10 @@ async function createOpenRouterAdvisory(env, body = {}) {
       messages: buildOpenRouterAdvisoryMessages(body),
       temperature: 0.2,
       max_tokens: 600,
-      response_format: { type: "json_object" }
+      // Some providers (e.g. Perplexity Sonar) reject json_object response_format.
+      // Skip it for them; the prompt asks for JSON anyway and parseAdvisoryContent
+      // is robust to text responses.
+      ...(model.startsWith("perplexity/") ? {} : { response_format: { type: "json_object" } })
     })
   });
 
