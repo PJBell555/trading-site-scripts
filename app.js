@@ -6240,19 +6240,28 @@ function getLiveAdvisoryContext() {
   };
   if (primaryEntry.openrouterId) body.model = primaryEntry.openrouterId;
 
-  // Critic vendor-conflict guard: if primary and critic are from the same vendor
-  // (same prefix before the slash), swap critic to a different lab so the second
-  // opinion has a real chance of disagreeing.
+  // Critic selection rule: must be from a DIFFERENT vendor than primary, and
+  // ideally cheaper. Use a vendor-aware mapping that picks a cheap model from
+  // the opposite lab. Always overrides any same-vendor critic to enforce real
+  // second-opinion diversity.
+  const criticByPrimaryVendor = {
+    "openai": "anthropic/claude-3.5-haiku",   // cheapest reliable Anthropic critic
+    "anthropic": "openai/gpt-5-mini",          // cheap OpenAI reasoning critic
+    "google": "openai/gpt-5-mini",
+    "x-ai": "openai/gpt-5-mini",
+    "perplexity": "openai/gpt-5-mini",
+    "meta-llama": "openai/gpt-5-mini",
+    "qwen": "openai/gpt-5-mini",
+    "mistralai": "openai/gpt-5-mini",
+    "nvidia": "openai/gpt-5-mini",
+    "google/gemma": "openai/gpt-5-mini"
+  };
   let criticId = secondaryEntry.openrouterId;
-  if (primaryEntry.openrouterId && criticId) {
+  if (primaryEntry.openrouterId) {
     const primaryVendor = primaryEntry.openrouterId.split("/")[0];
-    const criticVendor = criticId.split("/")[0];
-    if (primaryVendor === criticVendor) {
-      criticId = primaryVendor === "openai"
-        ? "anthropic/claude-haiku-4.5"
-        : primaryVendor === "anthropic"
-          ? "openai/gpt-5-mini"
-          : "anthropic/claude-haiku-4.5";
+    const criticVendor = (criticId || "").split("/")[0];
+    if (!criticId || primaryVendor === criticVendor) {
+      criticId = criticByPrimaryVendor[primaryVendor] || "openai/gpt-5-mini";
     }
   }
   if (criticId) body.critic = criticId;
