@@ -3887,7 +3887,8 @@ function addLiveTradeFromForm(event) {
 
 function getUserScopedTransactions() {
   const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
-  return source.filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
+  return getDedupedPaperCloseEntries(source)
+    .filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
 }
 
 function getBundledTransactionEntries() {
@@ -3920,8 +3921,6 @@ async function loadBundledTransactionHistory() {
     calculateSignal();
     return added > 0 || !before;
   }
-
-  if (transactionHistory.length) return false;
 
   try {
     sharedHistoryStatusEl.textContent = "Loading local ledger";
@@ -3975,18 +3974,21 @@ function replaceTransactionHistory(entries, options = {}) {
   const localOpenTrades = preserveOpenTrades ? new Map(openPaperTrades) : new Map();
   resetLocalTradeState();
   mergeTransactionHistory(entries, { persist: false });
+  dedupeDuplicatePaperCloses();
   rebuildPaperStateFromHistory();
 
   localOpenTrades.forEach((trade, commodity) => {
     if (!trade || hasClosingTransactionForTrade(trade)) return;
+    const tradeKey = getOpenTradeIdentityKey(trade);
     const alreadyActive = Array.from(openPaperTrades.values()).some((activeTrade) => {
       if (!activeTrade) return false;
       const sameTradeId = activeTrade.id && trade.id && String(activeTrade.id) === String(trade.id);
+      const sameIdentity = tradeKey && getOpenTradeIdentityKey(activeTrade) === tradeKey;
       const sameLifecycle = activeTrade.commodity === trade.commodity
         && activeTrade.contract === trade.contract
         && activeTrade.side === trade.side
         && Number(activeTrade.martingaleStep || activeTrade.step || 1) === Number(trade.martingaleStep || trade.step || 1);
-      return sameTradeId || sameLifecycle;
+      return sameIdentity || sameTradeId || sameLifecycle;
     });
 
     if (!alreadyActive && commodity) {
@@ -4017,6 +4019,7 @@ function mergeTransactionHistory(entries, options = {}) {
 
   if (added) {
     sortTransactionHistory();
+    dedupeDuplicatePaperCloses();
     if (persist) savePaperState();
   }
 
@@ -4031,7 +4034,7 @@ function getMergedTransactionEntries(incomingEntries = []) {
     byKey.set(sharedKey, { ...entry, sharedKey });
   });
 
-  return Array.from(byKey.values())
+  return getDedupedPaperCloseEntries(Array.from(byKey.values()))
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
@@ -4043,6 +4046,74 @@ function getTradeLifecycleKey(entry) {
     entry.side || "side",
     entry.step || "step"
   ].join("|");
+}
+
+function getTradeIdentityKey(entry) {
+  const tradeId = entry?.tradeId || entry?.id;
+  if (!tradeId) return "";
+  const openedAt = entry?.openedAt ? getTransactionDate(entry.openedAt) : null;
+  const openedAtKey = openedAt && !Number.isNaN(openedAt.getTime()) ? openedAt.toISOString() : "";
+  return openedAtKey
+    ? `${tradeId}|${openedAtKey}`
+    : `${normalizeEmail(entry.userEmail || LEGACY_LEDGER_USER_EMAIL)}|${tradeId}`;
+}
+
+function getTradeIdentityKeyForTrade(trade) {
+  const tradeId = trade?.id || trade?.tradeId;
+  if (!tradeId) return "";
+  const openedAt = trade?.openedAt ? getTransactionDate(trade.openedAt) : null;
+  const openedAtKey = openedAt && !Number.isNaN(openedAt.getTime()) ? openedAt.toISOString() : "";
+  return openedAtKey
+    ? `${tradeId}|${openedAtKey}`
+    : `${normalizeEmail(trade.userEmail || getCurrentLedgerEmail())}|${tradeId}`;
+}
+
+function getOpenTradeIdentityKey(trade) {
+  return getTradeIdentityKeyForTrade(trade) || getTradeLifecycleKey({
+    userEmail: trade?.userEmail || getCurrentLedgerEmail(),
+    commodity: trade?.commodity,
+    contract: trade?.contract,
+    side: trade?.side,
+    step: trade?.martingaleStep || trade?.step
+  });
+}
+
+function getPaperCloseDedupeKey(entry) {
+  const identityKey = getTradeIdentityKey(entry);
+  if (identityKey) return identityKey;
+
+  return [
+    getTradeLifecycleKey(entry),
+    getTransactionDate(entry.openedAt || entry.time).toISOString()
+  ].join("|");
+}
+
+function getDedupedPaperCloseEntries(entries) {
+  const seenCloseKeys = new Set();
+
+  return entries
+    .map(normalizeTransactionEntry)
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
+    .filter((entry) => {
+      if (!isClosingTransaction(entry)) return true;
+
+      const closeKey = getPaperCloseDedupeKey(entry);
+      if (seenCloseKeys.has(closeKey)) return false;
+
+      seenCloseKeys.add(closeKey);
+      return true;
+    })
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+}
+
+function dedupeDuplicatePaperCloses() {
+  if (!transactionHistory.length) return;
+  const before = transactionHistory.length;
+  const deduped = getDedupedPaperCloseEntries(transactionHistory);
+  if (deduped.length === before) return;
+
+  transactionHistory.length = 0;
+  transactionHistory.push(...deduped);
 }
 
 function getTransactionConviction(entry) {
@@ -4067,6 +4138,7 @@ function tradeFromOpeningEntry(entry) {
 
   return {
     id: entry.tradeId || entry.id,
+    userEmail: entry.userEmail || LEGACY_LEDGER_USER_EMAIL,
     commodity: entry.commodity,
     commodityName: entry.commodityName,
     contract: entry.contract,
@@ -4098,14 +4170,17 @@ function rebuildPaperStateFromHistory() {
   let latestClosed = null;
 
   chronological.forEach((entry) => {
-    const key = getTradeLifecycleKey(entry);
+    const identityKey = getTradeIdentityKey(entry);
+    const lifecycleKey = getTradeLifecycleKey(entry);
+    const key = identityKey || lifecycleKey;
     if (isOpeningTransaction(entry)) {
       activeTrades.set(key, tradeFromOpeningEntry(entry));
       return;
     }
 
     if (isClosingTransaction(entry)) {
-      activeTrades.delete(key);
+      if (identityKey) activeTrades.delete(identityKey);
+      activeTrades.delete(lifecycleKey);
       latestClosed = entry;
     }
   });
@@ -4124,16 +4199,18 @@ function rebuildPaperStateFromHistory() {
 function hasClosingTransactionForTrade(trade) {
   if (!trade) return false;
   const tradeId = String(trade.id || "");
+  const identityKey = getTradeIdentityKeyForTrade(trade);
   const openedAt = getTransactionDate(trade.openedAt || trade.time);
 
   return getUserScopedTransactions().some((entry) => {
     if (!isClosingTransaction(entry)) return false;
     const sameTradeId = tradeId && String(entry.tradeId || entry.id || "") === tradeId;
+    const sameIdentity = identityKey && getTradeIdentityKey(entry) === identityKey;
     const sameLifecycle = entry.commodity === trade.commodity
       && entry.contract === trade.contract
       && entry.side === trade.side
       && Number(entry.step || 1) === Number(trade.martingaleStep || trade.step || 1);
-    if (!sameTradeId && !sameLifecycle) return false;
+    if (!sameIdentity && !sameTradeId && !sameLifecycle) return false;
 
     const closedAt = getTransactionDate(entry.closedAt || entry.time);
     return !Number.isNaN(closedAt.getTime())
@@ -4147,14 +4224,16 @@ function reconcilePaperStateFromHistory() {
 
   localOpenTrades.forEach((trade, commodity) => {
     if (!trade || hasClosingTransactionForTrade(trade)) return;
+    const tradeKey = getOpenTradeIdentityKey(trade);
     const alreadyActive = Array.from(openPaperTrades.values()).some((activeTrade) => {
       if (!activeTrade) return false;
       const sameTradeId = activeTrade.id && trade.id && String(activeTrade.id) === String(trade.id);
+      const sameIdentity = tradeKey && getOpenTradeIdentityKey(activeTrade) === tradeKey;
       const sameLifecycle = activeTrade.commodity === trade.commodity
         && activeTrade.contract === trade.contract
         && activeTrade.side === trade.side
         && Number(activeTrade.martingaleStep || activeTrade.step || 1) === Number(trade.martingaleStep || trade.step || 1);
-      return sameTradeId || sameLifecycle;
+      return sameIdentity || sameTradeId || sameLifecycle;
     });
 
     if (!alreadyActive && commodity) {
@@ -4261,6 +4340,7 @@ function loadPaperState() {
 }
 
 function getSharedHistoryPayload() {
+  dedupeDuplicatePaperCloses();
   sortTransactionHistory();
 
   return {
@@ -5185,6 +5265,26 @@ async function recordTransaction(entry) {
     ...entry
   });
 
+  if (isClosingTransaction(transaction)) {
+    const existingClose = getUserScopedTransactions().find((candidate) => {
+      if (!isClosingTransaction(candidate)) return false;
+      const sameIdentity = getTradeIdentityKey(candidate) && getTradeIdentityKey(candidate) === getTradeIdentityKey(transaction);
+      const sameTradeId = transaction.tradeId && String(candidate.tradeId || candidate.id || "") === String(transaction.tradeId);
+      const sameLifecycle = candidate.commodity === transaction.commodity
+        && candidate.contract === transaction.contract
+        && candidate.side === transaction.side
+        && Number(candidate.step || 1) === Number(transaction.step || 1);
+      const candidateClosedAt = getTransactionDate(candidate.closedAt || candidate.time);
+      const transactionOpenedAt = getTransactionDate(transaction.openedAt || transaction.time);
+      const closesAfterThisOpen = Number.isNaN(transactionOpenedAt.getTime())
+        || Number.isNaN(candidateClosedAt.getTime())
+        || candidateClosedAt >= transactionOpenedAt;
+      return (sameIdentity || sameTradeId || sameLifecycle) && closesAfterThisOpen;
+    });
+
+    if (existingClose) return normalizeTransactionEntry(existingClose);
+  }
+
   transaction.sharedKey = getTransactionKey(transaction);
   transactionHistory.unshift(transaction);
   nextTransactionId += 1;
@@ -5330,6 +5430,13 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   if (!trade) return;
   if (isPaperActionPending(commodity)) return;
   markPaperActionPending(commodity);
+
+  if (hasClosingTransactionForTrade(trade)) {
+    openPaperTrades.delete(commodity);
+    clearPaperActionPending(commodity);
+    savePaperState();
+    return;
+  }
 
   const grossPnl = getTradeGrossPnl(trade, exitPrice);
   const closeFee = Number(trade.estimatedExitFee) || getEstimatedFees(marketConfig[commodity], trade.contracts, 1);
@@ -5601,9 +5708,14 @@ function getLatestUnclosedOpeningTrade(commodity) {
   const active = new Map();
 
   chronological.forEach((entry) => {
-    const key = getTradeLifecycleKey(entry);
+    const identityKey = getTradeIdentityKey(entry);
+    const lifecycleKey = getTradeLifecycleKey(entry);
+    const key = identityKey || lifecycleKey;
     if (isOpeningTransaction(entry)) active.set(key, entry);
-    if (isClosingTransaction(entry)) active.delete(key);
+    if (isClosingTransaction(entry)) {
+      if (identityKey) active.delete(identityKey);
+      active.delete(lifecycleKey);
+    }
   });
 
   return Array.from(active.values())
