@@ -220,10 +220,10 @@ const advisoryModels = [
   { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter", openrouterId: "google/gemini-2.5-flash" },
   { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "OpenAI flagship (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.5" },
   { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.4" },
-  { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "(falls back to Sonnet 4.6 on the live API for now)" },
+  { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "search-augmented LLM (live LLM via OpenRouter)", openrouterId: "perplexity/sonar" },
   { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "mapped to gemini-2.5-flash on the live API", openrouterId: "google/gemini-2.5-flash" },
-  { id: "claude", name: "Claude", provider: "Anthropic", badge: "C", tilt: -1, style: "risk-first critique" },
-  { id: "grok", name: "Grok", provider: "xAI", badge: "X", tilt: 5, style: "momentum and narrative scan" }
+  { id: "claude", name: "Claude", provider: "Anthropic", badge: "C", tilt: -1, style: "Anthropic flagship (mapped to claude-sonnet-4.6)", openrouterId: "anthropic/claude-sonnet-4.6" },
+  { id: "grok", name: "Grok", provider: "xAI", badge: "X", tilt: 5, style: "xAI momentum scan (mapped to grok-4)", openrouterId: "x-ai/grok-4" }
 ];
 
 const opinionPromptLabels = {
