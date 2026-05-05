@@ -1,7 +1,79 @@
 {
-  "generatedAt": "2026-05-03T05:24:14.091Z",
+  "generatedAt": "2026-05-05T00:48:07.009Z",
   "source": "cloudflare-github-master-paper-trading-ledger",
   "transactions": [
+    {
+      "id": 100,
+      "time": "2026-05-04T21:21:14.056Z",
+      "userEmail": "peter@pjbell.com",
+      "userName": "Peter Bell",
+      "tradeId": 100,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "BUY",
+      "side": "long",
+      "step": 3,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 104.82,
+      "entryPrice": 104.82,
+      "targetEntryPrice": 104.55795,
+      "targetPrice": 105.86819999999999,
+      "stopPrice": 104.03385,
+      "contractMultiplier": 10,
+      "contracts": 4,
+      "marginRequirement": 104.82,
+      "notionalValue": 4192.799999999999,
+      "openFee": 1,
+      "estimatedExitFee": 1,
+      "totalEstimatedFees": 2,
+      "feePerContractSide": 0.25,
+      "feeLabel": "Estimated exchange/brokerage fee",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "open",
+        "orderId": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+        "productId": "NOL-18MAY26-CDE",
+        "submittedProductId": "NOL-18MAY26-CDE",
+        "returnedProductId": "BTC-USD",
+        "side": "BUY",
+        "sentAt": "2026-05-04T21:21:14.046Z",
+        "request": {
+          "client_order_id": "atlas-open-100-1777929673650",
+          "product_id": "NOL-18MAY26-CDE",
+          "side": "BUY",
+          "order_configuration": {
+            "market_market_ioc": {
+              "base_size": "4"
+            }
+          }
+        },
+        "response": {
+          "success": true,
+          "success_response": {
+            "order_id": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+            "product_id": "BTC-USD",
+            "side": "SELL",
+            "client_order_id": "sandbox_success_order",
+            "attached_order_id": ""
+          },
+          "order_configuration": {
+            "limit_limit_gtc": {
+              "base_size": "1",
+              "limit_price": "70000.44",
+              "post_only": false,
+              "rfq_disabled": false,
+              "reduce_only": false
+            }
+          }
+        }
+      },
+      "openedAt": "2026-05-04T21:21:13.650Z",
+      "capital": 419.28,
+      "pnl": 0,
+      "note": "Oil long opened at 54 conviction",
+      "closedAt": null,
+      "sharedKey": "100|BUY|NOL-18MAY26-CDE|2026-05-04T21:21:14.056Z|104.8200"
+    },
     {
       "id": 97,
       "time": "2026-05-01T16:16:44.157Z",
@@ -73,7 +145,8 @@
       "capital": 105.50999999999999,
       "pnl": -44.89999999999998,
       "note": "Oil long closed from $105.51",
-      "sharedKey": "34|SELL STOP|NOL-18MAY26-CDE|2026-05-01T16:16:44.157Z|101.0700"
+      "sharedKey": "34|SELL STOP|NOL-18MAY26-CDE|2026-05-01T16:16:44.157Z|101.0700",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 99,
@@ -146,7 +219,8 @@
       "capital": 208.45000000000002,
       "pnl": -74.89999999999986,
       "note": "Oil long closed from $104.22",
-      "sharedKey": "98|SELL STOP|NOL-18MAY26-CDE|2026-05-01T14:25:37.692Z|100.5300"
+      "sharedKey": "98|SELL STOP|NOL-18MAY26-CDE|2026-05-01T14:25:37.692Z|100.5300",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 98,
@@ -214,7 +288,8 @@
       "pnl": 0,
       "note": "Oil long opened at 54 conviction",
       "closedAt": null,
-      "sharedKey": "98|BUY|NOL-18MAY26-CDE|2026-05-01T14:25:34.196Z|104.2250"
+      "sharedKey": "98|BUY|NOL-18MAY26-CDE|2026-05-01T14:25:34.196Z|104.2250",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 97,
@@ -287,7 +362,8 @@
       "capital": 105.50999999999999,
       "pnl": -13.349999999999966,
       "note": "Oil long closed from $105.51",
-      "sharedKey": "34|SELL STOP|NOL-18MAY26-CDE|2026-05-01T14:25:32.167Z|104.2250"
+      "sharedKey": "34|SELL STOP|NOL-18MAY26-CDE|2026-05-01T14:25:32.167Z|104.2250",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 34,
@@ -318,7 +394,8 @@
       "pnl": 0,
       "note": "Oil long opened at 54 conviction",
       "closedAt": null,
-      "sharedKey": "34|BUY|NOL-18MAY26-CDE|2026-04-30T20:30:49.499Z|105.5100"
+      "sharedKey": "34|BUY|NOL-18MAY26-CDE|2026-04-30T20:30:49.499Z|105.5100",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 33,
@@ -354,7 +431,8 @@
       "capital": 104.34500000000001,
       "pnl": 11.099999999999966,
       "note": "Oil long closed from $104.34",
-      "sharedKey": "32|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T20:30:48.171Z|105.5050"
+      "sharedKey": "32|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T20:30:48.171Z|105.5050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 96,
@@ -390,7 +468,8 @@
       "capital": 104.34500000000001,
       "pnl": 11.099999999999966,
       "note": "Oil long closed from $104.34",
-      "sharedKey": "95|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T20:30:48.171Z|105.5050"
+      "sharedKey": "95|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T20:30:48.171Z|105.5050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 32,
@@ -421,7 +500,8 @@
       "pnl": 0,
       "note": "Oil long opened at 54 conviction",
       "closedAt": null,
-      "sharedKey": "32|BUY|NOL-18MAY26-CDE|2026-04-30T19:13:17.314Z|104.8700"
+      "sharedKey": "32|BUY|NOL-18MAY26-CDE|2026-04-30T19:13:17.314Z|104.8700",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 31,
@@ -457,7 +537,8 @@
       "capital": 415.3,
       "pnl": 39.80000000000007,
       "note": "Oil long closed from $103.83",
-      "sharedKey": "30|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T19:13:16.845Z|104.8700"
+      "sharedKey": "30|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T19:13:16.845Z|104.8700",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 30,
@@ -488,7 +569,8 @@
       "pnl": 0,
       "note": "Oil long opened at 62 conviction",
       "closedAt": null,
-      "sharedKey": "30|BUY|NOL-18MAY26-CDE|2026-04-30T15:31:25.347Z|103.8250"
+      "sharedKey": "30|BUY|NOL-18MAY26-CDE|2026-04-30T15:31:25.347Z|103.8250",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 29,
@@ -524,7 +606,8 @@
       "capital": 209.41,
       "pnl": -18.10000000000008,
       "note": "Oil long closed from $104.70",
-      "sharedKey": "28|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:31:24.832Z|103.8500"
+      "sharedKey": "28|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:31:24.832Z|103.8500",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 28,
@@ -555,7 +638,8 @@
       "pnl": 0,
       "note": "Oil long opened at 62 conviction",
       "closedAt": null,
-      "sharedKey": "28|BUY|NOL-18MAY26-CDE|2026-04-30T15:29:02.864Z|104.7050"
+      "sharedKey": "28|BUY|NOL-18MAY26-CDE|2026-04-30T15:29:02.864Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 27,
@@ -591,7 +675,8 @@
       "capital": 106.22000000000001,
       "pnl": -15.650000000000006,
       "note": "Oil long closed from $106.22",
-      "sharedKey": "26|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:29:02.849Z|104.7050"
+      "sharedKey": "26|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:29:02.849Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 26,
@@ -622,7 +707,8 @@
       "pnl": 0,
       "note": "Oil long opened at 62 conviction",
       "closedAt": null,
-      "sharedKey": "26|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:03.408Z|106.2200"
+      "sharedKey": "26|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:03.408Z|106.2200",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 25,
@@ -658,7 +744,8 @@
       "capital": 418.82,
       "pnl": 58.99999999999966,
       "note": "Oil long closed from $104.70",
-      "sharedKey": "24|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T15:01:03.210Z|106.2300"
+      "sharedKey": "24|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T15:01:03.210Z|106.2300",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 24,
@@ -689,7 +776,8 @@
       "pnl": 0,
       "note": "Oil long opened at 62 conviction",
       "closedAt": null,
-      "sharedKey": "24|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:00.589Z|104.7050"
+      "sharedKey": "24|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:00.589Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 23,
@@ -725,7 +813,8 @@
       "capital": 211.85000000000002,
       "pnl": -25.399999999999977,
       "note": "Oil long closed from $105.92",
-      "sharedKey": "22|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:01:00.543Z|104.7050"
+      "sharedKey": "22|SELL STOP|NOL-18MAY26-CDE|2026-04-30T15:01:00.543Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 22,
@@ -756,7 +845,8 @@
       "pnl": 0,
       "note": "Oil long opened at 62 conviction",
       "closedAt": null,
-      "sharedKey": "22|BUY|NOL-18MAY26-CDE|2026-04-30T14:44:26.423Z|105.9250"
+      "sharedKey": "22|BUY|NOL-18MAY26-CDE|2026-04-30T14:44:26.423Z|105.9250",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 21,
@@ -792,7 +882,8 @@
       "capital": 125.64599999999999,
       "pnl": -12.60000000000008,
       "note": "Oil short closed from $104.70",
-      "sharedKey": "20|COVER STOP|NOL-18MAY26-CDE|2026-04-30T14:44:26.416Z|105.9150"
+      "sharedKey": "20|COVER STOP|NOL-18MAY26-CDE|2026-04-30T14:44:26.416Z|105.9150",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 20,
@@ -823,7 +914,8 @@
       "pnl": 0,
       "note": "Oil short opened at 93 conviction",
       "closedAt": null,
-      "sharedKey": "20|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T14:30:19.339Z|104.7050"
+      "sharedKey": "20|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T14:30:19.339Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 19,
@@ -859,7 +951,8 @@
       "capital": 131.85,
       "pnl": 51.20000000000002,
       "note": "Oil short closed from $109.88",
-      "sharedKey": "18|COVER TARGET|NOL-18MAY26-CDE|2026-04-30T14:30:18.527Z|104.7050"
+      "sharedKey": "18|COVER TARGET|NOL-18MAY26-CDE|2026-04-30T14:30:18.527Z|104.7050",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 18,
@@ -890,7 +983,8 @@
       "pnl": 0,
       "note": "Oil short opened at 93 conviction",
       "closedAt": null,
-      "sharedKey": "18|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T04:54:38.216Z|109.8750"
+      "sharedKey": "18|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T04:54:38.216Z|109.8750",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 17,
@@ -926,7 +1020,8 @@
       "capital": 108.655,
       "pnl": 11.650000000000034,
       "note": "Oil long closed from $108.66",
-      "sharedKey": "16|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T04:54:37.805Z|109.8700"
+      "sharedKey": "16|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T04:54:37.805Z|109.8700",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 16,
@@ -957,7 +1052,8 @@
       "pnl": 0,
       "note": "Oil long opened at 54 conviction",
       "closedAt": null,
-      "sharedKey": "16|BUY|NOL-18MAY26-CDE|2026-04-30T02:51:57.582Z|108.6550"
+      "sharedKey": "16|BUY|NOL-18MAY26-CDE|2026-04-30T02:51:57.582Z|108.6550",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 15,
@@ -988,7 +1084,8 @@
       "capital": 214.89,
       "pnl": 23.300000000000068,
       "note": "Oil long closed from $107.44",
-      "sharedKey": "14|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T02:51:57.178Z|108.6600"
+      "sharedKey": "14|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T02:51:57.178Z|108.6600",
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 14,
@@ -1006,7 +1103,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "14|BUY|NOL-18MAY26-CDE|2026-04-30T01:25:09.167Z|107.4450",
-      "tradeId": 14
+      "tradeId": 14,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 13,
@@ -1024,7 +1122,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "12|SELL STOP|NOL-18MAY26-CDE|2026-04-30T01:25:07.812Z|107.4450",
-      "tradeId": 12
+      "tradeId": 12,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 12,
@@ -1042,7 +1141,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "12|BUY|NOL-18MAY26-CDE|2026-04-30T01:25:07.486Z|108.3450",
-      "tradeId": 12
+      "tradeId": 12,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 11,
@@ -1060,7 +1160,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "10|SELL TARGET|NOL-18MAY26-CDE|2026-04-30T01:25:07.465Z|107.4450",
-      "tradeId": 10
+      "tradeId": 10,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 10,
@@ -1078,7 +1179,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "10|BUY|NOL-18MAY26-CDE|2026-04-29T15:53:57.005Z|106.2500",
-      "tradeId": 10
+      "tradeId": 10,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 9,
@@ -1096,7 +1198,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "8|SELL TARGET|NOL-18MAY26-CDE|2026-04-29T15:53:56.925Z|106.2500",
-      "tradeId": 8
+      "tradeId": 8,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 8,
@@ -1114,7 +1217,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "8|BUY|NOL-18MAY26-CDE|2026-04-29T14:29:32.441Z|104.6850",
-      "tradeId": 8
+      "tradeId": 8,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 7,
@@ -1132,7 +1236,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "6|SELL TARGET|NOL-18MAY26-CDE|2026-04-29T14:29:32.030Z|104.6900",
-      "tradeId": 6
+      "tradeId": 6,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 6,
@@ -1150,7 +1255,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "6|BUY|NOL-18MAY26-CDE|2026-04-29T14:29:16.484Z|103.5350",
-      "tradeId": 6
+      "tradeId": 6,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 5,
@@ -1168,7 +1274,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "1|SELL TARGET|NOL-18MAY26-CDE|2026-04-29T14:29:16.480Z|103.5350",
-      "tradeId": 1
+      "tradeId": 1,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 4,
@@ -1186,7 +1293,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "4|SELL SHORT|Copper reference|2026-04-29T01:18:09.611Z|4.5800",
-      "tradeId": 4
+      "tradeId": 4,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 3,
@@ -1204,7 +1312,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "3|SELL SHORT|Gold reference|2026-04-29T01:17:31.214Z|4818.0000",
-      "tradeId": 3
+      "tradeId": 3,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 2,
@@ -1222,7 +1331,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "2|SELL SHORT|NG reference|2026-04-29T01:17:14.982Z|2.3100",
-      "tradeId": 2
+      "tradeId": 2,
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 1,
@@ -1240,7 +1350,8 @@
       "openedAt": null,
       "closedAt": null,
       "sharedKey": "1|BUY|NOL-18MAY26-CDE|2026-04-28T18:31:00.278Z|99.6050",
-      "tradeId": 1
+      "tradeId": 1,
+      "userEmail": "peter@pjbell.com"
     }
   ]
 }
