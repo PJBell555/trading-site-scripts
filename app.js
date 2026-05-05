@@ -240,6 +240,7 @@ const confirmedLivePriceTimes = new Map();
 const confirmedLivePriceSources = new Map();
 const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
+const PAPER_CLOSE_PRICE_REFRESH_MS = 5000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
 const BACKEND_TRANSACTION_SYNC_MS = 60000;
 const BACKEND_SETTINGS_SYNC_MS = 120000;
@@ -318,6 +319,7 @@ const liveTradeLedger = [];
 const advisoryHistory = [];
 const PAPER_ACTION_PENDING_TTL_MS = 10000;
 const pendingPaperActions = new Map();
+const lastPaperClosePriceChecks = new Map();
 let paperEquity = PAPER_START_EQUITY;
 let paperBaseEquity = PAPER_START_EQUITY;
 let paperRiskPct = PAPER_DEFAULT_RISK_PCT;
@@ -2146,6 +2148,8 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
 
   if (openTrade) {
     row.className = "transaction-row open-trade-row";
+    const livePrice = getUsableMarketPrice(commodity);
+    const livePriceText = Number.isFinite(Number(livePrice)) ? formatPrice(Number(livePrice)) : UNAVAILABLE_TEXT;
     appendStateCell(row, "O", "Open");
     [
       formatTradeTime(openTrade.openedAt || openTrade.time),
@@ -2156,7 +2160,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       Number.isFinite(Number(openTrade.entryPrice)) ? formatPrice(Number(openTrade.entryPrice)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
-      `Watching target ${formatPrice(openTrade.targetPrice)} / stop ${formatPrice(openTrade.stopPrice)}`
+      `Live ${livePriceText}; target ${formatPrice(openTrade.targetPrice)} / stop ${formatPrice(openTrade.stopPrice)}`
     ].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value;
@@ -3447,11 +3451,13 @@ function buildTradePlan(commodity, signal) {
 
 async function refreshCoinbasePrice(commodity, options = {}) {
   const runCloseSweep = options.runCloseSweep !== false;
+  const forceRefresh = options.force === true;
   const lastWebSocketUpdate = latestPriceTimes.get(commodity);
   const webSocketFresh = lastWebSocketUpdate
     && Date.now() - getTransactionDate(lastWebSocketUpdate).getTime() <= COINBASE_WS_STALE_MS;
 
   if (
+    !forceRefresh &&
     latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
     activePriceSocketCommodity === commodity &&
     activePriceSocket?.readyState === WebSocket.OPEN &&
@@ -5040,9 +5046,10 @@ async function saveSharedTransactionHistory() {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    replaceTransactionHistory(entries);
+    const mergedEntries = getMergedTransactionEntries(entries);
+    replaceTransactionHistory(mergedEntries);
     reconcilePaperStateFromHistory();
-    sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
+    sharedHistoryStatusEl.textContent = `Backend saved ${mergedEntries.length || transactionHistory.length} rows`;
     backendHistoryReady = true;
     nextBackendTransactionSyncAt = 0;
     pendingHistorySaveRetry = false;
@@ -5427,8 +5434,13 @@ async function closeOnlyPaperSweep() {
     const commodity = commodityMeta.id;
     if (!openPaperTrades.has(commodity)) continue;
 
-    if (!isUsableMarketPrice(commodity)) {
-      await refreshCoinbasePrice(commodity, { runCloseSweep: false });
+    const lastPriceCheck = lastPaperClosePriceChecks.get(commodity) || 0;
+    const shouldRefreshForOpenTrade = !isUsableMarketPrice(commodity)
+      || Date.now() - lastPriceCheck >= PAPER_CLOSE_PRICE_REFRESH_MS;
+
+    if (shouldRefreshForOpenTrade) {
+      lastPaperClosePriceChecks.set(commodity, Date.now());
+      await refreshCoinbasePrice(commodity, { runCloseSweep: false, force: true });
     }
 
     const signal = scoreCommodity(commodity, baseSignals);
