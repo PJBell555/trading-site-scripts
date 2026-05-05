@@ -218,8 +218,8 @@ const advisoryModels = [
   { id: "haiku-4.5", name: "Haiku 4.5", provider: "Anthropic", badge: "C", tilt: 0, style: "fast LLM via OpenRouter", openrouterId: "anthropic/claude-haiku-4.5" },
   { id: "gpt-5-mini", name: "GPT-5-mini", provider: "OpenAI", badge: "O", tilt: 0, style: "reasoning model (critic / second opinion)", openrouterId: "openai/gpt-5-mini" },
   { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter", openrouterId: "google/gemini-2.5-flash" },
-  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "mapped to gpt-5-mini on the live API", openrouterId: "openai/gpt-5-mini" },
-  { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "mapped to gpt-5-nano on the live API", openrouterId: "openai/gpt-5-nano" },
+  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "OpenAI flagship (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.5" },
+  { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.4" },
   { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "(falls back to Sonnet 4.6 on the live API for now)" },
   { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "mapped to gemini-2.5-flash on the live API", openrouterId: "google/gemini-2.5-flash" },
   { id: "claude", name: "Claude", provider: "Anthropic", badge: "C", tilt: -1, style: "risk-first critique" },
@@ -6235,7 +6235,23 @@ function getLiveAdvisoryContext() {
     }
   };
   if (primaryEntry.openrouterId) body.model = primaryEntry.openrouterId;
-  if (secondaryEntry.openrouterId) body.critic = secondaryEntry.openrouterId;
+
+  // Critic vendor-conflict guard: if primary and critic are from the same vendor
+  // (same prefix before the slash), swap critic to a different lab so the second
+  // opinion has a real chance of disagreeing.
+  let criticId = secondaryEntry.openrouterId;
+  if (primaryEntry.openrouterId && criticId) {
+    const primaryVendor = primaryEntry.openrouterId.split("/")[0];
+    const criticVendor = criticId.split("/")[0];
+    if (primaryVendor === criticVendor) {
+      criticId = primaryVendor === "openai"
+        ? "anthropic/claude-haiku-4.5"
+        : primaryVendor === "anthropic"
+          ? "openai/gpt-5-mini"
+          : "anthropic/claude-haiku-4.5";
+    }
+  }
+  if (criticId) body.critic = criticId;
   return body;
 }
 
