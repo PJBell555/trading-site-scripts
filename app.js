@@ -309,7 +309,8 @@ const openPaperTrades = new Map();
 const transactionHistory = [];
 const liveTradeLedger = [];
 const advisoryHistory = [];
-const pendingPaperActions = new Set();
+const PAPER_ACTION_PENDING_TTL_MS = 10000;
+const pendingPaperActions = new Map();
 let paperEquity = PAPER_START_EQUITY;
 let paperBaseEquity = PAPER_START_EQUITY;
 let paperRiskPct = PAPER_DEFAULT_RISK_PCT;
@@ -3952,10 +3953,30 @@ function resetLocalTradeState() {
   expandedTransactionId = null;
 }
 
-function replaceTransactionHistory(entries) {
+function replaceTransactionHistory(entries, options = {}) {
+  const preserveOpenTrades = options.preserveOpenTrades !== false;
+  const localOpenTrades = preserveOpenTrades ? new Map(openPaperTrades) : new Map();
   resetLocalTradeState();
   mergeTransactionHistory(entries, { persist: false });
   rebuildPaperStateFromHistory();
+
+  localOpenTrades.forEach((trade, commodity) => {
+    if (!trade || hasClosingTransactionForTrade(trade)) return;
+    const alreadyActive = Array.from(openPaperTrades.values()).some((activeTrade) => {
+      if (!activeTrade) return false;
+      const sameTradeId = activeTrade.id && trade.id && String(activeTrade.id) === String(trade.id);
+      const sameLifecycle = activeTrade.commodity === trade.commodity
+        && activeTrade.contract === trade.contract
+        && activeTrade.side === trade.side
+        && Number(activeTrade.martingaleStep || activeTrade.step || 1) === Number(trade.martingaleStep || trade.step || 1);
+      return sameTradeId || sameLifecycle;
+    });
+
+    if (!alreadyActive && commodity) {
+      openPaperTrades.set(commodity, trade);
+    }
+  });
+
   const maxId = transactionHistory.reduce((max, entry) => (
     Number.isInteger(entry.id) ? Math.max(max, entry.id) : max
   ), 0);
@@ -4083,8 +4104,47 @@ function rebuildPaperStateFromHistory() {
   martingaleStep = latestClosed ? getNextMartingaleStepFromHistory() : 1;
 }
 
+function hasClosingTransactionForTrade(trade) {
+  if (!trade) return false;
+  const tradeId = String(trade.id || "");
+  const openedAt = getTransactionDate(trade.openedAt || trade.time);
+
+  return getUserScopedTransactions().some((entry) => {
+    if (!isClosingTransaction(entry)) return false;
+    const sameTradeId = tradeId && String(entry.tradeId || entry.id || "") === tradeId;
+    const sameLifecycle = entry.commodity === trade.commodity
+      && entry.contract === trade.contract
+      && entry.side === trade.side
+      && Number(entry.step || 1) === Number(trade.martingaleStep || trade.step || 1);
+    if (!sameTradeId && !sameLifecycle) return false;
+
+    const closedAt = getTransactionDate(entry.closedAt || entry.time);
+    return !Number.isNaN(closedAt.getTime())
+      && (Number.isNaN(openedAt.getTime()) || closedAt >= openedAt);
+  });
+}
+
 function reconcilePaperStateFromHistory() {
+  const localOpenTrades = new Map(openPaperTrades);
   rebuildPaperStateFromHistory();
+
+  localOpenTrades.forEach((trade, commodity) => {
+    if (!trade || hasClosingTransactionForTrade(trade)) return;
+    const alreadyActive = Array.from(openPaperTrades.values()).some((activeTrade) => {
+      if (!activeTrade) return false;
+      const sameTradeId = activeTrade.id && trade.id && String(activeTrade.id) === String(trade.id);
+      const sameLifecycle = activeTrade.commodity === trade.commodity
+        && activeTrade.contract === trade.contract
+        && activeTrade.side === trade.side
+        && Number(activeTrade.martingaleStep || activeTrade.step || 1) === Number(trade.martingaleStep || trade.step || 1);
+      return sameTradeId || sameLifecycle;
+    });
+
+    if (!alreadyActive && commodity) {
+      openPaperTrades.set(commodity, trade);
+    }
+  });
+
   savePaperState();
 }
 
@@ -4259,6 +4319,21 @@ function getCoinbaseReturnedProduct(orderResult) {
     || orderResult?.response?.product_id
     || orderResult?.request?.product_id
     || "-";
+}
+
+const COINBASE_SANDBOX_ORDER_TIMEOUT_MS = 1500;
+
+function timeoutAfter(ms, message) {
+  return new Promise((_, reject) => {
+    window.setTimeout(() => reject(new Error(message)), ms);
+  });
+}
+
+function submitCoinbaseSandboxOrderWithTimeout(trade, side, intent) {
+  return Promise.race([
+    submitCoinbaseSandboxOrder(trade, side, intent),
+    timeoutAfter(COINBASE_SANDBOX_ORDER_TIMEOUT_MS, `Coinbase sandbox ${intent} timed out`)
+  ]);
 }
 
 async function submitCoinbaseSandboxOrder(trade, side, intent) {
@@ -4967,6 +5042,12 @@ async function saveSharedTransactionHistory() {
   }
 }
 
+function queueSharedTransactionHistorySave() {
+  saveSharedTransactionHistory().catch(() => {
+    pendingHistorySaveRetry = true;
+  });
+}
+
 async function cleanSharedTransactionHistory() {
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) {
@@ -5106,16 +5187,22 @@ async function recordTransaction(entry) {
     openBrainStatusEl.textContent = "Open Brain log skipped; trade ledger saved";
   }
 
-  await saveSharedTransactionHistory();
+  queueSharedTransactionHistorySave();
   return transaction;
 }
 
 function isPaperActionPending(commodity) {
-  return pendingPaperActions.has(commodity);
+  const markedAt = pendingPaperActions.get(commodity);
+  if (!markedAt) return false;
+  if (Date.now() - markedAt > PAPER_ACTION_PENDING_TTL_MS) {
+    pendingPaperActions.delete(commodity);
+    return false;
+  }
+  return true;
 }
 
 function markPaperActionPending(commodity) {
-  pendingPaperActions.add(commodity);
+  pendingPaperActions.set(commodity, Date.now());
 }
 
 function clearPaperActionPending(commodity) {
@@ -5162,8 +5249,11 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   };
   let sandboxOrder = null;
 
+  openPaperTrades.set(commodity, trade);
+  savePaperState();
+
   try {
-    sandboxOrder = await submitCoinbaseSandboxOrder(trade, side === "short" ? "SELL" : "BUY", "open");
+    sandboxOrder = await submitCoinbaseSandboxOrderWithTimeout(trade, side === "short" ? "SELL" : "BUY", "open");
   } catch (error) {
     coinbaseSandboxStatusEl.textContent = "Sandbox open failed; paper open recorded";
     sandboxOrder = {
@@ -5174,9 +5264,6 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
       sentAt: new Date().toISOString()
     };
   }
-
-  openPaperTrades.set(commodity, trade);
-  savePaperState();
 
   try {
     await recordTransaction({
@@ -5230,9 +5317,10 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   openPaperTrades.delete(commodity);
   const closedAt = new Date();
   let sandboxOrder = null;
+  savePaperState();
 
   try {
-    sandboxOrder = await submitCoinbaseSandboxOrder(trade, trade.side === "short" ? "BUY" : "SELL", "close");
+    sandboxOrder = await submitCoinbaseSandboxOrderWithTimeout(trade, trade.side === "short" ? "BUY" : "SELL", "close");
   } catch (error) {
     coinbaseSandboxStatusEl.textContent = "Sandbox close failed; paper close recorded";
     sandboxOrder = {
