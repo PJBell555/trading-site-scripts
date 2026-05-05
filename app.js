@@ -345,6 +345,7 @@ let activeSection = "home";
 let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
 let secondaryModelId = "gpt-5-mini";
+let lastVerifiedLLMRun = null;
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
 let advisoryScoreThresholdIsManual = false;
 let backendSyncInFlight = false;
@@ -6130,12 +6131,14 @@ function calculateSignal() {
   inputsTitle.textContent = `Advisor inputs: ${commodityMeta.name}`;
   const primaryModelName = getModelById(primaryModelId).name;
   const secondaryModelName = secondaryModelId ? getModelById(secondaryModelId).name : "";
-  outputTitle.textContent = secondaryModelName
-    ? `Advisor output: ${commodityMeta.name} / ${primaryModelName} + ${secondaryModelName} critic`
-    : `Advisor output: ${commodityMeta.name} / ${primaryModelName}`;
-  primaryModelStatEl.textContent = secondaryModelName
-    ? `${primaryModelName} + ${secondaryModelName}`
-    : primaryModelName;
+  const verified = lastVerifiedLLMRun && lastVerifiedLLMRun.commodity === commodity ? lastVerifiedLLMRun : null;
+  if (verified) {
+    outputTitle.textContent = `Advisor output: ${commodityMeta.name} — VERIFIED ${verified.primaryModel} + ${verified.criticModel} at ${verified.time}`;
+    primaryModelStatEl.textContent = `${verified.primaryModel} + ${verified.criticModel} (verified)`;
+  } else {
+    outputTitle.textContent = `Advisor output: ${commodityMeta.name} — local-JS heuristic (selected: ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""})`;
+    primaryModelStatEl.textContent = "local-JS heuristic";
+  }
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
   convictionEl.textContent = primarySignal.manualOverride === null
@@ -6283,6 +6286,13 @@ async function runLiveLLMAdvisor() {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || `HTTP ${response.status}`);
     renderLLMVerification(data, payload);
+    lastVerifiedLLMRun = {
+      commodity: payload.commodity,
+      primaryModel: (data.primary && data.primary.model) || "?",
+      criticModel: (data.critic && data.critic.model) || "?",
+      time: new Date().toLocaleTimeString()
+    };
+    if (typeof calculateSignal === "function") calculateSignal();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     llmStatusEl.textContent = `done in ${elapsed}s · ${new Date().toLocaleTimeString()}`;
   } catch (err) {
@@ -6295,6 +6305,20 @@ async function runLiveLLMAdvisor() {
     llmRunBtn.disabled = false;
   }
 }
+
+[
+  commoditySelect,
+  inputs.trend,
+  inputs.inventory,
+  inputs.dollar,
+  inputs.geopolitics,
+  inputs.curve,
+  inputs.horizon
+].forEach((el) => {
+  if (el && el.addEventListener) {
+    el.addEventListener("change", () => { lastVerifiedLLMRun = null; });
+  }
+});
 
 if (llmRunBtn) {
   llmRunBtn.addEventListener("click", runLiveLLMAdvisor);
