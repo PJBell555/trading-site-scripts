@@ -260,7 +260,8 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
-const ADVISORY_MODEL_DEFAULT = "anthropic/claude-haiku-4.5";
+const ADVISORY_MODEL_DEFAULT = "anthropic/claude-sonnet-4.6";
+const CRITIC_MODEL_DEFAULT = "openai/gpt-5-mini";
 
 const APPROVED_ADVISORY_MODELS = new Set([
   "anthropic/claude-haiku-4.5",
@@ -283,6 +284,14 @@ function getOpenRouterAdvisoryModel(modelId = "") {
     return modelId;
   }
   return ADVISORY_MODEL_DEFAULT;
+}
+
+function getOpenRouterCriticModel(modelId) {
+  if (modelId === false || modelId === null) return null;
+  if (typeof modelId === "string" && APPROVED_ADVISORY_MODELS.has(modelId)) {
+    return modelId;
+  }
+  return CRITIC_MODEL_DEFAULT;
 }
 
 function parseAdvisoryContent(content = "") {
@@ -372,6 +381,38 @@ function buildOpenRouterAdvisoryMessages(body = {}) {
   ];
 }
 
+function buildCriticReviewMessages(primaryAdvisory, body = {}) {
+  const commodity = body.commodity || body.commodityName || "the selected commodity";
+  const horizon = body.horizon || "intraday";
+  const context = body.context || {};
+
+  const systemContent = [
+    "You are an independent peer reviewer for commodity futures advisories.",
+    "You are given the same market context as the primary analyst, plus their advisory output.",
+    "Your job is to critically evaluate the primary's call, not rubber-stamp it.",
+    "Return compact JSON only with keys: agree, agreementLevel, adjustedConviction, concerns, supportingPoints.",
+    "agree must be a boolean: true if you agree with the primary tone, false if not.",
+    "agreementLevel must be an integer 0-100 expressing how strongly you agree overall.",
+    "adjustedConviction must be an integer 0-100 representing your own suggested conviction (may differ from primary).",
+    "concerns is an array of specific concerns about the primary's reasoning, missed signals, or overconfidence.",
+    "supportingPoints is an array of specific points where you agree with the primary.",
+    "Be willing to disagree. If the primary forced a direction on weak signals or ignored a key risk, say so concretely."
+  ].join(" ");
+
+  const userContent = JSON.stringify({
+    task: `Review this ${horizon}-horizon advisory for ${commodity}.`,
+    commodity,
+    horizon,
+    context,
+    primaryAdvisory
+  });
+
+  return [
+    { role: "system", content: systemContent },
+    { role: "user", content: userContent }
+  ];
+}
+
 async function createOpenRouterAdvisory(env, body = {}) {
   const apiKey = env.OPENROUTER_API_KEY ? await env.OPENROUTER_API_KEY.get() : null;
   if (!apiKey) {
@@ -418,6 +459,71 @@ async function createOpenRouterAdvisory(env, body = {}) {
     advisory,
     usage: data.usage || null,
     elapsedMs: Date.now() - startedAt
+  };
+}
+
+async function createOpenRouterCriticReview(env, primaryAdvisory, body = {}, criticModel) {
+  const apiKey = env.OPENROUTER_API_KEY ? await env.OPENROUTER_API_KEY.get() : null;
+  if (!apiKey) {
+    throw new Error("Missing OPENROUTER_API_KEY Secrets Store binding or value");
+  }
+
+  const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
+  const startedAt = Date.now();
+
+  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.OPENROUTER_SITE_URL || env.ALLOWED_ORIGIN || "https://pjbell555.github.io",
+      "X-Title": env.OPENROUTER_APP_NAME || "ComHedge 2"
+    },
+    body: JSON.stringify({
+      model: criticModel,
+      messages: buildCriticReviewMessages(primaryAdvisory, body),
+      temperature: 0.2,
+      max_tokens: 500,
+      response_format: { type: "json_object" }
+    })
+  });
+
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+
+  if (!response.ok) {
+    const baseMsg = data?.error?.message || data?.message || `Critic request failed: ${response.status}`;
+    const meta = data?.error?.metadata;
+    const detail = meta ? ` | provider=${meta.providerName || "?"} raw=${meta.raw || JSON.stringify(meta)}` : "";
+    throw new Error(`${baseMsg}${detail}`);
+  }
+
+  const content = data?.choices?.[0]?.message?.content || "{}";
+  const review = parseAdvisoryContent(content);
+
+  return {
+    model: criticModel,
+    review,
+    usage: data.usage || null,
+    elapsedMs: Date.now() - startedAt
+  };
+}
+
+function consolidatePrimaryAndCritic(primary, criticReview) {
+  const advisory = primary?.advisory || {};
+  const review = criticReview?.review || {};
+  const primaryConviction = Number.isFinite(Number(advisory.conviction)) ? Number(advisory.conviction) : 50;
+  const criticConviction = Number.isFinite(Number(review.adjustedConviction)) ? Number(review.adjustedConviction) : primaryConviction;
+  const agreed = review.agree !== false;
+
+  return {
+    conviction: Math.round((primaryConviction + criticConviction) / 2),
+    tone: agreed ? (advisory.tone || "wait") : "wait",
+    summary: advisory.summary,
+    agreed,
+    agreementLevel: review.agreementLevel,
+    primaryConviction,
+    criticConviction
   };
 }
 
@@ -691,8 +797,31 @@ export default {
         }
 
         const body = await request.json().catch(() => ({}));
-        const advisory = await createOpenRouterAdvisory(env, body);
-        return jsonResponse(advisory, 200, origin);
+        const startedAt = Date.now();
+        const primary = await createOpenRouterAdvisory(env, body);
+
+        const criticModel = getOpenRouterCriticModel(body.critic);
+        if (!criticModel) {
+          return jsonResponse(primary, 200, origin);
+        }
+
+        let critic = null;
+        let criticError = null;
+        try {
+          critic = await createOpenRouterCriticReview(env, primary.advisory, body, criticModel);
+        } catch (err) {
+          criticError = err.message;
+        }
+
+        const consolidated = critic ? consolidatePrimaryAndCritic(primary, critic) : primary.advisory;
+
+        return jsonResponse({
+          provider: "OpenRouter",
+          primary,
+          critic: critic || { model: criticModel, error: criticError },
+          consolidated,
+          elapsedMs: Date.now() - startedAt
+        }, 200, origin);
       }
 
       if (url.pathname === "/settings") {
