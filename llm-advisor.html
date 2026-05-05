@@ -1,0 +1,258 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ComHedge 2 — LLM Advisor</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #0b0d12;
+    --panel: #141821;
+    --line: #1f2530;
+    --text: #e6edf3;
+    --muted: #8b97a8;
+    --accent: #5eead4;
+    --green: #4ade80;
+    --yellow: #facc15;
+    --red: #f87171;
+  }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    line-height: 1.5;
+  }
+  .wrap {
+    max-width: 980px;
+    margin: 0 auto;
+    padding: 24px;
+  }
+  h1 { font-size: 22px; margin: 0 0 4px 0; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 24px; }
+  .controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  select, input, button {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  button {
+    cursor: pointer;
+    background: var(--accent);
+    color: #0b0d12;
+    font-weight: 600;
+    border: 0;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 16px; }
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 18px;
+  }
+  .card h2 { font-size: 14px; margin: 0 0 12px 0; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .pill {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .pill.long { background: rgba(74, 222, 128, 0.15); color: var(--green); }
+  .pill.short { background: rgba(248, 113, 113, 0.15); color: var(--red); }
+  .pill.wait { background: rgba(250, 204, 21, 0.15); color: var(--yellow); }
+  .conv-row { display: flex; align-items: baseline; gap: 8px; margin: 10px 0 14px 0; }
+  .conv-num { font-size: 32px; font-weight: 700; }
+  .conv-lbl { color: var(--muted); font-size: 12px; }
+  ul { padding-left: 20px; margin: 8px 0; }
+  li { margin-bottom: 6px; font-size: 13px; }
+  .muted { color: var(--muted); }
+  .summary { font-size: 14px; margin: 8px 0 12px 0; }
+  .meta { color: var(--muted); font-size: 11px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .consolidated { background: rgba(94, 234, 212, 0.05); border-color: rgba(94, 234, 212, 0.25); margin-top: 16px; }
+  .consolidated h2 { color: var(--accent); }
+  .err { color: var(--red); font-size: 13px; padding: 12px; background: rgba(248, 113, 113, 0.08); border-radius: 6px; margin-top: 12px; }
+  .spinner { display: inline-block; width: 14px; height: 14px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>ComHedge 2 — LLM Advisor</h1>
+  <div class="sub">Two-stage pipeline · Claude Sonnet 4.6 (primary) + OpenAI GPT-5-mini (critic) · via OpenRouter</div>
+
+  <div class="controls">
+    <label class="muted" for="commodity">Commodity</label>
+    <select id="commodity">
+      <option value="oil" selected>Oil</option>
+      <option value="natural_gas">Natural Gas</option>
+      <option value="gold">Gold</option>
+      <option value="silver">Silver</option>
+      <option value="copper">Copper</option>
+      <option value="platinum">Platinum</option>
+    </select>
+    <label class="muted" for="horizon">Horizon</label>
+    <select id="horizon">
+      <option value="intraday" selected>Intraday</option>
+      <option value="swing">Swing</option>
+      <option value="position">Position</option>
+    </select>
+    <button id="run">Run advisor</button>
+    <span id="status" class="muted"></span>
+  </div>
+
+  <div id="result"></div>
+</div>
+
+<script>
+const WORKER_URL = "https://trading-site-scripts.peter-bell54.workers.dev/models/openrouter/advisory";
+
+const DEFAULT_CONTEXT = {
+  oil: {
+    currentPrice: 104.34,
+    recentPrices: [110.20, 108.50, 106.80, 105.40, 104.34],
+    signals: {
+      trend: "recovering_off_lows",
+      inventoryPressure: "draws",
+      geopoliticalRisk: "disrupted",
+      dollarPressure: "weaker",
+      curveStructure: "flat"
+    },
+    macroNotes: "2026 Iran war, US-Iran ceasefire since Apr 8, Strait of Hormuz still under dual blockade. Pre-war WTI ~$60, peak ~$120, now $104."
+  },
+  natural_gas: { currentPrice: 3.20, signals: { trend: "neutral" }, macroNotes: "Spring shoulder season, storage builds." },
+  gold: { currentPrice: 2400, signals: { trend: "rising" }, macroNotes: "Geopolitical risk premium, dollar weakness." },
+  silver: { currentPrice: 28, signals: { trend: "rising" }, macroNotes: "Industrial demand + safe haven bid." },
+  copper: { currentPrice: 4.50, signals: { trend: "neutral" }, macroNotes: "China demand uncertainty." },
+  platinum: { currentPrice: 950, signals: { trend: "neutral" }, macroNotes: "Auto catalyst demand pressure." }
+};
+
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s == null ? "" : s).replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+function pill(tone) {
+  const t = String(tone || "wait").toLowerCase();
+  return `<span class="pill ${esc(t)}">${esc(t)}</span>`;
+}
+
+function renderAdvisory(adv, label, model) {
+  const reasons = Array.isArray(adv?.reasons) ? adv.reasons : [];
+  const risks = Array.isArray(adv?.risks) ? adv.risks : [];
+  return `
+    <div class="card">
+      <h2>${esc(label)}</h2>
+      <div class="conv-row">
+        <div class="conv-num">${esc(adv?.conviction ?? "?")}</div>
+        <div class="conv-lbl">/ 100 conviction</div>
+        <div style="margin-left:auto">${pill(adv?.tone)}</div>
+      </div>
+      <div class="summary">${esc(adv?.summary || "—")}</div>
+      ${reasons.length ? `<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:10px">Reasons</div><ul>${reasons.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
+      ${risks.length ? `<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:10px">Risks</div><ul>${risks.map(r => `<li>${esc(r)}</li>`).join("")}</ul>` : ""}
+      ${model ? `<div class="meta">model: ${esc(model)}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderCritic(critic) {
+  const r = critic?.review || {};
+  if (critic?.error) {
+    return `<div class="card"><h2>Critic</h2><div class="err">Critic failed: ${esc(critic.error)}</div></div>`;
+  }
+  const concerns = Array.isArray(r.concerns) ? r.concerns : [];
+  const support = Array.isArray(r.supportingPoints) ? r.supportingPoints : [];
+  return `
+    <div class="card">
+      <h2>Critic Review</h2>
+      <div class="conv-row">
+        <div class="conv-num">${esc(r.adjustedConviction ?? "?")}</div>
+        <div class="conv-lbl">/ 100 critic-adjusted</div>
+        <div style="margin-left:auto">${pill(r.agree === false ? "short" : "long").replace(/long|short/, r.agree === false ? "disagrees" : "agrees")}</div>
+      </div>
+      <div class="muted" style="font-size:13px">Agreement level: <strong>${esc(r.agreementLevel ?? "?")}</strong> / 100</div>
+      ${concerns.length ? `<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:12px">Concerns</div><ul>${concerns.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+      ${support.length ? `<div class="muted" style="font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-top:8px">Agrees on</div><ul>${support.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+      ${critic?.model ? `<div class="meta">model: ${esc(critic.model)}</div>` : ""}
+    </div>
+  `;
+}
+
+function renderConsolidated(con) {
+  return `
+    <div class="card consolidated">
+      <h2>Consolidated</h2>
+      <div class="conv-row">
+        <div class="conv-num">${esc(con?.conviction ?? "?")}</div>
+        <div class="conv-lbl">/ 100 consolidated conviction</div>
+        <div style="margin-left:auto">${pill(con?.tone)}</div>
+      </div>
+      <div class="muted" style="font-size:13px">Primary said <strong>${esc(con?.primaryConviction)}</strong>, critic said <strong>${esc(con?.criticConviction)}</strong>, agreement level <strong>${esc(con?.agreementLevel ?? "—")}</strong>. Tone falls to "wait" when models disagree.</div>
+    </div>
+  `;
+}
+
+function renderResult(data) {
+  const primary = data.primary;
+  const critic = data.critic;
+  const consolidated = data.consolidated || (primary && primary.advisory) || {};
+  if (!primary) {
+    return `<div class="card"><div class="err">${esc(data?.error || "Unexpected response")}</div></div>`;
+  }
+  return `
+    ${renderConsolidated(consolidated)}
+    <div class="grid">
+      ${renderAdvisory(primary.advisory, "Primary (Sonnet 4.6)", primary.model)}
+      ${renderCritic(critic)}
+    </div>
+  `;
+}
+
+async function run() {
+  const commodity = $("commodity").value;
+  const horizon = $("horizon").value;
+  const status = $("status");
+  const result = $("result");
+  const btn = $("run");
+
+  btn.disabled = true;
+  status.innerHTML = `<span class="spinner"></span> Calling Sonnet 4.6 + GPT-5-mini critic…`;
+
+  const body = {
+    commodity,
+    horizon,
+    context: DEFAULT_CONTEXT[commodity] || { currentPrice: null }
+  };
+
+  try {
+    const t0 = Date.now();
+    const res = await fetch(WORKER_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    const ms = Date.now() - t0;
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    result.innerHTML = renderResult(data);
+    status.textContent = `Done in ${(ms/1000).toFixed(1)}s · ${new Date().toLocaleTimeString()}`;
+  } catch (err) {
+    result.innerHTML = `<div class="card"><div class="err">${esc(err.message)}</div></div>`;
+    status.textContent = "Failed";
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+$("run").addEventListener("click", run);
+window.addEventListener("DOMContentLoaded", run);
+</script>
+</body>
+</html>
