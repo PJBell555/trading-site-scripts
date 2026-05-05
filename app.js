@@ -211,7 +211,11 @@ const marketConfig = {
 };
 
 const advisoryModels = [
-  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "balanced reasoning" },
+  { id: "sonnet-4.6", name: "Sonnet 4.6", provider: "Anthropic", badge: "C", tilt: -1, style: "calibrated reasoning (live LLM via OpenRouter)" },
+  { id: "haiku-4.5", name: "Haiku 4.5", provider: "Anthropic", badge: "C", tilt: 0, style: "fast LLM via OpenRouter" },
+  { id: "gpt-5-mini", name: "GPT-5-mini", provider: "OpenAI", badge: "O", tilt: 0, style: "reasoning model (critic / second opinion)" },
+  { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter" },
+  { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "balanced reasoning (legacy local-rules label)" },
   { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI fallback" },
   { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "source-heavy market scan" },
   { id: "gemini", name: "Gemini", provider: "Google", badge: "G", tilt: 3, style: "broad macro cross-check" },
@@ -336,7 +340,8 @@ let expandedUserEmail = "";
 let editingUserEmail = "";
 let activeSection = "home";
 let featureTypeFilter = "all";
-let primaryModelId = "gpt-5-5";
+let primaryModelId = "sonnet-4.6";
+let secondaryModelId = "gpt-5-mini";
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
 let advisoryScoreThresholdIsManual = false;
 let backendSyncInFlight = false;
@@ -4538,7 +4543,11 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
     conviction: signal.conviction,
     tone: signal.tone,
     label: signal.label,
-    action: signal.action
+    action: signal.action,
+    primaryModel: primaryModelId,
+    primaryModelName: getModelById(primaryModelId).name,
+    secondOpinionModel: secondaryModelId,
+    secondOpinionModelName: getModelById(secondaryModelId).name
   };
 }
 
@@ -6116,8 +6125,14 @@ function calculateSignal() {
   });
 
   inputsTitle.textContent = `Advisor inputs: ${commodityMeta.name}`;
-  outputTitle.textContent = `Advisor output: ${commodityMeta.name} / ${getModelById(primaryModelId).name}`;
-  primaryModelStatEl.textContent = getModelById(primaryModelId).name;
+  const primaryModelName = getModelById(primaryModelId).name;
+  const secondaryModelName = secondaryModelId ? getModelById(secondaryModelId).name : "";
+  outputTitle.textContent = secondaryModelName
+    ? `Advisor output: ${commodityMeta.name} / ${primaryModelName} + ${secondaryModelName} critic`
+    : `Advisor output: ${commodityMeta.name} / ${primaryModelName}`;
+  primaryModelStatEl.textContent = secondaryModelName
+    ? `${primaryModelName} + ${secondaryModelName}`
+    : primaryModelName;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
   convictionEl.textContent = primarySignal.manualOverride === null
