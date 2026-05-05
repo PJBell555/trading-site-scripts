@@ -483,7 +483,8 @@ async function createOpenRouterCriticReview(env, primaryAdvisory, body = {}, cri
       model: criticModel,
       messages: buildCriticReviewMessages(primaryAdvisory, body),
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: 2000,
+      reasoning: { effort: "low" },
       response_format: { type: "json_object" }
     })
   });
