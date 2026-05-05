@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-05T23:11:59.301Z",
+  "generatedAt": "2026-05-05T23:12:28.457Z",
   "source": "cloudflare-github-master-paper-trading-ledger",
   "transactions": [
     {
@@ -155,6 +155,46 @@
       "pnl": -8.149999999999864,
       "note": "Oil long closed from $100.48",
       "sharedKey": "235|SELL STOP|NOL-18MAY26-CDE|2026-05-05T23:11:54.432Z|99.7150"
+    },
+    {
+      "id": 237,
+      "time": "2026-05-05T23:11:29.255Z",
+      "userEmail": "peter@pjbell.com",
+      "userName": "Peter Bell",
+      "tradeId": 237,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "BUY",
+      "side": "long",
+      "step": 2,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 99.945,
+      "entryPrice": 99.945,
+      "targetEntryPrice": 99.6951375,
+      "targetPrice": 100.94444999999999,
+      "stopPrice": 99.1954125,
+      "contractMultiplier": 10,
+      "contracts": 2,
+      "marginRequirement": 99.945,
+      "notionalValue": 1998.8999999999999,
+      "openFee": 0.5,
+      "estimatedExitFee": 0.5,
+      "totalEstimatedFees": 1,
+      "feePerContractSide": 0.25,
+      "feeLabel": "Estimated exchange/brokerage fee",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "open",
+        "side": "BUY",
+        "error": "Coinbase sandbox open timed out",
+        "sentAt": "2026-05-05T23:11:29.255Z"
+      },
+      "openedAt": "2026-05-05T23:11:17.811Z",
+      "capital": 199.89,
+      "pnl": 0,
+      "note": "Oil long opened at 54 conviction",
+      "closedAt": null,
+      "sharedKey": "237|BUY|NOL-18MAY26-CDE|2026-05-05T23:11:29.255Z|99.9450"
     },
     {
       "id": 236,
