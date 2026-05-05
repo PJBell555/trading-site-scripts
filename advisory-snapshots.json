@@ -1,7 +1,49 @@
 {
-  "generatedAt": "2026-05-05T05:30:01.121Z",
+  "generatedAt": "2026-05-05T05:32:01.093Z",
   "source": "cloudflare-github-advisory-snapshots",
   "snapshots": [
+    {
+      "snapshotKey": "oil|intraday|14816326",
+      "time": "2026-05-05T05:32:00.479Z",
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "horizon": "intraday",
+      "price": 104.405,
+      "priceSource": "Coinbase WebSocket / 10:32:00 PM",
+      "bounded": 11,
+      "conviction": 51,
+      "tone": "wait",
+      "label": "Wait",
+      "action": "No trade"
+    },
+    {
+      "snapshotKey": "oil|swing|14816326",
+      "time": "2026-05-05T05:32:00.479Z",
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "horizon": "swing",
+      "price": 104.405,
+      "priceSource": "Coinbase WebSocket / 10:32:00 PM",
+      "bounded": 14,
+      "conviction": 54,
+      "tone": "long",
+      "label": "Moderate Long",
+      "action": "Lean long small"
+    },
+    {
+      "snapshotKey": "oil|position|14816326",
+      "time": "2026-05-05T05:32:00.479Z",
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "horizon": "position",
+      "price": 104.405,
+      "priceSource": "Coinbase WebSocket / 10:32:00 PM",
+      "bounded": 16,
+      "conviction": 56,
+      "tone": "long",
+      "label": "Moderate Long",
+      "action": "Lean long small"
+    },
     {
       "snapshotKey": "oil|intraday|14816325",
       "time": "2026-05-05T05:30:00.647Z",
