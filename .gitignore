@@ -1,0 +1,5 @@
+
+# Overnight advisor loop output (transient runtime data)
+overnight-advisories.jsonl
+overnight-loop.log
+.overnight-cost-cents
