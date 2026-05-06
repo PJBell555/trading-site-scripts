@@ -1131,9 +1131,7 @@ function applyCurrentUserPaperSettings() {
 
   ensureSelectedCommodityAllowed();
   renderCommodityAccess();
-  paperBaseEquity = Number.isFinite(Number(user.paperBaseEquity))
-    ? Math.max(0, Number(user.paperBaseEquity))
-    : PAPER_START_EQUITY;
+  paperBaseEquity = getUserProfileStartCapital(user);
   paperRiskPct = Number.isFinite(Number(user.paperRiskPct))
     ? clamp(Number(user.paperRiskPct), 0.1, 25)
     : PAPER_DEFAULT_RISK_PCT;
@@ -1414,6 +1412,12 @@ function getUserCommodityPnl(user, commodity = null) {
 function getCurrentProfileStartCapital() {
   const user = getCurrentUserProfile();
   if (!user) return Number(paperBaseEquity) || PAPER_START_EQUITY;
+
+  return getUserProfileStartCapital(user);
+}
+
+function getUserProfileStartCapital(user) {
+  if (!user) return PAPER_START_EQUITY;
 
   const selected = normalizeCommodityIds(user.commodities);
   const allocations = normalizeCommodityAllocations(user.commodityAllocations, selected, user.paperBaseEquity);
@@ -4267,7 +4271,10 @@ function savePaperState() {
 }
 
 function syncPaperInputs() {
-  paperEquityInputEl.value = String(Math.round(paperBaseEquity * 100) / 100);
+  const profileCapital = getSafeHistoryStartCapital(historyCommodityFilter);
+  paperEquityInputEl.value = formatMoney(profileCapital);
+  paperEquityInputEl.readOnly = true;
+  paperEquityInputEl.setAttribute("aria-readonly", "true");
   paperRiskInputEl.value = String(Math.round(paperRiskPct * 100) / 100);
 }
 
@@ -6669,7 +6676,8 @@ advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
-paperEquityInputEl.addEventListener("change", updatePaperEquitySetting);
+paperEquityInputEl.readOnly = true;
+paperEquityInputEl.setAttribute("aria-readonly", "true");
 paperRiskInputEl.addEventListener("change", updatePaperRiskSetting);
 coinbaseSandboxEnabledEl.addEventListener("change", () => {
   setCoinbaseSandboxEnabled(true);
