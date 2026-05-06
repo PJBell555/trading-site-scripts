@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-06T22:54:06.258Z",
+  "generatedAt": "2026-05-06T22:54:23.531Z",
   "source": "cloudflare-github-shared-settings",
   "coinbaseSandboxEnabled": true,
   "users": [
@@ -145,8 +145,8 @@
       },
       "commodityTradeTerms": {
         "oil": {
-          "contractMultiplier": 10,
-          "marginRateLong": 0.14924,
+          "contractMultiplier": 7,
+          "marginRateLong": 0.14923999999999998,
           "marginRateShort": 0.1741,
           "feePerContractSide": 1.17,
           "feeLabel": "Coinbase displayed futures fee estimate"
@@ -1348,8 +1348,8 @@
       },
       "commodityTradeTerms": {
         "oil": {
-          "contractMultiplier": 10,
-          "marginRateLong": 0.14924,
+          "contractMultiplier": 7,
+          "marginRateLong": 0.14923999999999998,
           "marginRateShort": 0.1741,
           "feePerContractSide": 1.17,
           "feeLabel": "Coinbase displayed futures fee estimate"
