@@ -1124,6 +1124,10 @@ function getCurrentUserProfile() {
   return findRegisteredUserByEmail(getCurrentAccessEmail());
 }
 
+function hasCurrentUserProfile() {
+  return Boolean(getCurrentUserProfile());
+}
+
 function getCurrentUserStrategy() {
   return normalizeUserStrategy(getCurrentUserProfile()?.strategy);
 }
@@ -1253,6 +1257,7 @@ function getCurrentUserCommodityIds() {
 }
 
 function userCanTradeCommodity(commodity) {
+  if (!hasCurrentUserProfile()) return true;
   return getCurrentUserCommodityIds().includes(commodity);
 }
 
@@ -1581,10 +1586,19 @@ function getUserCurrentPnl(user) {
 }
 
 function getCurrentProfileStartCapital() {
-  const user = getCurrentUserProfile();
+  const user = getProfileForCapital();
   if (!user) return Number(paperBaseEquity) || PAPER_START_EQUITY;
 
   return getUserProfileStartCapital(user);
+}
+
+function getProfileForCapital() {
+  const currentUser = getCurrentUserProfile();
+  if (currentUser) return currentUser;
+
+  return findRegisteredUserByEmail(LEGACY_LEDGER_USER_EMAIL)
+    || userRoster.find((candidate) => normalizeEmail(candidate.email).startsWith("peter@"))
+    || null;
 }
 
 function getUserProfileStartCapital(user) {
@@ -1600,7 +1614,7 @@ function getUserProfileStartCapital(user) {
 }
 
 function getCurrentProfileStartCapitalForCommodity(commodity = "all") {
-  const user = getCurrentUserProfile();
+  const user = getProfileForCapital();
   const normalizedCommodity = normalizeCommodityId(commodity);
   if (!user || !normalizedCommodity || normalizedCommodity === "all") {
     return getCurrentProfileStartCapital();
@@ -4117,9 +4131,12 @@ function addLiveTradeFromForm(event) {
 
 function getUserScopedTransactions() {
   const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
-  return getDedupedPaperCloseEntries(source)
-    .filter((entry) => isTransactionForCurrentUser(entry))
-    .filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
+  const deduped = getDedupedPaperCloseEntries(source);
+  const userScoped = hasCurrentUserProfile()
+    ? deduped.filter((entry) => isTransactionForCurrentUser(entry))
+    : deduped;
+
+  return userScoped.filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
 }
 
 function getBundledTransactionEntries() {
@@ -4136,8 +4153,16 @@ function getBundledTransactionEntries() {
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
+function getRawPaperLedgerEntries() {
+  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  return getDedupedPaperCloseEntries(source);
+}
+
 function getDisplayTransactionSource() {
-  return getUserScopedTransactions().slice();
+  const scopedEntries = getUserScopedTransactions();
+  if (scopedEntries.length) return scopedEntries.slice();
+
+  return getRawPaperLedgerEntries().slice();
 }
 
 async function loadBundledTransactionHistory() {
@@ -6175,7 +6200,7 @@ function isEntryInPeriod(entry, period) {
 
 function getFilteredTransactions() {
   normalizeHistoryCommodityFilter();
-  return getUserScopedTransactions().filter((entry) => {
+  return getDisplayTransactionSource().filter((entry) => {
     const commodityMatch = historyCommodityFilter === "all" || entry.commodity === historyCommodityFilter;
     return commodityMatch && isEntryInPeriod(entry, historyPeriodFilter);
   });
@@ -6493,7 +6518,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   maybeRecordPaperDecisionLog(commodity, signal, tradePlan, decision, openTrade, openPl, marketStatus);
   renderPaperDecisionLog();
   renderUserContextWithAvatar(paperUserContextEl, getPaperUserContextText());
-  paperEquityEl.textContent = formatMoney(displayEquity);
+  paperEquityEl.textContent = formatMoney(displayStartCapital);
   paperRiskEl.textContent = tradePlan.riskPct;
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
   paperCommittedEl.textContent = openTrade ? formatMoney(committedCapital) : formatMoney(nextCapital);
@@ -6536,7 +6561,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
 
-  const displaySourceEntries = getDisplayTransactionSource();
+  let displaySourceEntries = getDisplayTransactionSource();
+  if (!displaySourceEntries.length) {
+    displaySourceEntries = getRawPaperLedgerEntries().slice();
+  }
 
   if (!displaySourceEntries.length) {
     const row = document.createElement("tr");
@@ -6564,6 +6592,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       : periodEntries.filter((entry) => entry.commodity === historyCommodityFilter);
 
     if (!rowsToRender.length) {
+      const rawEntries = getRawPaperLedgerEntries();
+      if (rawEntries.length) {
+        displaySourceEntries = rawEntries.slice();
+      }
       historyCommodityFilter = "all";
       historyPeriodFilter = "all";
       historyFiltersTouched = false;
@@ -6575,6 +6607,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   if (!rowsToRender.length && displaySourceEntries.length) {
+    const rawEntries = getRawPaperLedgerEntries();
+    if (rawEntries.length) {
+      displaySourceEntries = rawEntries.slice();
+    }
     historyCommodityFilter = "all";
     historyPeriodFilter = "all";
     historyFiltersTouched = false;
