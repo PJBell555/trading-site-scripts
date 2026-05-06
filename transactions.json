@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-05-06T14:52:55.456Z",
+  "generatedAt": "2026-05-06T14:56:53.519Z",
   "source": "cloudflare-github-master-paper-trading-ledger",
   "transactions": [
     {
@@ -268,16 +268,10 @@
       },
       "openedAt": "2026-05-05T23:11:17.811Z",
       "capital": 199.89,
-      "pnl": 19,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-06T00:12:46.190Z",
-      "sharedKey": "237|BUY|NOL-18MAY26-CDE|2026-05-05T23:11:29.255Z|99.9450",
-      "exitPrice": 100.945,
-      "netPnl": 19,
-      "grossPnl": 20,
-      "durationMs": 3688379,
-      "reconciledFromCloseId": 238,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "237|BUY|NOL-18MAY26-CDE|2026-05-05T23:11:29.255Z|99.9450"
     },
     {
       "id": 236,
@@ -437,16 +431,10 @@
       },
       "openedAt": "2026-05-05T22:57:01.273Z",
       "capital": 100.48,
-      "pnl": -8.149999999999864,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T23:11:04.163Z",
-      "sharedKey": "235|BUY|NOL-18MAY26-CDE|2026-05-05T22:57:05.566Z|100.4800",
-      "exitPrice": 99.715,
-      "netPnl": -8.149999999999864,
-      "grossPnl": -7.649999999999864,
-      "durationMs": 842890,
-      "reconciledFromCloseId": 236,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "235|BUY|NOL-18MAY26-CDE|2026-05-05T22:57:05.566Z|100.4800"
     },
     {
       "id": 234,
@@ -667,16 +655,10 @@
       },
       "openedAt": "2026-05-05T22:53:49.114Z",
       "capital": 101.195,
-      "pnl": -8.149999999999864,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T22:55:33.938Z",
-      "sharedKey": "228|BUY|NOL-18MAY26-CDE|2026-05-05T22:54:17.865Z|101.1950",
-      "exitPrice": 100.43,
-      "netPnl": -8.149999999999864,
-      "grossPnl": -7.649999999999864,
-      "durationMs": 104824,
-      "reconciledFromCloseId": 231,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "228|BUY|NOL-18MAY26-CDE|2026-05-05T22:54:17.865Z|101.1950"
     },
     {
       "id": 229,
@@ -851,16 +833,10 @@
       },
       "openedAt": "2026-05-05T22:52:31.532Z",
       "capital": 99.71500000000002,
-      "pnl": 9.599999999999909,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T22:53:24.604Z",
-      "sharedKey": "226|BUY|NOL-18MAY26-CDE|2026-05-05T22:52:33.660Z|99.7150",
-      "exitPrice": 100.725,
-      "netPnl": 9.599999999999909,
-      "grossPnl": 10.099999999999909,
-      "durationMs": 53072,
-      "reconciledFromCloseId": 227,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "226|BUY|NOL-18MAY26-CDE|2026-05-05T22:52:33.660Z|99.7150"
     },
     {
       "id": 225,
@@ -12032,16 +12008,10 @@
       },
       "openedAt": "2026-05-05T13:50:57.527Z",
       "capital": 408.86000000000007,
-      "pnl": -34.40000000000009,
+      "pnl": 0,
       "note": "Oil long opened at 67 conviction",
-      "closedAt": "2026-05-05T14:08:24.420Z",
-      "sharedKey": "125|BUY|NOL-18MAY26-CDE|2026-05-05T13:50:57.748Z|102.2150",
-      "exitPrice": 101.405,
-      "netPnl": -34.40000000000009,
-      "grossPnl": -32.40000000000009,
-      "durationMs": 1046893,
-      "reconciledFromCloseId": 126,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "125|BUY|NOL-18MAY26-CDE|2026-05-05T13:50:57.748Z|102.2150"
     },
     {
       "id": 124,
@@ -13265,16 +13235,10 @@
       },
       "openedAt": "2026-05-05T06:41:00.639Z",
       "capital": 209.04000000000002,
-      "pnl": -16.90000000000032,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T07:36:39.515Z",
-      "sharedKey": "110|BUY|NOL-18MAY26-CDE|2026-05-05T06:41:00.744Z|104.5200",
-      "exitPrice": 103.725,
-      "netPnl": -16.90000000000032,
-      "grossPnl": -15.900000000000318,
-      "durationMs": 3338876,
-      "reconciledFromCloseId": 111,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "110|BUY|NOL-18MAY26-CDE|2026-05-05T06:41:00.744Z|104.5200"
     },
     {
       "id": 109,
@@ -13574,16 +13538,10 @@
       },
       "openedAt": "2026-05-05T06:24:40.637Z",
       "capital": 105.255,
-      "pnl": -8.39999999999992,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T06:40:58.954Z",
-      "sharedKey": "108|BUY|NOL-18MAY26-CDE|2026-05-05T06:24:40.794Z|105.2550",
-      "exitPrice": 104.465,
-      "netPnl": -8.39999999999992,
-      "grossPnl": -7.89999999999992,
-      "durationMs": 978317,
-      "reconciledFromCloseId": 109,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "108|BUY|NOL-18MAY26-CDE|2026-05-05T06:24:40.794Z|105.2550"
     },
     {
       "id": 107,
@@ -14083,16 +14041,10 @@
       },
       "openedAt": "2026-05-05T02:43:04.687Z",
       "capital": 832.88,
-      "pnl": 80.80000000000018,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T06:24:27.710Z",
-      "sharedKey": "102|BUY|NOL-18MAY26-CDE|2026-05-05T02:43:20.057Z|104.1100",
-      "exitPrice": 105.17,
-      "netPnl": 80.80000000000018,
-      "grossPnl": 84.80000000000018,
-      "durationMs": 13283023,
-      "reconciledFromCloseId": 103,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "102|BUY|NOL-18MAY26-CDE|2026-05-05T02:43:20.057Z|104.1100"
     },
     {
       "id": 101,
@@ -14238,16 +14190,10 @@
       },
       "openedAt": "2026-05-04T21:21:13.650Z",
       "capital": 419.28,
-      "pnl": -34.59999999999991,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-05T02:42:12.363Z",
-      "sharedKey": "100|BUY|NOL-18MAY26-CDE|2026-05-04T21:21:14.056Z|104.8200",
-      "exitPrice": 104.005,
-      "netPnl": -34.59999999999991,
-      "grossPnl": -32.59999999999991,
-      "durationMs": 19258713,
-      "reconciledFromCloseId": 101,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "closedAt": null,
+      "sharedKey": "100|BUY|NOL-18MAY26-CDE|2026-05-04T21:21:14.056Z|104.8200"
     },
     {
       "id": 97,
@@ -14460,17 +14406,11 @@
       },
       "openedAt": "2026-05-01T14:25:34.066Z",
       "capital": 208.45000000000002,
-      "pnl": -74.89999999999986,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-01T14:25:37.381Z",
+      "closedAt": null,
       "sharedKey": "98|BUY|NOL-18MAY26-CDE|2026-05-01T14:25:34.196Z|104.2250",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 100.53,
-      "netPnl": -74.89999999999986,
-      "grossPnl": -73.89999999999986,
-      "durationMs": 3315,
-      "reconciledFromCloseId": 99,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 97,
@@ -14572,17 +14512,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T20:30:49.498Z",
       "capital": 105.50999999999999,
-      "pnl": -13.349999999999966,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-05-01T14:25:31.607Z",
+      "closedAt": null,
       "sharedKey": "34|BUY|NOL-18MAY26-CDE|2026-04-30T20:30:49.499Z|105.5100",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 104.225,
-      "netPnl": -13.349999999999966,
-      "grossPnl": -12.849999999999966,
-      "durationMs": 64482109,
-      "reconciledFromCloseId": 97,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 33,
@@ -14753,17 +14687,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T15:31:25.346Z",
       "capital": 415.3,
-      "pnl": 39.80000000000007,
+      "pnl": 0,
       "note": "Oil long opened at 62 conviction",
-      "closedAt": "2026-04-30T19:13:16.844Z",
+      "closedAt": null,
       "sharedKey": "30|BUY|NOL-18MAY26-CDE|2026-04-30T15:31:25.347Z|103.8250",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 104.87,
-      "netPnl": 39.80000000000007,
-      "grossPnl": 41.80000000000007,
-      "durationMs": 13311498,
-      "reconciledFromCloseId": 31,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 29,
@@ -14828,17 +14756,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T15:29:02.863Z",
       "capital": 209.41,
-      "pnl": -18.10000000000008,
+      "pnl": 0,
       "note": "Oil long opened at 62 conviction",
-      "closedAt": "2026-04-30T15:31:24.831Z",
+      "closedAt": null,
       "sharedKey": "28|BUY|NOL-18MAY26-CDE|2026-04-30T15:29:02.864Z|104.7050",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 103.85,
-      "netPnl": -18.10000000000008,
-      "grossPnl": -17.10000000000008,
-      "durationMs": 141968,
-      "reconciledFromCloseId": 29,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 27,
@@ -14903,17 +14825,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T15:01:03.406Z",
       "capital": 106.22000000000001,
-      "pnl": -15.650000000000006,
+      "pnl": 0,
       "note": "Oil long opened at 62 conviction",
-      "closedAt": "2026-04-30T15:29:02.849Z",
+      "closedAt": null,
       "sharedKey": "26|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:03.408Z|106.2200",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 104.705,
-      "netPnl": -15.650000000000006,
-      "grossPnl": -15.150000000000006,
-      "durationMs": 1679443,
-      "reconciledFromCloseId": 27,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 25,
@@ -14978,17 +14894,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T15:01:00.587Z",
       "capital": 418.82,
-      "pnl": 58.99999999999966,
+      "pnl": 0,
       "note": "Oil long opened at 62 conviction",
-      "closedAt": "2026-04-30T15:01:03.210Z",
+      "closedAt": null,
       "sharedKey": "24|BUY|NOL-18MAY26-CDE|2026-04-30T15:01:00.589Z|104.7050",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 106.22999999999999,
-      "netPnl": 58.99999999999966,
-      "grossPnl": 60.99999999999966,
-      "durationMs": 2623,
-      "reconciledFromCloseId": 25,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 23,
@@ -15053,17 +14963,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T14:44:26.422Z",
       "capital": 211.85000000000002,
-      "pnl": -25.399999999999977,
+      "pnl": 0,
       "note": "Oil long opened at 62 conviction",
-      "closedAt": "2026-04-30T15:01:00.541Z",
+      "closedAt": null,
       "sharedKey": "22|BUY|NOL-18MAY26-CDE|2026-04-30T14:44:26.423Z|105.9250",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 104.705,
-      "netPnl": -25.399999999999977,
-      "grossPnl": -24.399999999999977,
-      "durationMs": 994119,
-      "reconciledFromCloseId": 23,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 21,
@@ -15128,17 +15032,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T14:30:19.336Z",
       "capital": 125.64599999999999,
-      "pnl": -12.60000000000008,
+      "pnl": 0,
       "note": "Oil short opened at 93 conviction",
-      "closedAt": "2026-04-30T14:44:26.415Z",
+      "closedAt": null,
       "sharedKey": "20|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T14:30:19.339Z|104.7050",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 105.915,
-      "netPnl": -12.60000000000008,
-      "grossPnl": -12.10000000000008,
-      "durationMs": 847079,
-      "reconciledFromCloseId": 21,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 19,
@@ -15203,17 +15101,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T04:54:38.212Z",
       "capital": 131.85,
-      "pnl": 51.20000000000002,
+      "pnl": 0,
       "note": "Oil short opened at 93 conviction",
-      "closedAt": "2026-04-30T14:30:18.527Z",
+      "closedAt": null,
       "sharedKey": "18|SELL SHORT|NOL-18MAY26-CDE|2026-04-30T04:54:38.216Z|109.8750",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 104.705,
-      "netPnl": 51.20000000000002,
-      "grossPnl": 51.70000000000002,
-      "durationMs": 34540315,
-      "reconciledFromCloseId": 19,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 17,
@@ -15278,17 +15170,11 @@
       "feeLabel": "Estimated exchange/brokerage fee",
       "openedAt": "2026-04-30T02:51:57.580Z",
       "capital": 108.655,
-      "pnl": 11.650000000000034,
+      "pnl": 0,
       "note": "Oil long opened at 54 conviction",
-      "closedAt": "2026-04-30T04:54:37.803Z",
+      "closedAt": null,
       "sharedKey": "16|BUY|NOL-18MAY26-CDE|2026-04-30T02:51:57.582Z|108.6550",
-      "userEmail": "peter@pjbell.com",
-      "exitPrice": 109.87,
-      "netPnl": 11.650000000000034,
-      "grossPnl": 12.150000000000034,
-      "durationMs": 7360223,
-      "reconciledFromCloseId": 17,
-      "reconciledAt": "2026-05-06T14:52:55.451Z"
+      "userEmail": "peter@pjbell.com"
     },
     {
       "id": 15,
@@ -15588,10 +15474,5 @@
       "tradeId": 1,
       "userEmail": "peter@pjbell.com"
     }
-  ],
-  "reconciliation": {
-    "patched": 19,
-    "runAt": "2026-05-06T14:52:55.456Z",
-    "source": "scripts/reconcile-stuck-trades.mjs"
-  }
+  ]
 }
