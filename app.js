@@ -1405,7 +1405,7 @@ function entryBelongsToUser(entry, user) {
 }
 
 function getUserCommodityPnl(user, commodity = null) {
-  return transactionHistory
+  return getDedupedPaperCloseEntries(transactionHistory)
     .filter((entry) => entryBelongsToUser(entry, user))
     .filter((entry) => !commodity || entry.commodity === commodity)
     .reduce((total, entry) => total + getDisplayPnl(entry), 0);
@@ -3888,6 +3888,7 @@ function addLiveTradeFromForm(event) {
 function getUserScopedTransactions() {
   const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
   return getDedupedPaperCloseEntries(source)
+    .filter((entry) => isTransactionForCurrentUser(entry))
     .filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
 }
 
