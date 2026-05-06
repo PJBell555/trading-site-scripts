@@ -930,12 +930,36 @@ export default {
       const { file, payload } = await getMasterFile(env);
       const cleanupOnly = body.mode === "cleanup";
       const incoming = cleanupOnly ? [] : Array.isArray(body.transactions) ? body.transactions : [];
+      const mergedTransactions = cleanupOnly
+        ? compactPayload(payload).transactions
+        : mergeTransactions(payload.transactions, incoming);
+
+      // Idempotency: if the merged transaction set is byte-identical (by
+      // sharedKey set) to the current master, skip the GitHub commit. This
+      // prevents the per-frontend auto-sync loop from rewriting the same
+      // file every few seconds and DoS-ing the Pages build pipeline.
+      const existingKeys = new Set((payload.transactions || []).map((t) => t?.sharedKey || JSON.stringify(t)));
+      const mergedKeys = new Set(mergedTransactions.map((t) => t?.sharedKey || JSON.stringify(t)));
+      const sameSize = existingKeys.size === mergedKeys.size;
+      const sameMembers = sameSize && [...existingKeys].every((k) => mergedKeys.has(k));
+      if (!cleanupOnly && sameMembers) {
+        return jsonResponse({
+          commit: null,
+          backup: null,
+          unchanged: true,
+          cleaned: false,
+          removed: 0,
+          merged: mergedTransactions.length,
+          transactions: payload.transactions
+        }, 200, origin);
+      }
+
       const updatedPayload = cleanupOnly
         ? compactPayload(payload)
         : {
             generatedAt: new Date().toISOString(),
             source: "cloudflare-github-master-paper-trading-ledger",
-            transactions: mergeTransactions(payload.transactions, incoming)
+            transactions: mergedTransactions
           };
       const result = await saveMasterFile(env, file, updatedPayload);
       const backup = await saveDailyBackup(env, updatedPayload);

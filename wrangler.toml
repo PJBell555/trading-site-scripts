@@ -17,7 +17,7 @@ OPENROUTER_APP_NAME = "ComHedge 2"
 # saveJsonFile gate in workers/transactions.js short-circuits when this is
 # truthy. Auto-deploy from CF Workers Builds picks the value up from this
 # file, so the pause survives auto-redeploys until reverted here.
-PAUSE_GIT_WRITES = "true"
+# PAUSE_GIT_WRITES = "true"
 
 [[secrets_store_secrets]]
 binding = "OPENROUTER_API_KEY"
