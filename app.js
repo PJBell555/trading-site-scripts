@@ -1190,6 +1190,13 @@ function normalizeSavedCommodityIds(values) {
   return normalizeCommodityIds(values, []);
 }
 
+function normalizeCommodityId(value) {
+  if (!value) return "";
+  const trimmed = String(value).trim();
+  if (trimmed === "all") return "all";
+  return new Set(getAllCommodityIds()).has(trimmed) ? trimmed : "";
+}
+
 function normalizeCommodityAllocations(allocations = {}, selectedIds = getAllCommodityIds(), defaultStartCapital = PAPER_START_EQUITY) {
   const selected = normalizeCommodityIds(selectedIds);
   const selectedSet = new Set(selected);
