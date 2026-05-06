@@ -2387,23 +2387,33 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     : "Waiting for signal";
   const queuedPrice = signalSide === "short" ? tradePlan.entryPrice : tradePlan.buyPrice;
 
+  const nextRowTooltip = "Preview of the next planned trade. This row stays here until a real trade opens, then it's replaced by an Open (O) row.";
+  const actionTooltip = signalSide && !clearsThreshold
+    ? `Live advisory conviction is ${signal.conviction}; the bot opens a trade when it reaches the threshold of ${tradePlan.entryThreshold}.`
+    : signalSide && clearsThreshold
+    ? `Conviction ${signal.conviction} cleared the threshold ${tradePlan.entryThreshold}. The bot will fire a ${signalSide} order on the next tick.`
+    : "Advisory has no directional signal yet (Wait). The bot only opens long or short trades.";
+  const detailTooltip = decision.detail || actionTooltip;
+
   row.className = "transaction-row queued-trade-row";
   appendStateCell(row, "Q", "Queued / waiting");
-  [
-    "Next",
-    action,
-    signalSide ? formatSide(signalSide) : "-",
-    `#${martingaleStep}`,
-    marketConfig[commodity]?.ticker || tradePlan.ticker,
-    hasExecutablePrice ? formatPrice(queuedPrice) : UNAVAILABLE_TEXT,
-    hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
-    hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT,
-    hasExecutablePrice && Number.isFinite(Number(tradePlan.stopLoss)) ? formatPrice(Number(tradePlan.stopLoss)) : UNAVAILABLE_TEXT,
-    UNAVAILABLE_TEXT,
-    decision.title
-  ].forEach((value) => {
+  const queuedCells = [
+    { value: "Next", title: nextRowTooltip },
+    { value: action, title: actionTooltip },
+    { value: signalSide ? formatSide(signalSide) : "-", title: null },
+    { value: `#${martingaleStep}`, title: null },
+    { value: marketConfig[commodity]?.ticker || tradePlan.ticker, title: null },
+    { value: hasExecutablePrice ? formatPrice(queuedPrice) : UNAVAILABLE_TEXT, title: null },
+    { value: hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT, title: null },
+    { value: hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT, title: null },
+    { value: hasExecutablePrice && Number.isFinite(Number(tradePlan.stopLoss)) ? formatPrice(Number(tradePlan.stopLoss)) : UNAVAILABLE_TEXT, title: null },
+    { value: UNAVAILABLE_TEXT, title: null },
+    { value: decision.title, title: detailTooltip }
+  ];
+  queuedCells.forEach(({ value, title }) => {
     const cell = document.createElement("td");
     cell.textContent = value;
+    if (title) cell.title = title;
     row.append(cell);
   });
 
