@@ -340,6 +340,7 @@ const advisoryHistory = [];
 const PAPER_ACTION_PENDING_TTL_MS = 10000;
 const pendingPaperActions = new Map();
 const lastPaperClosePriceChecks = new Map();
+const lastUnrealizedPnlByTradeId = new Map();
 let paperEquity = PAPER_START_EQUITY;
 let paperBaseEquity = PAPER_START_EQUITY;
 let paperRiskPct = PAPER_DEFAULT_RISK_PCT;
@@ -2354,7 +2355,6 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   if (openTrade) {
     row.className = "transaction-row open-trade-row";
     const livePrice = getUsableMarketPrice(commodity);
-    const livePriceText = Number.isFinite(Number(livePrice)) ? formatPrice(Number(livePrice)) : UNAVAILABLE_TEXT;
     appendStateCell(row, "O", "Open");
     [
       formatTradeTime(openTrade.openedAt || openTrade.time),
@@ -2366,13 +2366,13 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.stopPrice)) ? formatPrice(Number(openTrade.stopPrice)) : UNAVAILABLE_TEXT,
-      UNAVAILABLE_TEXT,
-      `Live ${livePriceText}`
+      UNAVAILABLE_TEXT
     ].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value;
       row.append(cell);
     });
+    row.append(buildUnrealizedPnlCell(openTrade, livePrice));
 
     return row;
   }
@@ -2417,6 +2417,38 @@ function buildFallbackPaperTradeRow(message) {
   cell.textContent = message;
   row.append(cell);
   return row;
+}
+
+function buildUnrealizedPnlCell(openTrade, livePrice) {
+  const cell = document.createElement("td");
+  const livePriceNum = Number(livePrice);
+  if (!openTrade || !Number.isFinite(livePriceNum)) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    return cell;
+  }
+
+  const unrealizedPnl = getTradeNetPnl(openTrade, livePriceNum);
+  if (!Number.isFinite(unrealizedPnl)) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    return cell;
+  }
+
+  const tradeKey = openTrade.id || openTrade.tradeId;
+  const prevPnl = tradeKey != null ? lastUnrealizedPnlByTradeId.get(tradeKey) : null;
+
+  if (Number.isFinite(prevPnl) && prevPnl !== unrealizedPnl) {
+    const arrowSpan = document.createElement("span");
+    arrowSpan.className = unrealizedPnl > prevPnl ? "trend-up" : "trend-down";
+    arrowSpan.textContent = unrealizedPnl > prevPnl ? "▲" : "▼";
+    cell.append(arrowSpan, document.createTextNode(" "));
+  }
+
+  cell.append(document.createTextNode(formatSignedMoney(unrealizedPnl)));
+  if (unrealizedPnl > 0) cell.classList.add("gain");
+  else if (unrealizedPnl < 0) cell.classList.add("loss");
+
+  if (tradeKey != null) lastUnrealizedPnlByTradeId.set(tradeKey, unrealizedPnl);
+  return cell;
 }
 
 function appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {

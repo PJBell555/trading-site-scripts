@@ -3044,6 +3044,18 @@ select {
   color: var(--danger);
 }
 
+.trend-up {
+  color: var(--accent-strong);
+  font-size: 0.85em;
+  margin-right: 2px;
+}
+
+.trend-down {
+  color: var(--danger);
+  font-size: 0.85em;
+  margin-right: 2px;
+}
+
 .history-table .gain {
   color: var(--accent-strong);
 }
