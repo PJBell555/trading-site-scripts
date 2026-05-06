@@ -3607,12 +3607,7 @@ function getKarpathyLoop(side) {
     threshold += Math.min(lossStreak * 2, 10);
   }
 
-  // Upper bound was 75 but Karpathy could ratchet itself out of trading entirely:
-  // a few losses pushed the threshold above the conviction range the advisory
-  // pipeline actually produces (~51–60), so no trade ever fired and the loss
-  // streak couldn't recover. 60 matches the project's stated calibrated-
-  // conviction target and keeps the loop responsive.
-  threshold = clamp(Math.round(threshold), 45, 60);
+  threshold = clamp(Math.round(threshold), 45, 75);
 
   return {
     avgPnl,
