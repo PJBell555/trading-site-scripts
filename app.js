@@ -212,8 +212,8 @@ const marketConfig = {
     productType: "Coinbase futures contract",
     referencePrice: null,
     contractMultiplier: 10,
-    marginRateLong: 0.14924,
-    marginRateShort: 0.17410,
+    marginRateLong: 1 / 7.2,
+    marginRateShort: 1 / 6.2,
     feePerContractSide: 1.17,
     feeLabel: "Coinbase displayed futures fee estimate",
     buyWindow: "09:45-10:30 ET"
@@ -1179,12 +1179,35 @@ function parsePercentInput(value, fallbackRate) {
   return number / 100;
 }
 
+function formatLeverageInput(rate) {
+  const number = Number(rate);
+  if (!Number.isFinite(number) || number <= 0) return "";
+  return formatNumberInput(1 / number, 2);
+}
+
+function parseLeverageInput(value, fallbackRate) {
+  const cleaned = String(value || "").replace(/x/gi, "").trim();
+  const leverage = Number(cleaned);
+  if (!Number.isFinite(leverage) || leverage <= 0) return fallbackRate;
+  return 1 / leverage;
+}
+
+function normalizeStoredMarginRate(rate, commodityId, side) {
+  const number = Number(rate);
+  if (!Number.isFinite(number)) return number;
+  if (commodityId !== "oil") return number;
+
+  const legacyRate = side === "short" ? 0.17410 : 0.14924;
+  const currentRate = side === "short" ? 1 / 6.2 : 1 / 7.2;
+  return Math.abs(number - legacyRate) < 0.00001 ? currentRate : number;
+}
+
 function normalizeCommodityTradeTerms(terms = {}, commodityId) {
   const config = marketConfig[commodityId] || {};
   const source = terms && typeof terms === "object" && !Array.isArray(terms) ? terms : {};
   const contractMultiplier = Number(source.contractMultiplier ?? config.contractMultiplier);
-  const marginRateLong = Number(source.marginRateLong ?? config.marginRateLong);
-  const marginRateShort = Number(source.marginRateShort ?? config.marginRateShort);
+  const marginRateLong = normalizeStoredMarginRate(source.marginRateLong ?? config.marginRateLong, commodityId, "long");
+  const marginRateShort = normalizeStoredMarginRate(source.marginRateShort ?? config.marginRateShort, commodityId, "short");
   const feePerContractSide = Number(source.feePerContractSide ?? config.feePerContractSide);
   const feeLabel = String(source.feeLabel || config.feeLabel || "Estimated fee").trim();
 
@@ -1945,8 +1968,8 @@ function saveUserCommoditySelection(user, container) {
     };
     nextTradeTerms[id] = normalizeCommodityTradeTerms({
       contractMultiplier: Number.isFinite(contractMultiplier) ? contractMultiplier : currentTerms.contractMultiplier,
-      marginRateLong: parsePercentInput(row.querySelector("[data-commodity-margin-long]")?.value, currentTerms.marginRateLong),
-      marginRateShort: parsePercentInput(row.querySelector("[data-commodity-margin-short]")?.value, currentTerms.marginRateShort),
+      marginRateLong: parseLeverageInput(row.querySelector("[data-commodity-leverage-long]")?.value, currentTerms.marginRateLong),
+      marginRateShort: parseLeverageInput(row.querySelector("[data-commodity-leverage-short]")?.value, currentTerms.marginRateShort),
       feePerContractSide: Number.isFinite(feePerContractSide) ? feePerContractSide : currentTerms.feePerContractSide,
       feeLabel: row.querySelector("[data-commodity-fee-label]")?.value || currentTerms.feeLabel
     }, id);
@@ -2178,10 +2201,10 @@ function createUserProfilePanel(user) {
     const checkbox = document.createElement("input");
     const capitalLabel = document.createElement("label");
     const capitalInput = document.createElement("input");
-    const longMarginLabel = document.createElement("label");
-    const longMarginInput = document.createElement("input");
-    const shortMarginLabel = document.createElement("label");
-    const shortMarginInput = document.createElement("input");
+    const longLeverageLabel = document.createElement("label");
+    const longLeverageInput = document.createElement("input");
+    const shortLeverageLabel = document.createElement("label");
+    const shortLeverageInput = document.createElement("input");
     const feeSideLabel = document.createElement("label");
     const feeSideInput = document.createElement("input");
     const multiplierLabel = document.createElement("label");
@@ -2202,8 +2225,8 @@ function createUserProfilePanel(user) {
     capitalInput.value = Number.isFinite(startCapital) ? startCapital.toFixed(2) : "0.00";
     capitalInput.dataset.commodityCapital = "true";
     [
-      [longMarginInput, "commodityMarginLong", "0.001", formatPercentInput(tradeTerms.marginRateLong)],
-      [shortMarginInput, "commodityMarginShort", "0.001", formatPercentInput(tradeTerms.marginRateShort)],
+      [longLeverageInput, "commodityLeverageLong", "0.1", formatLeverageInput(tradeTerms.marginRateLong)],
+      [shortLeverageInput, "commodityLeverageShort", "0.1", formatLeverageInput(tradeTerms.marginRateShort)],
       [feeSideInput, "commodityFeeSide", "0.01", formatNumberInput(tradeTerms.feePerContractSide, 2)],
       [multiplierInput, "commodityMultiplier", "0.0001", formatNumberInput(tradeTerms.contractMultiplier, 4)]
     ].forEach(([input, dataKey, step, value]) => {
@@ -2221,11 +2244,11 @@ function createUserProfilePanel(user) {
     tradedLabel.append(checkbox, document.createTextNode(name));
     capitalLabel.className = "profile-commodity-capital-field";
     capitalLabel.append(document.createTextNode("Start capital"), capitalInput);
-    [longMarginLabel, shortMarginLabel, feeSideLabel, multiplierLabel, feeLabelField].forEach((label) => {
+    [longLeverageLabel, shortLeverageLabel, feeSideLabel, multiplierLabel, feeLabelField].forEach((label) => {
       label.className = "profile-commodity-terms-field";
     });
-    longMarginLabel.append(document.createTextNode("Long margin %"), longMarginInput);
-    shortMarginLabel.append(document.createTextNode("Short margin %"), shortMarginInput);
+    longLeverageLabel.append(document.createTextNode("Long leverage"), longLeverageInput);
+    shortLeverageLabel.append(document.createTextNode("Short leverage"), shortLeverageInput);
     feeSideLabel.append(document.createTextNode("Fee / side"), feeSideInput);
     multiplierLabel.append(document.createTextNode("Multiplier"), multiplierInput);
     feeLabelField.append(document.createTextNode("Fee label"), feeLabelInput);
@@ -2242,8 +2265,8 @@ function createUserProfilePanel(user) {
     row.append(
       tradedLabel,
       capitalLabel,
-      longMarginLabel,
-      shortMarginLabel,
+      longLeverageLabel,
+      shortLeverageLabel,
       feeSideLabel,
       multiplierLabel,
       feeLabelField,
