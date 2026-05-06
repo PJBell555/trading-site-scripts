@@ -713,6 +713,15 @@ async function saveDailyBackup(env, payload) {
   const date = new Date().toISOString().slice(0, 10);
   const backupPath = `${backupDir.replace(/\/$/, "")}/transactions-${date}.json`;
   const existingBackup = await getFileIfExists(env, backupPath);
+
+  if (existingBackup?.sha) {
+    return {
+      path: backupPath,
+      commit: null,
+      skipped: true
+    };
+  }
+
   const backupPayload = {
     ...payload,
     backupGeneratedAt: new Date().toISOString(),

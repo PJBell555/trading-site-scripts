@@ -254,10 +254,15 @@ const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const PAPER_CLOSE_PRICE_REFRESH_MS = 5000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
-const BACKEND_TRANSACTION_SYNC_MS = 60000;
+const BACKEND_TRANSACTION_SYNC_MS = 300000;
 const BACKEND_SETTINGS_SYNC_MS = 120000;
 const BACKEND_ADVISORY_SYNC_MS = 300000;
 const BACKEND_FAILURE_BACKOFF_MS = 300000;
+const BACKEND_REQUEST_TIMEOUT_MS = 10000;
+const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
+const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
+const LOCAL_MOCK_BACKEND_PARAM = "mock-backend";
+const LOCAL_MOCK_BACKEND_LEDGER_URL = "./dev/mock-ledger.json";
 const LLM_SCHEDULE_CHECK_MS = 60000;
 const DEFAULT_LLM_REFRESH_HOURS = 6;
 const LLM_REFRESH_HOUR_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
@@ -382,6 +387,9 @@ let pendingHistorySaveRetry = false;
 let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
 let nextBackendAdvisorySyncAt = 0;
+let backendHistoryDirty = false;
+let backendHistorySaveTimer = null;
+let lastBackendHistorySaveAttemptAt = 0;
 let lastPrimarySignal = null;
 let lastTradePlan = null;
 let lastCommodityMeta = commodities[0];
@@ -4210,6 +4218,30 @@ function getBundledTransactionEntries() {
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
+function isLocalMockBackendEnabled() {
+  return new URLSearchParams(window.location.search).get(LOCAL_MOCK_BACKEND_PARAM) === "1";
+}
+
+async function loadLocalMockTransactionHistory() {
+  try {
+    sharedHistoryStatusEl.textContent = "Loading mock backend ledger";
+    const response = await fetchWithTimeout(`${LOCAL_MOCK_BACKEND_LEDGER_URL}?ts=${Date.now()}`, { cache: "no-store" }, 3000);
+    if (!response.ok) throw new Error("mock ledger unavailable");
+
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    replaceTransactionHistory(entries);
+    reconcilePaperStateFromHistory();
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = `Mock backend loaded ${entries.length} row${entries.length === 1 ? "" : "s"}`;
+    calculateSignal();
+    return true;
+  } catch (error) {
+    sharedHistoryStatusEl.textContent = "Mock backend unavailable";
+    return false;
+  }
+}
+
 function getRawPaperLedgerEntries() {
   const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
   return getDedupedPaperCloseEntries(source);
@@ -4762,22 +4794,44 @@ function submitCoinbaseSandboxOrderWithTimeout(trade, side, intent) {
 
 async function submitCoinbaseSandboxOrder(trade, side, intent) {
   if (!isCoinbaseSandboxEnabled()) return null;
-  if (!hasHistoryBackend()) throw new Error("Backend required for Coinbase sandbox");
+
+  const request = {
+    intent,
+    productId: trade.contract,
+    side,
+    contracts: trade.contracts,
+    price: trade.entryPrice,
+    targetPrice: trade.targetPrice,
+    stopPrice: trade.stopPrice,
+    clientOrderId: `atlas-${intent}-${trade.id}-${Date.now()}`
+  };
+
+  if (!hasHistoryBackend()) {
+    coinbaseSandboxStatusEl.textContent = "Sandbox local-only; backend unavailable";
+    return {
+      sandbox: true,
+      localOnly: true,
+      intent,
+      orderId: `local-${intent}-${trade.id}-${Date.now()}`,
+      productId: trade.contract,
+      submittedProductId: trade.contract,
+      returnedProductId: trade.contract,
+      side,
+      sentAt: new Date().toISOString(),
+      request,
+      response: {
+        success: true,
+        localOnly: true,
+        message: "Backend unavailable; local paper mock order recorded"
+      }
+    };
+  }
 
   coinbaseSandboxStatusEl.textContent = `Sending ${intent}`;
-  const response = await fetch(getCoinbaseSandboxOrderUrl(), {
+  const response = await fetchWithTimeout(getCoinbaseSandboxOrderUrl(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      intent,
-      productId: trade.contract,
-      side,
-      contracts: trade.contracts,
-      price: trade.entryPrice,
-      targetPrice: trade.targetPrice,
-      stopPrice: trade.stopPrice,
-      clientOrderId: `atlas-${intent}-${trade.id}-${Date.now()}`
-    })
+    body: JSON.stringify(request)
   });
 
   const data = await response.json().catch(() => ({}));
@@ -4793,7 +4847,7 @@ async function submitCoinbaseSandboxOrder(trade, side, intent) {
     returnedProductId: getCoinbaseReturnedProduct(data),
     side,
     sentAt: new Date().toISOString(),
-    request: data.request,
+    request: data.request || request,
     response: data.response
   };
 }
@@ -4805,7 +4859,7 @@ async function loadSharedSettings(manual = false) {
   backendSettingsSyncInFlight = true;
 
   try {
-    const response = await fetch(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
@@ -4836,7 +4890,7 @@ async function saveSharedSettings() {
 
   try {
     coinbaseSandboxStatusEl.textContent = "Saving setting";
-    const response = await fetch(getSharedSettingsUrl(), {
+    const response = await fetchWithTimeout(getSharedSettingsUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -4961,7 +5015,7 @@ async function loadSharedAdvisoryHistory(manual = false) {
 
   try {
     advisoryHistoryStatusEl.textContent = "Syncing shared advisory log";
-    const response = await fetch(`${getAdvisoryHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${getAdvisoryHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("advisory history unavailable");
 
     const data = await response.json();
@@ -4995,7 +5049,7 @@ async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
 
   try {
     advisoryHistoryStatusEl.textContent = statusLabel;
-    const response = await fetch(getAdvisoryHistoryUrl(), {
+    const response = await fetchWithTimeout(getAdvisoryHistoryUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ snapshots })
@@ -5564,22 +5618,59 @@ function renderAdvisoryChart() {
   context.fillText(latestText, latestX + (latestX > width * 0.72 ? -10 : 10) * scale, latestY - 10 * scale);
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = BACKEND_REQUEST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+function getNextBackendHistorySaveDelay() {
+  if (isBackendBackoffActive(nextBackendTransactionSyncAt)) {
+    return Math.max(0, nextBackendTransactionSyncAt - Date.now());
+  }
+
+  if (!lastBackendHistorySaveAttemptAt) return BACKEND_HISTORY_SAVE_DEBOUNCE_MS;
+
+  const sinceLastAttempt = Date.now() - lastBackendHistorySaveAttemptAt;
+  return Math.max(
+    BACKEND_HISTORY_SAVE_DEBOUNCE_MS,
+    BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS - sinceLastAttempt,
+    0
+  );
+}
+
 async function saveSharedTransactionHistory() {
+  if (isLocalMockBackendEnabled()) {
+    backendHistoryDirty = false;
+    pendingHistorySaveRetry = false;
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = "Mock backend active; ledger kept local";
+    return true;
+  }
+
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) {
-    sharedHistoryStatusEl.textContent = "Add backend URL to save";
+    sharedHistoryStatusEl.textContent = "Local ledger active; backend URL unavailable";
     pendingHistorySaveRetry = true;
     return false;
   }
   if (backendHistoryWriteInFlight) {
+    backendHistoryDirty = true;
     pendingHistorySaveRetry = true;
     return false;
   }
   backendHistoryWriteInFlight = true;
+  backendHistoryDirty = false;
+  lastBackendHistorySaveAttemptAt = Date.now();
 
   try {
-    sharedHistoryStatusEl.textContent = "Saving to backend";
-    const response = await fetch(apiUrl, {
+    sharedHistoryStatusEl.textContent = "Saving queued ledger to backend";
+    const response = await fetchWithTimeout(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(getSharedHistoryPayload())
@@ -5599,20 +5690,51 @@ async function saveSharedTransactionHistory() {
   } catch (error) {
     nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     pendingHistorySaveRetry = true;
-    sharedHistoryStatusEl.textContent = getBackendBackoffText(nextBackendTransactionSyncAt);
+    sharedHistoryStatusEl.textContent = `Local ledger active; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
     return false;
   } finally {
     backendHistoryWriteInFlight = false;
+    if (backendHistoryDirty) queueSharedTransactionHistorySave();
   }
 }
 
-function queueSharedTransactionHistorySave() {
-  saveSharedTransactionHistory().catch(() => {
-    pendingHistorySaveRetry = true;
-  });
+function queueSharedTransactionHistorySave({ immediate = false } = {}) {
+  if (isLocalMockBackendEnabled()) {
+    backendHistoryDirty = false;
+    pendingHistorySaveRetry = false;
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = "Mock backend active; ledger kept local";
+    return;
+  }
+
+  backendHistoryDirty = true;
+  pendingHistorySaveRetry = true;
+
+  if (backendHistorySaveTimer) return;
+
+  const delay = immediate ? 0 : getNextBackendHistorySaveDelay();
+  const minutes = Math.max(1, Math.ceil(delay / 60000));
+  sharedHistoryStatusEl.textContent = delay
+    ? `Local ledger saved; backend sync queued in ${minutes} min`
+    : "Local ledger saved; backend sync queued";
+
+  backendHistorySaveTimer = window.setTimeout(() => {
+    backendHistorySaveTimer = null;
+    saveSharedTransactionHistory().catch(() => {
+      pendingHistorySaveRetry = true;
+    });
+  }, delay);
 }
 
 async function cleanSharedTransactionHistory() {
+  if (isLocalMockBackendEnabled()) {
+    replaceTransactionHistory([]);
+    reconcilePaperStateFromHistory();
+    sharedHistoryStatusEl.textContent = "Mock ledger cleared locally";
+    calculateSignal();
+    return true;
+  }
+
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) {
     sharedHistoryStatusEl.textContent = "Add backend URL to clean";
@@ -5621,7 +5743,7 @@ async function cleanSharedTransactionHistory() {
 
   try {
     sharedHistoryStatusEl.textContent = "Cleaning backend ledger";
-    const response = await fetch(apiUrl, {
+    const response = await fetchWithTimeout(apiUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "cleanup" })
@@ -5643,8 +5765,14 @@ async function cleanSharedTransactionHistory() {
 }
 
 async function loadSharedTransactionHistory(manual = false) {
+  if (isLocalMockBackendEnabled()) {
+    return loadLocalMockTransactionHistory();
+  }
+
   if (!hasHistoryBackend()) {
-    sharedHistoryStatusEl.textContent = "Backend required";
+    await loadBundledTransactionHistory();
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = "Local ledger active; backend URL unavailable";
     return false;
   }
   if (!manual && isBackendBackoffActive(nextBackendTransactionSyncAt)) return false;
@@ -5653,7 +5781,7 @@ async function loadSharedTransactionHistory(manual = false) {
 
   try {
     sharedHistoryStatusEl.textContent = "Syncing backend";
-    const response = await fetch(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("master history unavailable");
 
     const data = await response.json();
@@ -5664,8 +5792,7 @@ async function loadSharedTransactionHistory(manual = false) {
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     if (hasLocalOnlyRows) {
-      pendingHistorySaveRetry = true;
-      saveSharedTransactionHistory();
+      queueSharedTransactionHistorySave();
       sharedHistoryStatusEl.textContent = `Backend merged ${mergedEntries.length} rows`;
     } else {
       sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
@@ -5691,9 +5818,9 @@ async function autoSyncTransactionHistory() {
   if (!hasHistoryBackend() || backendSyncInFlight || backendHistoryWriteInFlight) return false;
   if (isBackendBackoffActive(nextBackendTransactionSyncAt)) return false;
 
-  if (pendingHistorySaveRetry) {
-    const saved = await saveSharedTransactionHistory();
-    if (!saved) return false;
+  if (pendingHistorySaveRetry || backendHistoryDirty) {
+    queueSharedTransactionHistorySave();
+    return false;
   }
 
   return loadSharedTransactionHistory(false);
@@ -6045,13 +6172,6 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   const thresholdText = `${signal.conviction}/${tradePlan.entryThreshold}`;
   const thresholdSource = tradePlan.entryThresholdSource || "trading";
   const karpathyText = ` Advisory conviction is ${signal.conviction}; ${thresholdSource} trading threshold is ${tradePlan.entryThreshold}; learned Karpathy recommendation is ${tradePlan.learnedThreshold}.`;
-
-  if (!hasHistoryBackend()) {
-    return {
-      title: "Backend not connected",
-      detail: "The paper trader will not open or sync trades until the Backend API is connected."
-    };
-  }
 
   if (!tradePlan.priceReady) {
     return {
@@ -6622,9 +6742,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperDecisionTitleEl.textContent = decision.title;
   paperDecisionDetailEl.textContent = decision.detail;
 
-  if (!hasHistoryBackend()) {
-    paperStatusEl.textContent = "Connect backend API";
-  } else if (!latestPrices.has(commodity)) {
+  if (!latestPrices.has(commodity)) {
     paperStatusEl.textContent = "Waiting for live price";
   } else if (openTrade) {
     paperStatusEl.textContent = `${formatSide(openTrade.side)} open`;

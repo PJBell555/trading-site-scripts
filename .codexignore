@@ -1,0 +1,17 @@
+# Keep Codex searches and context focused on source logic.
+.git/
+node_modules/
+backups/
+dist/
+build/
+coverage/
+.wrangler/
+.dev.vars
+*.log
+
+# Large runtime ledgers/snapshots. Read these only when explicitly debugging data.
+advisory-snapshots.json
+transactions.json
+transactions-data.js
+settings.json
+overnight-advisories.jsonl
