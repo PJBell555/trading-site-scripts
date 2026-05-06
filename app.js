@@ -67,6 +67,13 @@ const strategyEditTitleEl = document.querySelector("#strategy-edit-title");
 const strategyEditMetaEl = document.querySelector("#strategy-edit-meta");
 const strategyEditSummaryEl = document.querySelector("#strategy-edit-summary");
 const strategyEditNoteEl = document.querySelector("#strategy-edit-note");
+const tokenCostsRefreshEl = document.querySelector("#token-costs-refresh");
+const tokenCostsStatusEl = document.querySelector("#token-costs-status");
+const tokenRefreshHoursEl = document.querySelector("#token-llm-refresh-hours");
+const tokenScheduleSlotsEl = document.querySelector("#token-schedule-slots");
+const tokenEstimatedCallsEl = document.querySelector("#token-estimated-calls");
+const tokenModelListEl = document.querySelector("#token-model-list");
+const tokenJobBreakdownEl = document.querySelector("#token-job-breakdown");
 const commoditySelect = document.querySelector("#commodity");
 const primaryModelSelect = document.querySelector("#primary-model");
 const primaryModelStatEl = document.querySelector("#primary-model-stat");
@@ -78,6 +85,9 @@ const llmStatusEl = document.querySelector("#llm-status");
 const llmVerificationBody = document.querySelector("#llm-verification-body");
 const signalBadge = document.querySelector("#signal-badge");
 const convictionEl = document.querySelector("#conviction");
+const localConvictionUpdatedEl = document.querySelector("#local-conviction-updated");
+const llmConvictionEl = document.querySelector("#llm-conviction");
+const llmConvictionUpdatedEl = document.querySelector("#llm-conviction-updated");
 const actionEl = document.querySelector("#action");
 const tickerEl = document.querySelector("#ticker");
 const contractMonthEl = document.querySelector("#contract-month");
@@ -111,6 +121,8 @@ const paperKarpathyEl = document.querySelector("#paper-karpathy");
 const coinbaseSandboxStatusEl = document.querySelector("#coinbase-sandbox-status");
 const paperDecisionTitleEl = document.querySelector("#paper-decision-title");
 const paperDecisionDetailEl = document.querySelector("#paper-decision-detail");
+const paperDecisionLogEl = document.querySelector("#paper-decision-log");
+const paperDecisionLogStatusEl = document.querySelector("#paper-decision-log-status");
 const paperStepsEl = document.querySelector("#paper-steps");
 const loopCollectEl = document.querySelector("#loop-collect");
 const loopEvaluateEl = document.querySelector("#loop-evaluate");
@@ -246,6 +258,12 @@ const BACKEND_TRANSACTION_SYNC_MS = 60000;
 const BACKEND_SETTINGS_SYNC_MS = 120000;
 const BACKEND_ADVISORY_SYNC_MS = 300000;
 const BACKEND_FAILURE_BACKOFF_MS = 300000;
+const LLM_SCHEDULE_CHECK_MS = 60000;
+const DEFAULT_LLM_REFRESH_HOURS = 6;
+const LLM_REFRESH_HOUR_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
+const LLM_REFRESH_HOURS_KEY = "comhedge-llm-refresh-hours-v1";
+const LLM_SCHEDULE_SLOT_KEY = "comhedge-llm-schedule-slot-v1";
+const LLM_LAST_RUN_KEY = "comhedge-llm-last-run-v1";
 const PAPER_START_EQUITY = 100000;
 const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
@@ -274,6 +292,8 @@ const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
+const ADVISORY_HISTORY_LOCAL_KEY = "comhedge-advisory-history-v1";
+const ADVISORY_PENDING_LOCAL_KEY = "comhedge-pending-advisory-snapshots-v1";
 const ADVISORY_CAPTURE_MS = 120000;
 const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
 const ADVISORY_PERIODS = {
@@ -368,6 +388,12 @@ const userRoster = [];
 const featureRequests = [];
 const openBrainMemory = [];
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
+const PAPER_DECISION_LOG_KEY = "comhedge-paper-decision-log-v1";
+const PAPER_DECISION_LOG_LIMIT = 300;
+const PAPER_DECISION_LOG_CAPTURE_MS = 60000;
+let paperDecisionLog = [];
+let lastPaperDecisionLogKey = "";
+let lastPaperDecisionLogAt = 0;
 
 async function hashAccessPassword(value) {
   const bytes = new TextEncoder().encode(value);
@@ -423,6 +449,7 @@ function setActiveSection(section) {
   if (section === "open-brain") renderOpenBrainMemory();
   if (section === "users") showUserManagement(true);
   if (section === "actual-trades") renderLiveTradeLedger();
+  if (section === "token-costs") renderTokenCosts();
 }
 
 function loadOpenBrainMemory() {
@@ -702,6 +729,139 @@ function updateSecondOpinionRunState() {
   secondOpinionRunSelectedEl.disabled = count === 0;
   secondOpinionStatusEl.textContent = `${getModelById(primaryModelId).name} primary`;
   primaryModelStatEl.textContent = getModelById(primaryModelId).name;
+}
+
+function getStoredSecondOpinionModelIds() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(SECOND_OPINION_MODELS_KEY) || "null");
+    if (Array.isArray(stored)) {
+      return stored.filter((modelId) => modelId !== primaryModelId && advisoryModels.some(({ id }) => id === modelId));
+    }
+  } catch (_error) {
+    // Fall back to the current form state.
+  }
+
+  return secondOpinionModelsEl ? getSelectedSecondOpinionModels() : [];
+}
+
+function getLLMRefreshHours() {
+  try {
+    const stored = Number(window.localStorage.getItem(LLM_REFRESH_HOURS_KEY));
+    if (LLM_REFRESH_HOUR_OPTIONS.includes(stored)) return stored;
+  } catch (_error) {
+    // Use the default interval if localStorage is unavailable.
+  }
+  return DEFAULT_LLM_REFRESH_HOURS;
+}
+
+function setLLMRefreshHours(hours) {
+  const parsed = Number(hours);
+  const value = LLM_REFRESH_HOUR_OPTIONS.includes(parsed) ? parsed : DEFAULT_LLM_REFRESH_HOURS;
+  try {
+    window.localStorage.setItem(LLM_REFRESH_HOURS_KEY, String(value));
+    window.localStorage.removeItem(LLM_SCHEDULE_SLOT_KEY);
+  } catch (_error) {
+    // The schedule still works in-memory when storage fails.
+  }
+  return value;
+}
+
+function getLLMScheduleEtHours() {
+  const interval = getLLMRefreshHours();
+  const hours = [];
+  for (let hour = 0; hour < 24; hour += interval) hours.push(hour);
+  return hours.length ? hours : [0, 6, 12, 18];
+}
+
+function formatEtHour(hour) {
+  if (hour === 0) return "12 AM";
+  if (hour < 12) return `${hour} AM`;
+  if (hour === 12) return "12 PM";
+  return `${hour - 12} PM`;
+}
+
+function getLLMScheduleLabel() {
+  return `${getLLMScheduleEtHours().map(formatEtHour).join(", ")} ET`;
+}
+
+function renderTokenCosts() {
+  if (!tokenModelListEl) return;
+
+  const interval = getLLMRefreshHours();
+  const scheduleHours = getLLMScheduleEtHours();
+  const scheduledRunsPerDay = scheduleHours.length;
+  const primaryModel = getModelById(primaryModelId);
+  const criticModel = secondaryModelId ? getModelById(secondaryModelId) : null;
+  const secondOpinionIds = new Set(getStoredSecondOpinionModelIds());
+  const selectedCommodity = commodities.find(({ id }) => id === (commoditySelect?.value || "oil")) || commodities[0];
+  const scheduledModelCalls = scheduledRunsPerDay * (criticModel ? 2 : 1);
+
+  if (tokenRefreshHoursEl) tokenRefreshHoursEl.value = String(interval);
+  if (tokenScheduleSlotsEl) tokenScheduleSlotsEl.textContent = getLLMScheduleLabel();
+  if (tokenEstimatedCallsEl) {
+    tokenEstimatedCallsEl.textContent = `${scheduledModelCalls} per day per active commodity`;
+  }
+  if (tokenCostsStatusEl) {
+    tokenCostsStatusEl.textContent = `Scheduled advisory uses ${primaryModel.name}${criticModel ? ` plus ${criticModel.name} critic` : ""} every ${interval} hour${interval === 1 ? "" : "s"} for ${selectedCommodity.name}.`;
+  }
+
+  const modelRows = advisoryModels.map((model) => {
+    const roles = [];
+    if (model.id === primaryModelId) roles.push("Primary advisory");
+    if (criticModel && model.id === criticModel.id) roles.push("Critic");
+    if (secondOpinionIds.has(model.id)) roles.push("Second opinion");
+    const scheduled = roles.includes("Primary advisory") || roles.includes("Critic");
+    const callCadence = scheduled
+      ? `${scheduledRunsPerDay}/day per active commodity`
+      : roles.includes("Second opinion")
+        ? "On demand"
+        : "Available";
+    const roleMarkup = roles.length
+      ? roles.map((role) => `<span class="token-role-pill">${escapeHtml(role)}</span>`).join("")
+      : `<span class="token-role-pill token-role-muted">Available</span>`;
+
+    return `
+      <div class="token-model-row" data-active="${roles.length ? "true" : "false"}">
+        <div class="token-model-name">
+          <strong>${escapeHtml(model.name)}</strong>
+          <span>${escapeHtml(model.provider)}</span>
+        </div>
+        <code>${escapeHtml(model.openrouterId || "Not configured")}</code>
+        <div class="token-role-pills">${roleMarkup}</div>
+        <span>${escapeHtml(callCadence)}</span>
+      </div>
+    `;
+  }).join("");
+
+  tokenModelListEl.innerHTML = `
+    <div class="token-model-table">
+      <div class="token-model-row token-model-header">
+        <span>Model</span>
+        <span>Route</span>
+        <span>Role</span>
+        <span>Cadence</span>
+      </div>
+      ${modelRows}
+    </div>
+  `;
+
+  if (tokenJobBreakdownEl) {
+    tokenJobBreakdownEl.innerHTML = `
+      <div class="token-job-row">
+        <span>Primary advisory refresh</span>
+        <strong>${scheduledRunsPerDay}/day per active commodity</strong>
+      </div>
+      <div class="token-job-row">
+        <span>Critic model refresh</span>
+        <strong>${criticModel ? `${scheduledRunsPerDay}/day per active commodity` : "Off"}</strong>
+      </div>
+      <div class="token-job-row">
+        <span>Second Opinion models</span>
+        <strong>${secondOpinionIds.size ? `${secondOpinionIds.size} models on demand` : "None selected"}</strong>
+      </div>
+      <p class="token-job-note">Usage and cost totals are placeholders until the backend records OpenRouter response usage for each advisory call.</p>
+    `;
+  }
 }
 
 function getOpinionScore(signal, model, promptIds) {
@@ -1409,6 +1569,10 @@ function getUserCommodityPnl(user, commodity = null) {
     .reduce((total, entry) => total + getDisplayPnl(entry), 0);
 }
 
+function getUserCurrentPnl(user) {
+  return getUserCommodityPnl(user);
+}
+
 function getCurrentProfileStartCapital() {
   const user = getCurrentUserProfile();
   if (!user) return Number(paperBaseEquity) || PAPER_START_EQUITY;
@@ -1446,6 +1610,14 @@ function renderPnlWithCapital(element, pnl, startCapital = getCurrentProfileStar
   const currentCapital = Math.max(0, (Number(startCapital) || 0) + (Number(pnl) || 0));
   element.innerHTML = `<span>${formatSignedMoney(pnl)}</span><small>Capital ${formatMoney(currentCapital)}</small>`;
   element.className = pnl >= 0 ? "gain" : "loss";
+}
+
+function getPaperClosedPnlForCapital(commodity = "all") {
+  const normalizedCommodity = normalizeCommodityId(commodity);
+  return getUserScopedTransactions()
+    .filter(isClosingTransaction)
+    .filter((entry) => !normalizedCommodity || normalizedCommodity === "all" || entry.commodity === normalizedCommodity)
+    .reduce((total, entry) => total + getDisplayPnl(entry), 0);
 }
 
 function getSafeHistoryStartCapital(commodity = "all") {
@@ -2057,12 +2229,20 @@ function getFilteredUsers() {
   if (userListFilter === "active") users = activeToday;
   if (userListFilter === "new") users = newThisWeek;
 
-  if (!query) return users;
+  const matchedUsers = query
+    ? users.filter((user) => (
+      String(user.name || "").toLowerCase().includes(query)
+      || String(user.email || "").toLowerCase().includes(query)
+    ))
+    : users;
 
-  return users.filter((user) => (
-    String(user.name || "").toLowerCase().includes(query)
-    || String(user.email || "").toLowerCase().includes(query)
-  ));
+  return matchedUsers
+    .slice()
+    .sort((left, right) => {
+      const pnlDelta = getUserCurrentPnl(right) - getUserCurrentPnl(left);
+      if (pnlDelta) return pnlDelta;
+      return String(left.name || left.email || "").localeCompare(String(right.name || right.email || ""));
+    });
 }
 
 function renderUserListFilterButtons() {
@@ -2371,20 +2551,25 @@ function renderUserManagement() {
     actionCell.append(actions);
 
     [
-      profileCell,
-      formatUserDate(user.createdAt),
-      formatRelativeDate(user.lastActiveAt),
-      String(Number(user.sessions) || 0),
-      formatMoney(user.paperBaseEquity ?? PAPER_START_EQUITY),
-      `${Number(user.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT).toFixed(2).replace(/\.?0+$/, "")}%`,
-      status,
-      actionCell
-    ].forEach((value) => {
+      { value: profileCell },
+      { value: formatUserDate(user.createdAt) },
+      { value: formatRelativeDate(user.lastActiveAt) },
+      { value: String(Number(user.sessions) || 0) },
+      { value: formatMoney(user.paperBaseEquity ?? PAPER_START_EQUITY) },
+      {
+        value: formatSignedMoney(getUserCurrentPnl(user)),
+        className: getUserCurrentPnl(user) >= 0 ? "gain" : "loss"
+      },
+      { value: status },
+      { value: actionCell }
+    ].forEach(({ value, className }) => {
       if (value instanceof HTMLElement) {
+        if (className) value.classList.add(className);
         row.append(value);
         return;
       }
       const cell = document.createElement("td");
+      if (className) cell.className = className;
       if (value instanceof Node) cell.append(value);
       else cell.textContent = value;
       row.append(cell);
@@ -2902,7 +3087,7 @@ function scoreCommodity(commodity, baseSignals) {
   const bounded = manualConviction === null
     ? automaticBounded
     : Math.sign(automaticBounded || 1) * Math.max(0, manualConviction - 40);
-  const conviction = manualConviction === null
+  const baseConviction = manualConviction === null
     ? Math.min(100, 40 + Math.abs(bounded))
     : manualConviction;
 
@@ -2938,7 +3123,22 @@ function scoreCommodity(commodity, baseSignals) {
     tone = "short";
   }
 
-  return { bounded, conviction, automaticBounded, manualOverride: manualConviction, label, chipLabel, action, color, tone };
+  const karpathyAdjustment = getKarpathyConvictionAdjustment(tone);
+  const conviction = clamp(Math.round(baseConviction + karpathyAdjustment), 0, 100);
+
+  return {
+    bounded,
+    conviction,
+    baseConviction,
+    karpathyAdjustment,
+    automaticBounded,
+    manualOverride: manualConviction,
+    label,
+    chipLabel,
+    action,
+    color,
+    tone
+  };
 }
 
 function formatPrice(value) {
@@ -3345,6 +3545,25 @@ function getKarpathyLoop(side) {
     threshold,
     winRate
   };
+}
+
+function getKarpathyConvictionAdjustment(tone) {
+  const side = getSignalSide({ tone });
+  if (!side) return 0;
+
+  const loop = getKarpathyLoop(side);
+  if (loop.sampleCount < 3) return 0;
+
+  let adjustment = 0;
+  if (loop.winRate < 0.45) adjustment -= 4;
+  else if (loop.winRate < 0.55) adjustment -= 2;
+  else if (loop.winRate >= 0.7 && loop.avgPnl > 0) adjustment += 3;
+
+  if (loop.avgPnl < 0) adjustment -= 2;
+  else if (loop.avgPnl > 0) adjustment += 1;
+
+  adjustment -= Math.min(loop.lossStreak, 4);
+  return clamp(Math.round(adjustment), -10, 6);
 }
 
 function getPaperEntryThreshold(side) {
@@ -4547,13 +4766,17 @@ function mergeAdvisoryHistory(entries = []) {
 
   entries.forEach((entry) => {
     const price = Number(entry.price);
-    const conviction = Number(entry.conviction);
-    if (!entry.snapshotKey || !Number.isFinite(price) || !Number.isFinite(conviction)) return;
+    const localConviction = getAdvisoryLocalConviction(entry);
+    const conviction = parseOptionalNumber(entry.conviction) ?? localConviction;
+    const llmConviction = getAdvisoryLLMConviction(entry);
+    if (!entry.snapshotKey || !Number.isFinite(price) || !Number.isFinite(localConviction)) return;
     byKey.set(entry.snapshotKey, {
       ...entry,
       price,
       conviction,
-      bounded: Number(entry.bounded) || 0
+      localConviction,
+      llmConviction,
+      bounded: parseOptionalNumber(entry.bounded) ?? localConviction ?? 0
     });
   });
 
@@ -4562,11 +4785,73 @@ function mergeAdvisoryHistory(entries = []) {
     advisoryHistory.length,
     ...Array.from(byKey.values()).sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0))
   );
+  saveLocalAdvisoryHistory();
+}
+
+function saveLocalAdvisoryHistory() {
+  try {
+    window.localStorage.setItem(ADVISORY_HISTORY_LOCAL_KEY, JSON.stringify(advisoryHistory.slice(-1500)));
+  } catch (_error) {
+    // Advisory history is useful, not critical. Backend sync remains the source of shared history.
+  }
+}
+
+function loadLocalAdvisoryHistory() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(ADVISORY_HISTORY_LOCAL_KEY) || "[]");
+    if (Array.isArray(stored) && stored.length) {
+      mergeAdvisoryHistory(stored);
+    }
+  } catch (_error) {
+    advisoryHistory.splice(0, advisoryHistory.length);
+  }
+}
+
+function loadPendingAdvisorySnapshots() {
+  try {
+    const pending = JSON.parse(window.localStorage.getItem(ADVISORY_PENDING_LOCAL_KEY) || "[]");
+    return Array.isArray(pending) ? pending.filter((entry) => entry?.snapshotKey) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function savePendingAdvisorySnapshots(snapshots = []) {
+  try {
+    window.localStorage.setItem(ADVISORY_PENDING_LOCAL_KEY, JSON.stringify(snapshots.slice(-1500)));
+  } catch (_error) {
+    // The browser cache is only a retry buffer. If it fails, the live app still runs.
+  }
+}
+
+function queuePendingAdvisorySnapshots(snapshots = []) {
+  const byKey = new Map(loadPendingAdvisorySnapshots().map((entry) => [entry.snapshotKey, entry]));
+  snapshots.forEach((entry) => {
+    if (entry?.snapshotKey) byKey.set(entry.snapshotKey, entry);
+  });
+  const pending = Array.from(byKey.values()).sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+  savePendingAdvisorySnapshots(pending);
+  return pending.length;
+}
+
+function clearPendingAdvisorySnapshots(savedSnapshots = []) {
+  const savedKeys = new Set(savedSnapshots.map((entry) => entry?.snapshotKey).filter(Boolean));
+  if (!savedKeys.size) return loadPendingAdvisorySnapshots().length;
+
+  const remaining = loadPendingAdvisorySnapshots().filter((entry) => !savedKeys.has(entry.snapshotKey));
+  savePendingAdvisorySnapshots(remaining);
+  return remaining.length;
+}
+
+async function flushPendingAdvisorySnapshots() {
+  const pending = loadPendingAdvisorySnapshots();
+  if (!pending.length || !hasHistoryBackend()) return false;
+  return saveSharedAdvisorySnapshots(pending, { queueOnFail: false, statusLabel: "Retrying shared advisory log" });
 }
 
 async function loadSharedAdvisoryHistory(manual = false) {
   if (!hasHistoryBackend()) {
-    advisoryHistoryStatusEl.textContent = "Backend required";
+    advisoryHistoryStatusEl.textContent = "Shared advisory log required";
     renderAdvisoryChart();
     return false;
   }
@@ -4575,21 +4860,23 @@ async function loadSharedAdvisoryHistory(manual = false) {
   backendAdvisorySyncInFlight = true;
 
   try {
-    advisoryHistoryStatusEl.textContent = "Syncing advisory chart";
+    advisoryHistoryStatusEl.textContent = "Syncing shared advisory log";
     const response = await fetch(`${getAdvisoryHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("advisory history unavailable");
 
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
-    advisoryHistoryStatusEl.textContent = `Chart synced ${advisoryHistory.length} sample${advisoryHistory.length === 1 ? "" : "s"}`;
+    advisoryHistoryStatusEl.textContent = `Shared advisory log synced ${advisoryHistory.length} sample${advisoryHistory.length === 1 ? "" : "s"}`;
     renderAdvisoryChart();
     nextBackendAdvisorySyncAt = 0;
+    await flushPendingAdvisorySnapshots();
     return true;
   } catch (error) {
     nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    const pendingCount = loadPendingAdvisorySnapshots().length;
     advisoryHistoryStatusEl.textContent = advisoryHistory.length
-      ? `Chart using ${advisoryHistory.length} local sample${advisoryHistory.length === 1 ? "" : "s"}; ${getBackendBackoffText(nextBackendAdvisorySyncAt)}`
-      : manual ? "Chart sync failed" : "Chart backend offline";
+      ? `Shared advisory log offline; using ${advisoryHistory.length} cached sample${advisoryHistory.length === 1 ? "" : "s"}${pendingCount ? `, ${pendingCount} queued for central save` : ""}; ${getBackendBackoffText(nextBackendAdvisorySyncAt)}`
+      : manual ? "Shared advisory log sync failed" : "Shared advisory log offline";
     renderAdvisoryChart();
     return false;
   } finally {
@@ -4597,11 +4884,17 @@ async function loadSharedAdvisoryHistory(manual = false) {
   }
 }
 
-async function saveSharedAdvisorySnapshots(snapshots) {
-  if (!hasHistoryBackend() || !snapshots.length) return false;
+async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
+  const { queueOnFail = true, statusLabel = "Saving shared advisory sample" } = options;
+  if (!snapshots.length) return false;
+  if (!hasHistoryBackend()) {
+    const pendingCount = queueOnFail ? queuePendingAdvisorySnapshots(snapshots) : loadPendingAdvisorySnapshots().length;
+    advisoryHistoryStatusEl.textContent = `Shared advisory log unavailable; ${pendingCount} sample${pendingCount === 1 ? "" : "s"} queued locally`;
+    return false;
+  }
 
   try {
-    advisoryHistoryStatusEl.textContent = "Saving advisory sample";
+    advisoryHistoryStatusEl.textContent = statusLabel;
     const response = await fetch(getAdvisoryHistoryUrl(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4611,12 +4904,14 @@ async function saveSharedAdvisorySnapshots(snapshots) {
 
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : snapshots);
-    advisoryHistoryStatusEl.textContent = `Chart saved ${advisoryHistory.length} samples`;
+    const remainingPending = clearPendingAdvisorySnapshots(snapshots);
+    advisoryHistoryStatusEl.textContent = `Shared advisory log saved ${advisoryHistory.length} samples${remainingPending ? `; ${remainingPending} still queued` : ""}`;
     renderAdvisoryChart();
     return true;
   } catch (error) {
     nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
-    advisoryHistoryStatusEl.textContent = "Chart save failed";
+    const pendingCount = queueOnFail ? queuePendingAdvisorySnapshots(snapshots) : loadPendingAdvisorySnapshots().length;
+    advisoryHistoryStatusEl.textContent = `Shared advisory log save failed${pendingCount ? `; ${pendingCount} sample${pendingCount === 1 ? "" : "s"} queued locally for retry` : ""}`;
     return false;
   }
 }
@@ -4626,10 +4921,49 @@ function getAdvisorySnapshotKey(commodity, horizon, time) {
   return `${commodity}|${horizon}|${minute}`;
 }
 
+function parseOptionalNumber(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function getAdvisoryLocalConviction(entry) {
+  return parseOptionalNumber(entry?.localConviction)
+    ?? parseOptionalNumber(entry?.conviction)
+    ?? parseOptionalNumber(entry?.bounded)
+    ?? 0;
+}
+
+function getAdvisoryLLMConviction(entry) {
+  return parseOptionalNumber(entry?.llmConviction);
+}
+
+function formatAdvisoryScoreValue(value) {
+  const number = parseOptionalNumber(value);
+  return number === null ? "-" : String(Math.round(number));
+}
+
+function getLatestLLMConvictionForCommodity(commodity) {
+  if (!lastVerifiedLLMRun || lastVerifiedLLMRun.commodity !== commodity || !lastVerifiedLLMRun.advisory) {
+    return null;
+  }
+
+  const conviction = parseOptionalNumber(lastVerifiedLLMRun.advisory.conviction);
+  if (conviction === null) return null;
+
+  return {
+    conviction,
+    tone: lastVerifiedLLMRun.advisory.tone || "",
+    updatedAt: lastVerifiedLLMRun.updatedAt || lastVerifiedLLMRun.time || "",
+    scheduleSlot: lastVerifiedLLMRun.scheduleSlot || ""
+  };
+}
+
 function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSource) {
   const signals = { ...baseSignals, horizon: horizonWeight[horizon] };
   const signal = scoreCommodity(commodity, signals);
   const time = new Date();
+  const llm = getLatestLLMConvictionForCommodity(commodity);
 
   return {
     snapshotKey: getAdvisorySnapshotKey(commodity, horizon, time),
@@ -4641,6 +4975,18 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
     priceSource,
     bounded: signal.bounded,
     conviction: signal.conviction,
+    localConviction: signal.conviction,
+    localBaseConviction: signal.baseConviction,
+    karpathyAdjustment: signal.karpathyAdjustment,
+    localTone: signal.tone,
+    localLabel: signal.label,
+    localAction: signal.action,
+    localUpdatedAt: time.toISOString(),
+    localSource: signal.manualOverride === null ? "local heuristic + Karpathy" : "LLM/manual baseline + Karpathy",
+    llmConviction: llm ? llm.conviction : null,
+    llmTone: llm ? llm.tone : "",
+    llmUpdatedAt: llm ? llm.updatedAt : "",
+    llmScheduleSlot: llm ? llm.scheduleSlot : "",
     tone: signal.tone,
     label: signal.label,
     action: signal.action,
@@ -4652,7 +4998,7 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
 }
 
 function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
-  if (!tradePlan.priceReady || !hasHistoryBackend()) return;
+  if (!tradePlan.priceReady) return;
 
   const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
   const batchKey = `${commodity}|${minute}`;
@@ -4707,6 +5053,10 @@ function getFilteredAdvisorySamples() {
         priceSource: "Paper trade ledger",
         bounded: conviction,
         conviction,
+        localConviction: conviction,
+        localSource: "paper trade ledger",
+        llmConviction: null,
+        llmUpdatedAt: "",
         tone,
         label: `Paper ${tone}`,
         action: entry.action
@@ -4744,7 +5094,10 @@ function getPaperTradeAdvisoryEvaluations() {
           time: openingEntry?.time || detail.openedAt || entry.openedAt || entry.time,
           label: `Paper ${tone}`,
           tone,
-          conviction
+          conviction,
+          localConviction: conviction,
+          localSource: "paper trade ledger",
+          llmConviction: null
         },
         future: {
           time: entry.closedAt || entry.time,
@@ -4754,7 +5107,7 @@ function getPaperTradeAdvisoryEvaluations() {
         endPrice,
         move: endPrice - startPrice,
         correct: netPnl > 0,
-        qualified: conviction >= advisoryScoreThreshold,
+        qualified: getAdvisoryLocalConviction({ localConviction: conviction }) >= advisoryScoreThreshold,
         source: "paper-trade",
         pnl: netPnl
       };
@@ -4836,7 +5189,7 @@ function evaluateAdvisorySamples(samples) {
       endPrice,
       move,
       correct,
-      qualified: Number(entry.conviction) >= advisoryScoreThreshold
+      qualified: getAdvisoryLocalConviction(entry) >= advisoryScoreThreshold
     };
   }).filter(Boolean);
 }
@@ -4895,7 +5248,7 @@ function renderAccuracyOutcomes(evaluations) {
   if (!recentEvaluations.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 6;
+    cell.colSpan = 7;
     cell.textContent = advisoryHorizonFilter === "intraday"
       ? "No evaluated outcomes in this window. Use Week or Month to include older paper trade outcomes."
       : "No evaluated outcomes yet. More snapshots are needed after each advisory.";
@@ -4910,7 +5263,8 @@ function renderAccuracyOutcomes(evaluations) {
     [
       formatTradeTime(item.entry.time),
       item.entry.label || item.entry.tone,
-      `${Math.round(Number(item.entry.conviction) || 0)}${item.qualified ? " qualified" : ""}`,
+      `${formatAdvisoryScoreValue(getAdvisoryLocalConviction(item.entry))}${item.qualified ? " qualified" : ""}`,
+      formatAdvisoryScoreValue(getAdvisoryLLMConviction(item.entry)),
       formatPrice(item.startPrice),
       `${formatPrice(item.endPrice)} (${item.move >= 0 ? "+" : ""}${formatPrice(item.move)})`,
       item.correct ? "Correct" : "Wrong"
@@ -5619,6 +5973,151 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   };
 }
 
+function loadPaperDecisionLog() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(PAPER_DECISION_LOG_KEY) || "[]");
+    paperDecisionLog = Array.isArray(stored) ? stored.filter(Boolean).slice(0, PAPER_DECISION_LOG_LIMIT) : [];
+  } catch (error) {
+    paperDecisionLog = [];
+  }
+}
+
+function savePaperDecisionLog() {
+  try {
+    window.localStorage.setItem(PAPER_DECISION_LOG_KEY, JSON.stringify(paperDecisionLog.slice(0, PAPER_DECISION_LOG_LIMIT)));
+  } catch (error) {
+    // Decision logging is diagnostic only; never block trading on storage failure.
+  }
+}
+
+function getDecisionStateLabel(decision, openTrade, signal) {
+  const title = String(decision?.title || "").toLowerCase();
+  if (openTrade) return "Open";
+  if (title.includes("ready")) return "Ready";
+  if (title.includes("pending")) return "Pending";
+  if (title.includes("backend")) return "Blocked";
+  if (title.includes("price")) return "No price";
+  if (title.includes("conviction")) return "Below threshold";
+  if (!getSignalSide(signal)) return "Wait";
+  return "Waiting";
+}
+
+function buildPaperDecisionLogEntry(commodity, signal, tradePlan, decision, openTrade, openPl, marketStatus) {
+  const commodityMeta = commodities.find(({ id }) => id === commodity) || { id: commodity, name: commodity };
+  const latestLLM = getLatestLLMConvictionForCommodity(commodity);
+  const price = Number.isFinite(tradePlan.livePrice) ? Number(tradePlan.livePrice) : null;
+  const localConviction = parseOptionalNumber(signal?.conviction);
+  const llmConviction = parseOptionalNumber(latestLLM?.conviction);
+  const threshold = parseOptionalNumber(tradePlan?.entryThreshold);
+
+  return {
+    id: `decision-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    time: new Date().toISOString(),
+    userEmail: getCurrentLedgerEmail(),
+    commodity,
+    commodityName: commodityMeta.name,
+    contract: tradePlan?.productId || openTrade?.contract || "",
+    state: getDecisionStateLabel(decision, openTrade, signal),
+    side: openTrade?.side || getSignalSide(signal) || "wait",
+    price,
+    priceSource: tradePlan?.priceSource || getUsableMarketPriceSource(commodity) || "",
+    entryPrice: Number.isFinite(tradePlan?.entryPrice) ? Number(tradePlan.entryPrice) : null,
+    targetPrice: Number.isFinite(tradePlan?.targetPrice) ? Number(tradePlan.targetPrice) : null,
+    stopPrice: Number.isFinite(tradePlan?.stopPrice) ? Number(tradePlan.stopPrice) : null,
+    localConviction,
+    localBaseConviction: parseOptionalNumber(signal?.baseConviction),
+    karpathyAdjustment: parseOptionalNumber(signal?.karpathyAdjustment),
+    localConvictionUpdatedAt: lastPrimarySignal?.commodity === commodity ? new Date().toISOString() : null,
+    llmConviction,
+    llmConvictionUpdatedAt: latestLLM?.updatedAt || latestLLM?.time || null,
+    threshold,
+    thresholdSource: tradePlan?.entryThresholdSource || "trading",
+    martingaleStep,
+    openPnl: Number.isFinite(openPl) ? Number(openPl) : null,
+    marketOpen: Boolean(marketStatus?.isOpen),
+    marketStatus: marketStatus?.shortLabel || "",
+    title: decision?.title || "",
+    reason: decision?.detail || ""
+  };
+}
+
+function getPaperDecisionLogKey(entry) {
+  return [
+    entry.userEmail,
+    entry.commodity,
+    entry.state,
+    entry.side,
+    Number.isFinite(entry.price) ? entry.price.toFixed(2) : "na",
+    Number.isFinite(entry.localConviction) ? Math.round(entry.localConviction) : "na",
+    Number.isFinite(entry.llmConviction) ? Math.round(entry.llmConviction) : "na",
+    Number.isFinite(entry.threshold) ? Math.round(entry.threshold) : "na",
+    entry.title
+  ].join("|");
+}
+
+function maybeRecordPaperDecisionLog(commodity, signal, tradePlan, decision, openTrade, openPl, marketStatus) {
+  const entry = buildPaperDecisionLogEntry(commodity, signal, tradePlan, decision, openTrade, openPl, marketStatus);
+  const key = getPaperDecisionLogKey(entry);
+  const now = Date.now();
+  const isDuplicateBurst = key === lastPaperDecisionLogKey && now - lastPaperDecisionLogAt < PAPER_DECISION_LOG_CAPTURE_MS;
+
+  if (isDuplicateBurst) return;
+
+  lastPaperDecisionLogKey = key;
+  lastPaperDecisionLogAt = now;
+  paperDecisionLog = [entry, ...paperDecisionLog].slice(0, PAPER_DECISION_LOG_LIMIT);
+  savePaperDecisionLog();
+}
+
+function renderPaperDecisionLog() {
+  if (!paperDecisionLogEl) return;
+
+  const selectedCommodity = normalizeHistoryCommodityFilter();
+  const currentEmail = getCurrentLedgerEmail();
+  const rows = paperDecisionLog
+    .filter((entry) => !currentEmail || entry.userEmail === currentEmail)
+    .filter((entry) => selectedCommodity === "all" || entry.commodity === selectedCommodity)
+    .slice(0, 12);
+
+  if (paperDecisionLogStatusEl) {
+    paperDecisionLogStatusEl.textContent = rows.length
+      ? `${rows.length} recent decision${rows.length === 1 ? "" : "s"}`
+      : "No decisions logged yet";
+  }
+
+  paperDecisionLogEl.innerHTML = "";
+  if (!rows.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No decisions logged yet.";
+    row.append(cell);
+    paperDecisionLogEl.append(row);
+    return;
+  }
+
+  rows.forEach((entry) => {
+    const row = document.createElement("tr");
+    const values = [
+      formatTradeTime(entry.time),
+      entry.state || "-",
+      Number.isFinite(entry.price) ? formatPrice(entry.price) : UNAVAILABLE_TEXT,
+      formatAdvisoryScoreValue(entry.localConviction),
+      formatAdvisoryScoreValue(entry.llmConviction),
+      Number.isFinite(entry.threshold) ? `${Math.round(entry.threshold)} (${entry.thresholdSource || "trading"})` : UNAVAILABLE_TEXT,
+      entry.reason || entry.title || "-"
+    ];
+
+    values.forEach((value, index) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      if (index === 6) cell.className = "decision-log-reason";
+      row.append(cell);
+    });
+    paperDecisionLogEl.append(row);
+  });
+}
+
 function renderKarpathyLoop(signal, tradePlan) {
   const loop = getKarpathyLoop(getSignalSide(signal));
   const winRateText = loop.sampleCount ? `${Math.round(loop.winRate * 100)}% win` : "No sample";
@@ -5972,7 +6471,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     return total + getTradePnl(trade, currentPrice);
   }, 0);
   const committedCapital = openTrade ? Number(openTrade.capital) || 0 : 0;
-  const displayEquity = hasOpenTradeWithoutPrice ? null : paperEquity + openPl;
+  const capitalFilter = normalizeHistoryCommodityFilter();
+  const displayStartCapital = getSafeHistoryStartCapital(capitalFilter);
+  const displayClosedPnl = getPaperClosedPnlForCapital(capitalFilter);
+  const displayEquity = displayStartCapital + displayClosedPnl;
   const signalSide = getSignalSide(signal);
   const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
   const decision = getPaperDecision(signal, tradePlan, openTrade);
@@ -5981,6 +6483,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
 
   syncPaperInputs();
+  maybeRecordPaperDecisionLog(commodity, signal, tradePlan, decision, openTrade, openPl, marketStatus);
+  renderPaperDecisionLog();
   renderUserContextWithAvatar(paperUserContextEl, getPaperUserContextText());
   paperEquityEl.textContent = formatMoney(displayEquity);
   paperRiskEl.textContent = tradePlan.riskPct;
@@ -6282,11 +6786,20 @@ function calculateSignal() {
     outputTitle.textContent = `Advisor output: ${commodityMeta.name} — Loading ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName + " critic" : ""}…`;
     primaryModelStatEl.textContent = `Loading ${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""}…`;
   }
+  outputTitle.textContent = `Advisor output: ${commodityMeta.name} / local + scheduled LLM`;
+  primaryModelStatEl.textContent = verified
+    ? `${verified.primaryModel} + ${verified.criticModel} (LLM updated ${verified.time})`
+    : `${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""} scheduled 12 AM, 6 AM, 12 PM, 6 PM ET`;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
-  convictionEl.textContent = primarySignal.manualOverride === null
-    ? `${primarySignal.conviction} / 100`
-    : `${primarySignal.conviction} / 100 manual`;
+  const localBaselineSource = primarySignal.manualOverride === null ? "local heuristic" : "LLM/manual baseline";
+  const adjustmentText = primarySignal.karpathyAdjustment
+    ? `, Karpathy ${primarySignal.karpathyAdjustment > 0 ? "+" : ""}${primarySignal.karpathyAdjustment}`
+    : "";
+  convictionEl.textContent = `${primarySignal.conviction} / 100 (${localBaselineSource} ${Math.round(primarySignal.baseConviction)}${adjustmentText})`;
+  if (localConvictionUpdatedEl) {
+    localConvictionUpdatedEl.textContent = `Updated ${formatVerifiedTime(new Date())}`;
+  }
   actionEl.textContent = primarySignal.action;
   tickerEl.textContent = tradePlan.ticker;
   contractMonthEl.textContent = tradePlan.contractMonth;
@@ -6408,6 +6921,9 @@ function getLiveAdvisoryContext() {
 function formatVerifiedTime(date) {
   try {
     return new Intl.DateTimeFormat("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
       hour: "numeric",
       minute: "2-digit",
       timeZoneName: "short"
@@ -6415,6 +6931,37 @@ function formatVerifiedTime(date) {
   } catch (_e) {
     return date.toLocaleTimeString();
   }
+}
+
+function getEasternParts(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const value = (type) => parts.find((part) => part.type === type)?.value || "00";
+  return {
+    year: value("year"),
+    month: value("month"),
+    day: value("day"),
+    hour: Number(value("hour"))
+  };
+}
+
+function getCurrentLLMScheduleSlot(date = new Date()) {
+  const eastern = getEasternParts(date);
+  const scheduleHours = getLLMScheduleEtHours();
+  let slotHour = scheduleHours[0];
+  scheduleHours.forEach((hour) => {
+    if (eastern.hour >= hour) slotHour = hour;
+  });
+  return {
+    key: `${eastern.year}-${eastern.month}-${eastern.day}-${String(slotHour).padStart(2, "0")}`,
+    label: `${formatEtHour(slotHour)} ET`
+  };
 }
 
 function renderLLMVerification(data, requestPayload) {
@@ -6530,12 +7077,81 @@ function applyLLMDisplayOverride(commodity) {
   }
 }
 
-async function runLiveLLMAdvisor() {
+// LLM refreshes are slower advisory checkpoints. They update the LLM card and
+// seed the local conviction value used by the trading engine.
+function applyLoadingPlaceholders() {
+  const primaryName = getModelById(primaryModelId).name;
+  const secondaryName = secondaryModelId ? getModelById(secondaryModelId).name : "";
+  if (llmConvictionEl) llmConvictionEl.textContent = "Loading...";
+  if (llmConvictionUpdatedEl) {
+    llmConvictionUpdatedEl.textContent = `Calling ${primaryName}${secondaryName ? " + " + secondaryName + " critic" : ""}`;
+  }
+}
+
+function applyLLMDisplayOverride(commodity) {
+  const haveVerified = lastVerifiedLLMRun
+    && lastVerifiedLLMRun.commodity === commodity
+    && lastVerifiedLLMRun.advisory
+    && typeof lastVerifiedLLMRun.advisory === "object";
+
+  if (!haveVerified) {
+    if (llmConvictionEl) llmConvictionEl.textContent = UNAVAILABLE_TEXT;
+    if (llmConvictionUpdatedEl) llmConvictionUpdatedEl.textContent = "Scheduled 12 AM, 6 AM, 12 PM, 6 PM ET";
+    return;
+  }
+
+  const adv = lastVerifiedLLMRun.advisory;
+  const convictionRaw = Number(adv.conviction);
+  const conviction = Number.isFinite(convictionRaw) ? convictionRaw : null;
+  if (llmConvictionEl) {
+    llmConvictionEl.textContent = conviction !== null ? `${conviction} / 100` : UNAVAILABLE_TEXT;
+  }
+  if (llmConvictionUpdatedEl) {
+    llmConvictionUpdatedEl.textContent = `Updated ${lastVerifiedLLMRun.time}`;
+  }
+}
+
+function syncLLMConvictionToLocal(commodity, conviction) {
+  const score = Number(conviction);
+  if (!Number.isFinite(score)) return false;
+  setManualConvictionOverride(commodity, score);
+  renderManualConvictionInput(commodity);
+  return true;
+}
+
+function saveLastVerifiedLLMRun() {
+  try {
+    if (lastVerifiedLLMRun) {
+      window.localStorage.setItem(LLM_LAST_RUN_KEY, JSON.stringify(lastVerifiedLLMRun));
+    }
+  } catch (_error) {
+    // Best effort only; the app still works without persisted advisory metadata.
+  }
+}
+
+function loadLastVerifiedLLMRun() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(LLM_LAST_RUN_KEY) || "null");
+    if (parsed && typeof parsed === "object" && parsed.commodity && parsed.advisory) {
+      lastVerifiedLLMRun = parsed;
+    }
+  } catch (_error) {
+    lastVerifiedLLMRun = null;
+  }
+}
+
+async function runLiveLLMAdvisor(options = {}) {
+  if (options && typeof Event !== "undefined" && options instanceof Event) options = {};
   if (!llmRunBtn || !llmStatusEl) return;
   if (llmInFlight) return;
   llmInFlight = true;
   llmRunBtn.disabled = true;
   llmStatusEl.textContent = "calling Sonnet 4.6 + GPT-5-mini critic…";
+  const scheduleSlot = options.scheduleSlot || getCurrentLLMScheduleSlot();
+  const primaryName = getModelById(primaryModelId).name;
+  const secondaryName = secondaryModelId ? getModelById(secondaryModelId).name : "";
+  applyLoadingPlaceholders();
+  llmStatusEl.textContent = `calling ${primaryName}${secondaryName ? " + " + secondaryName + " critic" : ""}...`;
   const payload = getLiveAdvisoryContext();
   const t0 = Date.now();
   try {
@@ -6550,19 +7166,29 @@ async function runLiveLLMAdvisor() {
     renderLLMVerification(data, payload);
     const consolidatedAdv = (data && data.consolidated) || (data && data.primary && data.primary.advisory) || {};
     const primaryAdv = (data && data.primary && data.primary.advisory) || {};
+    const llmConvictionValue = consolidatedAdv.conviction ?? primaryAdv.conviction;
+    syncLLMConvictionToLocal(payload.commodity, llmConvictionValue);
     lastVerifiedLLMRun = {
       commodity: payload.commodity,
       primaryModel: (data.primary && data.primary.model) || "?",
       criticModel: (data.critic && data.critic.model) || "?",
       time: formatVerifiedTime(new Date()),
+      updatedAt: new Date().toISOString(),
+      scheduleSlot: scheduleSlot.key,
       advisory: {
-        conviction: consolidatedAdv.conviction ?? primaryAdv.conviction,
+        conviction: llmConvictionValue,
         tone: consolidatedAdv.tone ?? primaryAdv.tone,
         summary: primaryAdv.summary,
         reasons: primaryAdv.reasons,
         risks: primaryAdv.risks
       }
     };
+    try {
+      window.localStorage.setItem(LLM_SCHEDULE_SLOT_KEY, `${payload.commodity}|${primaryModelId}|${secondaryModelId}|${scheduleSlot.key}`);
+    } catch (_error) {
+      // Ignore localStorage failures; the schedule guard is only a client-side throttle.
+    }
+    saveLastVerifiedLLMRun();
     if (typeof calculateSignal === "function") calculateSignal();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     llmStatusEl.textContent = `done in ${elapsed}s · ${new Date().toLocaleTimeString()}`;
@@ -6589,7 +7215,15 @@ async function runLiveLLMAdvisor() {
 function maybeAutoTriggerLLM(force) {
   const commodity = commoditySelect ? commoditySelect.value : null;
   if (!commodity) return;
-  const key = `${commodity}|${primaryModelId}|${secondaryModelId}`;
+  const scheduleSlot = getCurrentLLMScheduleSlot();
+  const key = `${commodity}|${primaryModelId}|${secondaryModelId}|${scheduleSlot.key}`;
+  let savedScheduleKey = "";
+  try {
+    savedScheduleKey = window.localStorage.getItem(LLM_SCHEDULE_SLOT_KEY) || "";
+  } catch (_error) {
+    savedScheduleKey = "";
+  }
+  if (!force && savedScheduleKey === key) return;
   if (!force && key === llmAutoCommodityKey) return;
   llmAutoCommodityKey = key;
   if (llmInFlight) return;
@@ -6600,8 +7234,9 @@ function maybeAutoTriggerLLM(force) {
   if (lastVerifiedLLMRun
       && lastVerifiedLLMRun.commodity === commodity
       && expectedPrimary
-      && lastVerifiedLLMRun.primaryModel === expectedPrimary) return;
-  setTimeout(() => { runLiveLLMAdvisor(); }, 50);
+      && lastVerifiedLLMRun.primaryModel === expectedPrimary
+      && lastVerifiedLLMRun.scheduleSlot === scheduleSlot.key) return;
+  setTimeout(() => { runLiveLLMAdvisor({ scheduleSlot }); }, 50);
 }
 
 [
@@ -6628,6 +7263,7 @@ primaryModelSelect.addEventListener("change", () => {
   llmAutoCommodityKey = null;
   renderSecondOpinionControls();
   saveModelSettings();
+  renderTokenCosts();
   calculateSignal();
 });
 commoditySelect.addEventListener("change", refreshSelectedCoinbasePrice);
@@ -6637,6 +7273,7 @@ commoditySelect.addEventListener("change", () => {
   const commodityInput = document.querySelector("#live-trade-commodity");
   if (commodityInput) commodityInput.value = commoditySelect.value;
   if (contractInput && !contractInput.value.trim()) contractInput.value = marketConfig[commoditySelect.value]?.ticker || "";
+  renderTokenCosts();
 });
 historyPeriodFiltersEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-period]");
@@ -6687,6 +7324,7 @@ coinbaseSandboxEnabledEl.addEventListener("change", () => {
 secondOpinionModelsEl.addEventListener("change", () => {
   updateSecondOpinionRunState();
   saveModelSettings();
+  renderTokenCosts();
 });
 secondOpinionPromptsEl.addEventListener("change", () => {
   updateSecondOpinionRunState();
@@ -6700,6 +7338,7 @@ secondOpinionSelectAllEl.addEventListener("click", () => {
   });
   updateSecondOpinionRunState();
   saveModelSettings();
+  renderTokenCosts();
 });
 secondOpinionRunSelectedEl.addEventListener("click", () => {
   renderSecondOpinionResults(getSelectedSecondOpinionModels());
@@ -6711,7 +7350,15 @@ secondOpinionRunAllEl.addEventListener("click", () => {
   secondOpinionModelsEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
     input.checked = modelIds.includes(input.value);
   });
+  saveModelSettings();
+  renderTokenCosts();
   renderSecondOpinionResults(modelIds);
+});
+tokenCostsRefreshEl?.addEventListener("click", renderTokenCosts);
+tokenRefreshHoursEl?.addEventListener("change", () => {
+  setLLMRefreshHours(tokenRefreshHoursEl.value);
+  llmAutoCommodityKey = null;
+  renderTokenCosts();
 });
 saveOpenBrainEndpointEl.addEventListener("click", () => {
   window.localStorage.setItem(OPEN_BRAIN_ENDPOINT_KEY, openBrainEndpointEl.value.trim());
@@ -6790,6 +7437,9 @@ function initializeApp() {
   loadPaperState();
   applyCurrentUserPaperSettings();
   loadModelSettings();
+  loadLastVerifiedLLMRun();
+  loadLocalAdvisoryHistory();
+  loadPaperDecisionLog();
   applySavedStrategyEdits();
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
@@ -6802,6 +7452,7 @@ function initializeApp() {
   markCurrentSessionActive();
   renderPrimaryModelSelector();
   renderSecondOpinionControls();
+  renderTokenCosts();
   renderOpenBrainMemory();
   renderCurrentUserStrategy();
   showUserManagement();
@@ -6820,6 +7471,7 @@ function initializeApp() {
   window.setInterval(loadSharedSettings, BACKEND_SETTINGS_SYNC_MS);
   window.setInterval(autoSyncTransactionHistory, BACKEND_TRANSACTION_SYNC_MS);
   window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
+  window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", renderAdvisoryChart);

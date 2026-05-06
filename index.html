@@ -53,6 +53,7 @@
         </div>
         <span class="menu-group">Administration</span>
         <div class="menu-tree">
+          <button class="menu-button" type="button" data-section-target="token-costs">Token Costs</button>
           <button class="menu-button" type="button" data-section-target="features">Feature Requests</button>
           <button class="menu-button" type="button" data-section-target="users">Users</button>
         </div>
@@ -86,6 +87,116 @@
           Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
         </span>
       </section>
+
+    <section class="band token-costs" data-app-section="token-costs" aria-label="Token usage and costs">
+      <div class="token-cost-header">
+        <div class="token-cost-title">
+          <span class="token-cost-icon" aria-hidden="true">TC</span>
+          <div>
+            <h2>Token Usage &amp; Costs</h2>
+            <p>API call tracking, costs, and budget monitoring</p>
+          </div>
+        </div>
+        <button class="token-refresh-button" id="token-costs-refresh" type="button">Refresh</button>
+      </div>
+
+      <div class="token-window-buttons" aria-label="Token cost time window">
+        <button class="token-window-button" type="button">1h</button>
+        <button class="token-window-button" type="button">2h</button>
+        <button class="token-window-button" type="button">10h</button>
+        <button class="token-window-button" type="button" data-active="true">24h</button>
+        <button class="token-window-button" type="button">48h</button>
+        <button class="token-window-button" type="button">72h</button>
+        <button class="token-window-button" type="button">1w</button>
+        <button class="token-window-button" type="button">2w</button>
+        <button class="token-window-button" type="button">1m</button>
+        <button class="token-window-button" type="button">Custom</button>
+      </div>
+
+      <div class="token-cost-grid" aria-label="Token usage summary">
+        <article class="token-cost-card">
+          <div class="token-card-top">
+            <span class="token-card-icon" data-tone="calls">#</span>
+            <span class="token-card-dash">-</span>
+          </div>
+          <strong>0</strong>
+          <span>Total API Calls</span>
+        </article>
+        <article class="token-cost-card">
+          <div class="token-card-top">
+            <span class="token-card-icon" data-tone="tokens">T</span>
+            <span class="token-card-dash">-</span>
+          </div>
+          <strong>0</strong>
+          <span>Total Tokens</span>
+        </article>
+        <article class="token-cost-card">
+          <div class="token-card-top">
+            <span class="token-card-icon" data-tone="cost">$</span>
+            <span class="token-card-dash">-</span>
+          </div>
+          <strong>FREE</strong>
+          <span>Billable Cost</span>
+        </article>
+        <article class="token-cost-card">
+          <div class="token-card-top">
+            <span class="token-card-icon" data-tone="free">G</span>
+          </div>
+          <strong>0</strong>
+          <span>Free Tier Calls</span>
+        </article>
+      </div>
+
+      <section class="token-cost-panel" aria-label="Per-model token breakdown">
+        <div class="token-panel-heading">
+          <div>
+            <h3>Advisory model schedule</h3>
+            <p id="token-costs-status">Schedule estimate only; API usage telemetry is not connected yet.</p>
+          </div>
+          <label class="token-refresh-control">
+            <span>LLM refresh interval</span>
+            <select id="token-llm-refresh-hours">
+              <option value="1">Every 1 hour</option>
+              <option value="2">Every 2 hours</option>
+              <option value="3">Every 3 hours</option>
+              <option value="4">Every 4 hours</option>
+              <option value="6">Every 6 hours</option>
+              <option value="8">Every 8 hours</option>
+              <option value="12">Every 12 hours</option>
+              <option value="24">Every 24 hours</option>
+            </select>
+          </label>
+        </div>
+        <div class="token-schedule-summary">
+          <div>
+            <span>Scheduled ET slots</span>
+            <strong id="token-schedule-slots">12 AM, 6 AM, 12 PM, 6 PM ET</strong>
+          </div>
+          <div>
+            <span>Estimated advisory model calls</span>
+            <strong id="token-estimated-calls">8 per day per active commodity</strong>
+          </div>
+        </div>
+        <div class="token-model-list" id="token-model-list"></div>
+      </section>
+
+      <section class="token-cost-panel" aria-label="Token job breakdown">
+        <h3>Job breakdown - where tokens are spent</h3>
+        <div class="token-job-breakdown" id="token-job-breakdown"></div>
+      </section>
+
+      <details class="token-cost-reference">
+        <summary>Cost rates reference</summary>
+        <div class="token-reference-grid">
+          <span>Primary reasoning</span>
+          <strong>Tracked when API telemetry is connected</strong>
+          <span>Admin models</span>
+          <strong>Tracked separately from advisory calls</strong>
+          <span>Free tier</span>
+          <strong>Calls marked free do not add billable cost</strong>
+        </div>
+      </details>
+    </section>
 
     <section class="band user-management" data-app-section="users" aria-label="User management">
       <div class="section-heading">
@@ -148,7 +259,7 @@
                 <th>Last Active</th>
                 <th>Sessions</th>
                 <th>Equity</th>
-                <th>Risk</th>
+                <th>Profit / Loss</th>
                 <th>Status</th>
                 <th>Actions</th>
               </tr>
@@ -585,8 +696,14 @@
           <div class="signal-badge" id="signal-badge">Moderate Long</div>
           <div class="score-row">
             <div>
-              <span class="stat-label">Conviction</span>
+              <span class="stat-label">Local conviction</span>
               <strong id="conviction">63 / 100</strong>
+              <small id="local-conviction-updated" class="score-timestamp">Updated locally</small>
+            </div>
+            <div>
+              <span class="stat-label">LLM conviction</span>
+              <strong id="llm-conviction">Not available</strong>
+              <small id="llm-conviction-updated" class="score-timestamp">Scheduled 4x/day</small>
             </div>
             <div>
               <span class="stat-label">Action</span>
@@ -719,6 +836,32 @@
                 <span class="stat-label">Trade decision</span>
                 <strong id="paper-decision-title">Waiting for signal</strong>
                 <p id="paper-decision-detail">The next paper trade will open when the advisory clears the learned threshold.</p>
+              </div>
+              <div class="decision-log-card" aria-label="Paper trade decision log">
+                <div class="decision-log-header">
+                  <h3>Decision trading log</h3>
+                  <span id="paper-decision-log-status">No decisions logged yet</span>
+                </div>
+                <div class="decision-log-table-wrap">
+                  <table class="decision-log-table">
+                    <thead>
+                      <tr>
+                        <th>Time</th>
+                        <th>State</th>
+                        <th>Price</th>
+                        <th>Local</th>
+                        <th>LLM</th>
+                        <th>Threshold</th>
+                        <th>Reason</th>
+                      </tr>
+                    </thead>
+                    <tbody id="paper-decision-log">
+                      <tr>
+                        <td colspan="7">No decisions logged yet.</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
             <div>
@@ -1183,7 +1326,8 @@
                 <tr>
                   <th>Time</th>
                   <th>Signal</th>
-                  <th>Advisory score</th>
+                  <th>Local score</th>
+                  <th>LLM score</th>
                   <th>Then</th>
                   <th>After</th>
                   <th>Result</th>
