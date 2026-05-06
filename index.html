@@ -949,21 +949,23 @@
             <table class="history-table">
               <thead>
                 <tr>
-                  <th>State</th>
-                  <th>Time</th>
-                  <th>Action</th>
-                  <th>Side</th>
-                  <th>Step</th>
-                  <th>Contract</th>
-                  <th>Entry price</th>
-                  <th>Committed</th>
-                  <th>Target / Exit</th>
-                  <th>Net P/L</th>
+                  <th title="Lifecycle marker. Q = queued (next trade not yet open). O = currently open. C = closed.">State</th>
+                  <th title="When this row was recorded.">Time</th>
+                  <th title="BUY / SELL SHORT open the position. SELL TARGET / BUY TARGET close at the planned profit. SELL STOP / BUY STOP close at the stop-loss.">Action</th>
+                  <th title="Long bets on price rising. Short bets on price falling.">Side</th>
+                  <th title="Martingale ladder step. Step #1 starts a fresh sequence; #2–#4 increase size after a losing close.">Step</th>
+                  <th title="Underlying futures contract.">Contract</th>
+                  <th title="Price at which the position opened (or projected open price for queued rows).">Entry price</th>
+                  <th title="Capital reserved for this trade — margin per contract × number of contracts. Stays committed until the trade closes.">Committed</th>
+                  <th title="Planned profit-take price, set when the trade opened. Static once set; it should not move.">Target</th>
+                  <th title="Planned stop-loss price, set when the trade opened. Static once set; it should not move.">Stop</th>
+                  <th title="Actual price the trade closed at. Empty until the trade is closed; static once recorded.">Exit</th>
+                  <th title="Realized profit or loss after fees for closed trades. Blank or unrealized for open trades.">Net P/L</th>
                 </tr>
               </thead>
               <tbody id="transaction-history">
                 <tr>
-                  <td colspan="10">Waiting for a long or short advisory above 50 conviction.</td>
+                  <td colspan="12">Waiting for a long or short advisory above 50 conviction.</td>
                 </tr>
               </tbody>
             </table>

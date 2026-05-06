@@ -2365,7 +2365,9 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       Number.isFinite(Number(openTrade.entryPrice)) ? formatPrice(Number(openTrade.entryPrice)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
-      `Live ${livePriceText}; target ${formatPrice(openTrade.targetPrice)} / stop ${formatPrice(openTrade.stopPrice)}`
+      Number.isFinite(Number(openTrade.stopPrice)) ? formatPrice(Number(openTrade.stopPrice)) : UNAVAILABLE_TEXT,
+      UNAVAILABLE_TEXT,
+      `Live ${livePriceText}`
     ].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value;
@@ -2396,6 +2398,8 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     hasExecutablePrice ? formatPrice(queuedPrice) : UNAVAILABLE_TEXT,
     hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT,
     hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT,
+    hasExecutablePrice && Number.isFinite(Number(tradePlan.stopLoss)) ? formatPrice(Number(tradePlan.stopLoss)) : UNAVAILABLE_TEXT,
+    UNAVAILABLE_TEXT,
     decision.title
   ].forEach((value) => {
     const cell = document.createElement("td");
@@ -2409,7 +2413,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
 function buildFallbackPaperTradeRow(message) {
   const row = document.createElement("tr");
   const cell = document.createElement("td");
-  cell.colSpan = 10;
+  cell.colSpan = 12;
   cell.textContent = message;
   row.append(cell);
   return row;
@@ -2434,6 +2438,10 @@ function appendSimplePaperHistoryRows(entries) {
   entries.slice(0, 50).forEach((entry) => {
     const row = document.createElement("tr");
     const pnl = getDisplayPnl(entry);
+    const isClosed = isClosingTransaction(entry) || entry.closedAt;
+    const exitPriceValue = isClosed
+      ? Number(entry?.exitPrice ?? entry?.price)
+      : NaN;
 
     appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
     [
@@ -2444,12 +2452,14 @@ function appendSimplePaperHistoryRows(entries) {
       entry?.contract || "-",
       Number.isFinite(Number(entry?.price)) ? formatPrice(Number(entry.price)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
-      getTransactionTargetOrExitPrice(entry),
+      Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
+      Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
+      Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : UNAVAILABLE_TEXT,
       Number.isFinite(pnl) ? formatSignedMoney(pnl) : "-"
     ].forEach((value, index) => {
       const cell = document.createElement("td");
       cell.textContent = value;
-      if (index === 8) {
+      if (index === 10) {
         if (pnl > 0) cell.className = "gain";
         if (pnl < 0) cell.className = "loss";
       }
@@ -6610,7 +6620,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     renderPnlWithCapital(historyTotalFilteredEl, 0, getSafeHistoryStartCapital(historyCommodityFilter));
     historyTotalCountEl.textContent = "0 rows";
     appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
-    cell.colSpan = 10;
+    cell.colSpan = 12;
     cell.textContent = "Waiting for a long or short advisory above 50 conviction.";
     row.append(cell);
     transactionHistoryEl.append(row);
@@ -6676,7 +6686,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
-    cell.colSpan = 10;
+    cell.colSpan = 12;
     cell.textContent = "No transactions match the selected filters.";
     row.append(cell);
     transactionHistoryEl.append(row);
@@ -6692,6 +6702,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
       const pnlClass = displayPnl > 0 ? "gain" : displayPnl < 0 ? "loss" : "";
       const expanded = expandedTransactionId === entry.id;
       appendStateCell(row, getTransactionStateCode(entry), getTransactionStateCode(entry) === "C" ? "Closed" : "Open");
+      const isClosed = isClosingTransaction(entry) || entry.closedAt;
+      const exitPriceValue = isClosed
+        ? Number(entry?.exitPrice ?? entry?.price)
+        : NaN;
       const values = [
         formatTradeTime(entry.time),
         null,
@@ -6700,7 +6714,9 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         entry.contract,
         getTransactionEntryPriceDisplay(entry),
         formatMoney(entry.capital),
-        getTransactionTargetOrExitPrice(entry),
+        Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
+        Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
+        Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : UNAVAILABLE_TEXT,
         formatSignedMoney(displayPnl)
       ];
 
@@ -6740,7 +6756,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         } else {
           cell.textContent = value;
         }
-        if (index === 8 && pnlClass) cell.className = pnlClass;
+        if (index === 10 && pnlClass) cell.className = pnlClass;
         row.append(cell);
       });
       transactionHistoryEl.append(row);
@@ -6750,7 +6766,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         const detailCell = document.createElement("td");
 
         detailRow.className = "transaction-detail";
-        detailCell.colSpan = 10;
+        detailCell.colSpan = 12;
         detailCell.append(renderTransactionDetail(entry));
         detailRow.append(detailCell);
         transactionHistoryEl.append(detailRow);
@@ -6767,12 +6783,14 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         entry?.contract || "-",
         getTransactionEntryPriceDisplay(entry || {}),
         Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
-        "-",
+        Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
+        Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
+        Number.isFinite(Number(entry?.exitPrice)) ? formatPrice(Number(entry.exitPrice)) : UNAVAILABLE_TEXT,
         Number.isFinite(Number(entry?.pnl)) ? formatSignedMoney(Number(entry.pnl)) : "-"
       ].forEach((value, index) => {
         const cell = document.createElement("td");
         cell.textContent = value;
-        if (index === 8) {
+        if (index === 10) {
           const pnl = Number(entry?.pnl);
           if (pnl > 0) cell.className = "gain";
           if (pnl < 0) cell.className = "loss";
