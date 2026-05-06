@@ -212,10 +212,10 @@ const marketConfig = {
     productType: "Coinbase futures contract",
     referencePrice: null,
     contractMultiplier: 10,
-    marginRateLong: 0.1,
-    marginRateShort: 0.12,
-    feePerContractSide: 0.25,
-    feeLabel: "Estimated exchange/brokerage fee",
+    marginRateLong: 0.14924,
+    marginRateShort: 0.17410,
+    feePerContractSide: 1.17,
+    feeLabel: "Coinbase displayed futures fee estimate",
     buyWindow: "09:45-10:30 ET"
   },
   "natural-gas": { ticker: "NG reference", productId: "NATURAL-GAS-USD", contractMonth: "Reference only", productType: "Reference price, not a listed Coinbase futures contract", referencePrice: null, buyWindow: "10:00-11:00 ET" },
@@ -793,10 +793,87 @@ function getLLMScheduleLabel() {
   return `${getLLMScheduleEtHours().map(formatEtHour).join(", ")} ET`;
 }
 
-function renderTokenCosts() {
+function getTokenCostsWindowHours() {
+  const activeButton = document.querySelector(".token-window-button[data-active='true']");
+  const label = (activeButton?.textContent || "24h").trim().toLowerCase();
+  const windows = {
+    "1h": 1,
+    "2h": 2,
+    "10h": 10,
+    "24h": 24,
+    "48h": 48,
+    "72h": 72,
+    "1w": 168,
+    "2w": 336,
+    "1m": 720,
+    "custom": 24
+  };
+  return windows[label] || 24;
+}
+
+function formatTokenCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "0";
+  return Math.round(number).toLocaleString();
+}
+
+function formatTokenCost(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return "FREE";
+  return `$${number.toFixed(number < 1 ? 4 : 2)}`;
+}
+
+function formatTokenDateTime(value) {
+  if (!value) return "Never";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Never";
+  return date.toLocaleString([], {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit"
+  });
+}
+
+function renderTokenSummaryCards(totals = {}) {
+  const values = [
+    formatTokenCount(totals.apiCalls),
+    formatTokenCount(totals.totalTokens),
+    formatTokenCost(totals.billableCostUsd),
+    formatTokenCount(totals.freeTierCalls)
+  ];
+  document.querySelectorAll(".token-cost-card strong").forEach((node, index) => {
+    node.textContent = values[index] || "0";
+  });
+}
+
+async function fetchTokenUsageTelemetry(windowHours) {
+  try {
+    const response = await fetchWithTimeout(
+      `${getMasterHistoryUrl()}/token-usage?hours=${encodeURIComponent(windowHours)}`,
+      { cache: "no-store" },
+      8000
+    );
+    if (!response.ok) throw new Error(`Token usage request failed: ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    return {
+      generatedAt: new Date().toISOString(),
+      source: "unavailable",
+      error: error.message,
+      windowHours,
+      totals: { apiCalls: 0, totalTokens: 0, billableCostUsd: 0, freeTierCalls: 0 },
+      models: [],
+      jobs: []
+    };
+  }
+}
+
+async function renderTokenCosts() {
   if (!tokenModelListEl) return;
 
   const interval = getLLMRefreshHours();
+  const windowHours = getTokenCostsWindowHours();
   const scheduleHours = getLLMScheduleEtHours();
   const scheduledRunsPerDay = scheduleHours.length;
   const primaryModel = getModelById(primaryModelId);
@@ -804,6 +881,8 @@ function renderTokenCosts() {
   const secondOpinionIds = new Set(getStoredSecondOpinionModelIds());
   const selectedCommodity = commodities.find(({ id }) => id === (commoditySelect?.value || "oil")) || commodities[0];
   const scheduledModelCalls = scheduledRunsPerDay * (criticModel ? 2 : 1);
+  const telemetry = await fetchTokenUsageTelemetry(windowHours);
+  const hasRealTelemetry = telemetry?.source === "cloudflare-d1-token-usage";
 
   if (tokenRefreshHoursEl) tokenRefreshHoursEl.value = String(interval);
   if (tokenScheduleSlotsEl) tokenScheduleSlotsEl.textContent = getLLMScheduleLabel();
@@ -811,9 +890,20 @@ function renderTokenCosts() {
     tokenEstimatedCallsEl.textContent = `${scheduledModelCalls} per day per active commodity`;
   }
   if (tokenCostsStatusEl) {
-    tokenCostsStatusEl.textContent = `Scheduled advisory uses ${primaryModel.name}${criticModel ? ` plus ${criticModel.name} critic` : ""} every ${interval} hour${interval === 1 ? "" : "s"} for ${selectedCommodity.name}.`;
+    const scheduleText = `Scheduled advisory uses ${primaryModel.name}${criticModel ? ` plus ${criticModel.name} critic` : ""} every ${interval} hour${interval === 1 ? "" : "s"} for ${selectedCommodity.name}.`;
+    if (hasRealTelemetry) {
+      tokenCostsStatusEl.textContent = `${scheduleText} Showing real backend token usage for the last ${windowHours} hour${windowHours === 1 ? "" : "s"}.`;
+    } else if (telemetry?.source === "d1-not-configured") {
+      tokenCostsStatusEl.textContent = `${scheduleText} D1 token telemetry is not configured yet, so totals show schedule estimates only.`;
+    } else {
+      tokenCostsStatusEl.textContent = `${scheduleText} Token telemetry unavailable: ${telemetry?.error || "backend not reachable"}.`;
+    }
   }
+  renderTokenSummaryCards(telemetry?.totals);
 
+  const usageByModel = new Map((telemetry?.models || []).map((row) => [row.model, row]));
+  const configuredRoutes = new Set(advisoryModels.map((model) => model.openrouterId).filter(Boolean));
+  const extraUsageRows = (telemetry?.models || []).filter((row) => row.model && !configuredRoutes.has(row.model));
   const modelRows = advisoryModels.map((model) => {
     const roles = [];
     if (model.id === primaryModelId) roles.push("Primary advisory");
@@ -828,6 +918,10 @@ function renderTokenCosts() {
     const roleMarkup = roles.length
       ? roles.map((role) => `<span class="token-role-pill">${escapeHtml(role)}</span>`).join("")
       : `<span class="token-role-pill token-role-muted">Available</span>`;
+    const usage = usageByModel.get(model.openrouterId || model.id);
+    const cadenceText = usage
+      ? `${formatTokenCount(usage.calls)} calls / ${formatTokenCount(usage.totalTokens)} tokens / ${formatTokenCost(usage.billableCostUsd)}`
+      : callCadence;
 
     return `
       <div class="token-model-row" data-active="${roles.length ? "true" : "false"}">
@@ -837,10 +931,20 @@ function renderTokenCosts() {
         </div>
         <code>${escapeHtml(model.openrouterId || "Not configured")}</code>
         <div class="token-role-pills">${roleMarkup}</div>
-        <span>${escapeHtml(callCadence)}</span>
+        <span>${escapeHtml(cadenceText)}</span>
       </div>
     `;
-  }).join("");
+  }).join("") + extraUsageRows.map((row) => `
+    <div class="token-model-row" data-active="true">
+      <div class="token-model-name">
+        <strong>${escapeHtml(row.model)}</strong>
+        <span>${escapeHtml(row.provider || "OpenRouter")}</span>
+      </div>
+      <code>${escapeHtml(row.model)}</code>
+      <div class="token-role-pills"><span class="token-role-pill">Observed</span></div>
+      <span>${escapeHtml(`${formatTokenCount(row.calls)} calls / ${formatTokenCount(row.totalTokens)} tokens / ${formatTokenCost(row.billableCostUsd)}`)}</span>
+    </div>
+  `).join("");
 
   tokenModelListEl.innerHTML = `
     <div class="token-model-table">
@@ -855,7 +959,13 @@ function renderTokenCosts() {
   `;
 
   if (tokenJobBreakdownEl) {
-    tokenJobBreakdownEl.innerHTML = `
+    const observedJobs = (telemetry?.jobs || []).map((job) => `
+      <div class="token-job-row">
+        <span>${escapeHtml(job.job || "unknown")}</span>
+        <strong>${escapeHtml(`${formatTokenCount(job.calls)} calls / ${formatTokenCount(job.totalTokens)} tokens / ${formatTokenCost(job.billableCostUsd)} / last ${formatTokenDateTime(job.lastCalledAt)}`)}</strong>
+      </div>
+    `).join("");
+    tokenJobBreakdownEl.innerHTML = observedJobs || `
       <div class="token-job-row">
         <span>Primary advisory refresh</span>
         <strong>${scheduledRunsPerDay}/day per active commodity</strong>
@@ -868,7 +978,7 @@ function renderTokenCosts() {
         <span>Second Opinion models</span>
         <strong>${secondOpinionIds.size ? `${secondOpinionIds.size} models on demand` : "None selected"}</strong>
       </div>
-      <p class="token-job-note">Usage and cost totals are placeholders until the backend records OpenRouter response usage for each advisory call.</p>
+      <p class="token-job-note">Real token usage will appear here after the Worker is connected to D1 and OpenRouter calls are made.</p>
     `;
   }
 }
@@ -1051,6 +1161,50 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function formatNumberInput(value, decimals = 2) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "";
+  return number.toFixed(decimals).replace(/\.?0+$/, "");
+}
+
+function formatPercentInput(rate) {
+  const number = Number(rate);
+  if (!Number.isFinite(number)) return "";
+  return (number * 100).toFixed(3).replace(/\.?0+$/, "");
+}
+
+function parsePercentInput(value, fallbackRate) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) return fallbackRate;
+  return number / 100;
+}
+
+function normalizeCommodityTradeTerms(terms = {}, commodityId) {
+  const config = marketConfig[commodityId] || {};
+  const source = terms && typeof terms === "object" && !Array.isArray(terms) ? terms : {};
+  const contractMultiplier = Number(source.contractMultiplier ?? config.contractMultiplier);
+  const marginRateLong = Number(source.marginRateLong ?? config.marginRateLong);
+  const marginRateShort = Number(source.marginRateShort ?? config.marginRateShort);
+  const feePerContractSide = Number(source.feePerContractSide ?? config.feePerContractSide);
+  const feeLabel = String(source.feeLabel || config.feeLabel || "Estimated fee").trim();
+
+  return {
+    contractMultiplier: Number.isFinite(contractMultiplier) && contractMultiplier > 0 ? contractMultiplier : 1,
+    marginRateLong: Number.isFinite(marginRateLong) && marginRateLong > 0 ? marginRateLong : 1,
+    marginRateShort: Number.isFinite(marginRateShort) && marginRateShort > 0 ? marginRateShort : 1,
+    feePerContractSide: Number.isFinite(feePerContractSide) && feePerContractSide >= 0 ? feePerContractSide : 0,
+    feeLabel: feeLabel || "Estimated fee"
+  };
+}
+
+function normalizeCommodityTradeTermsMap(map = {}) {
+  const source = map && typeof map === "object" && !Array.isArray(map) ? map : {};
+  return commodities.reduce((result, { id }) => {
+    result[id] = normalizeCommodityTradeTerms(source[id], id);
+    return result;
+  }, {});
+}
+
 function findRegisteredUserByEmail(email) {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail) return null;
@@ -1075,6 +1229,7 @@ function normalizeUserRecord(user, fallback = {}) {
     commoditiesForUser,
     profileEquity
   );
+  const commodityTradeTerms = normalizeCommodityTradeTermsMap(user?.commodityTradeTerms ?? fallback.commodityTradeTerms);
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -1088,6 +1243,7 @@ function normalizeUserRecord(user, fallback = {}) {
     avatarDataUrl: avatarDataUrl.startsWith("data:image/") ? avatarDataUrl : "",
     commodities: commoditiesForUser,
     commodityAllocations,
+    commodityTradeTerms,
     strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
     brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
     sessionHistory: sessionHistory
@@ -1339,6 +1495,7 @@ function getSharedUserProfilesPayload() {
       paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
       commodities: normalizeSavedCommodityIds(user.commodities),
       commodityAllocations: normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity),
+      commodityTradeTerms: normalizeCommodityTradeTermsMap(user.commodityTradeTerms),
       strategy: normalizeUserStrategy(user.strategy),
       brokerAccount: normalizeBrokerAccount(user.brokerAccount)
     };
@@ -1387,6 +1544,7 @@ function mergeUserRecords(existing, incoming) {
       Array.isArray(incoming.commodities) ? incoming.commodities : existing.commodities,
       Number.isFinite(Number(incoming.paperBaseEquity)) ? incoming.paperBaseEquity : existing.paperBaseEquity
     ),
+    commodityTradeTerms: normalizeCommodityTradeTermsMap(incoming.commodityTradeTerms || existing.commodityTradeTerms),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
@@ -1456,6 +1614,13 @@ function mergeSharedUserProfiles(profiles) {
       const nextAllocations = normalizeCommodityAllocations(profile.commodityAllocations, user.commodities, user.paperBaseEquity);
       if (JSON.stringify(nextAllocations) !== JSON.stringify(normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity))) {
         user.commodityAllocations = nextAllocations;
+        changed = true;
+      }
+    }
+    if (profile.commodityTradeTerms && typeof profile.commodityTradeTerms === "object") {
+      const nextTradeTerms = normalizeCommodityTradeTermsMap(profile.commodityTradeTerms);
+      if (JSON.stringify(nextTradeTerms) !== JSON.stringify(normalizeCommodityTradeTermsMap(user.commodityTradeTerms))) {
+        user.commodityTradeTerms = nextTradeTerms;
         changed = true;
       }
     }
@@ -1767,25 +1932,37 @@ function saveUserCommoditySelection(user, container) {
     return;
   }
 
-  const nextAllocations = rows.reduce((allocations, row) => {
+  const nextAllocations = {};
+  const nextTradeTerms = {};
+  rows.forEach((row) => {
     const id = row.dataset.commodityRow;
     const startCapital = Number(row.querySelector("[data-commodity-capital]")?.value);
-    allocations[id] = {
+    const currentTerms = normalizeCommodityTradeTerms(user.commodityTradeTerms?.[id], id);
+    const contractMultiplier = Number(row.querySelector("[data-commodity-multiplier]")?.value);
+    const feePerContractSide = Number(row.querySelector("[data-commodity-fee-side]")?.value);
+    nextAllocations[id] = {
       startCapital: Number.isFinite(startCapital) ? Math.max(0, startCapital) : 0
     };
-    return allocations;
-  }, {});
+    nextTradeTerms[id] = normalizeCommodityTradeTerms({
+      contractMultiplier: Number.isFinite(contractMultiplier) ? contractMultiplier : currentTerms.contractMultiplier,
+      marginRateLong: parsePercentInput(row.querySelector("[data-commodity-margin-long]")?.value, currentTerms.marginRateLong),
+      marginRateShort: parsePercentInput(row.querySelector("[data-commodity-margin-short]")?.value, currentTerms.marginRateShort),
+      feePerContractSide: Number.isFinite(feePerContractSide) ? feePerContractSide : currentTerms.feePerContractSide,
+      feeLabel: row.querySelector("[data-commodity-fee-label]")?.value || currentTerms.feeLabel
+    }, id);
+  });
   const accountStartCapital = nextCommodities.reduce((total, id) => total + (Number(nextAllocations[id]?.startCapital) || 0), 0);
 
   user.commodities = nextCommodities;
   user.commodityAllocations = normalizeCommodityAllocations(nextAllocations, nextCommodities, accountStartCapital);
+  user.commodityTradeTerms = normalizeCommodityTradeTermsMap(nextTradeTerms);
   user.paperBaseEquity = accountStartCapital;
   saveUserRoster();
   saveSharedSettings();
   applyCurrentUserPaperSettings();
   calculateSignal();
   renderUserManagement();
-  userManagementStatusEl.textContent = `${user.name || user.email} commodity allocations saved`;
+  userManagementStatusEl.textContent = `${user.name || user.email} commodity settings saved`;
 }
 
 function saveUserStrategySettings(user, container) {
@@ -1993,6 +2170,7 @@ function createUserProfilePanel(user) {
     const isSelected = selectedCommodities.has(id);
     const startCapital = isSelected ? Number(allocations[id]?.startCapital) || 0 : 0;
     const pnl = getUserCommodityPnl(user, id);
+    const tradeTerms = normalizeCommodityTradeTerms(user.commodityTradeTerms?.[id], id);
     accountStartCapital += startCapital;
 
     const row = document.createElement("div");
@@ -2000,6 +2178,16 @@ function createUserProfilePanel(user) {
     const checkbox = document.createElement("input");
     const capitalLabel = document.createElement("label");
     const capitalInput = document.createElement("input");
+    const longMarginLabel = document.createElement("label");
+    const longMarginInput = document.createElement("input");
+    const shortMarginLabel = document.createElement("label");
+    const shortMarginInput = document.createElement("input");
+    const feeSideLabel = document.createElement("label");
+    const feeSideInput = document.createElement("input");
+    const multiplierLabel = document.createElement("label");
+    const multiplierInput = document.createElement("input");
+    const feeLabelField = document.createElement("label");
+    const feeLabelInput = document.createElement("input");
     const pnlCell = document.createElement("div");
     const totalCell = document.createElement("div");
 
@@ -2013,11 +2201,34 @@ function createUserProfilePanel(user) {
     capitalInput.step = "0.01";
     capitalInput.value = Number.isFinite(startCapital) ? startCapital.toFixed(2) : "0.00";
     capitalInput.dataset.commodityCapital = "true";
+    [
+      [longMarginInput, "commodityMarginLong", "0.001", formatPercentInput(tradeTerms.marginRateLong)],
+      [shortMarginInput, "commodityMarginShort", "0.001", formatPercentInput(tradeTerms.marginRateShort)],
+      [feeSideInput, "commodityFeeSide", "0.01", formatNumberInput(tradeTerms.feePerContractSide, 2)],
+      [multiplierInput, "commodityMultiplier", "0.0001", formatNumberInput(tradeTerms.contractMultiplier, 4)]
+    ].forEach(([input, dataKey, step, value]) => {
+      input.type = "number";
+      input.min = "0";
+      input.step = step;
+      input.value = value;
+      input.dataset[dataKey] = "true";
+    });
+    feeLabelInput.type = "text";
+    feeLabelInput.value = tradeTerms.feeLabel;
+    feeLabelInput.dataset.commodityFeeLabel = "true";
 
     tradedLabel.className = "profile-commodity-name";
     tradedLabel.append(checkbox, document.createTextNode(name));
     capitalLabel.className = "profile-commodity-capital-field";
     capitalLabel.append(document.createTextNode("Start capital"), capitalInput);
+    [longMarginLabel, shortMarginLabel, feeSideLabel, multiplierLabel, feeLabelField].forEach((label) => {
+      label.className = "profile-commodity-terms-field";
+    });
+    longMarginLabel.append(document.createTextNode("Long margin %"), longMarginInput);
+    shortMarginLabel.append(document.createTextNode("Short margin %"), shortMarginInput);
+    feeSideLabel.append(document.createTextNode("Fee / side"), feeSideInput);
+    multiplierLabel.append(document.createTextNode("Multiplier"), multiplierInput);
+    feeLabelField.append(document.createTextNode("Fee label"), feeLabelInput);
     pnlCell.className = pnl >= 0 ? "profile-capital-gain" : "profile-capital-loss";
     pnlCell.innerHTML = `<span>Profit / loss</span><strong>${formatSignedMoney(pnl)}</strong>`;
     totalCell.innerHTML = `<span>Total capital</span><strong>${formatMoney(startCapital + pnl)}</strong>`;
@@ -2028,7 +2239,17 @@ function createUserProfilePanel(user) {
       }
     });
 
-    row.append(tradedLabel, capitalLabel, pnlCell, totalCell);
+    row.append(
+      tradedLabel,
+      capitalLabel,
+      longMarginLabel,
+      shortMarginLabel,
+      feeSideLabel,
+      multiplierLabel,
+      feeLabelField,
+      pnlCell,
+      totalCell
+    );
     commodityEditor.append(row);
   });
   accountSummary.innerHTML = `
@@ -2038,7 +2259,7 @@ function createUserProfilePanel(user) {
   `;
   commoditySave.type = "button";
   commoditySave.className = "filter-button profile-commodity-save";
-  commoditySave.textContent = "Save commodity allocations";
+  commoditySave.textContent = "Save commodity settings";
   commoditySave.addEventListener("click", () => saveUserCommoditySelection(user, commodityEditor));
   commoditiesCard.append(commodityEditor, accountSummary, commoditySave);
 
@@ -3458,6 +3679,15 @@ function getMartingaleCapital(minTradeValue) {
   return minTradeValue * (2 ** (martingaleStep - 1));
 }
 
+function getEffectiveCommodityConfig(commodity, user = getCurrentUserProfile()) {
+  const baseConfig = marketConfig[commodity] || {};
+  const profileTerms = normalizeCommodityTradeTerms(user?.commodityTradeTerms?.[commodity], commodity);
+  return {
+    ...baseConfig,
+    ...profileTerms
+  };
+}
+
 function getContractMultiplier(config) {
   return Number(config?.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
 }
@@ -3657,7 +3887,7 @@ function getPaperEntryThresholdSource() {
 }
 
 function buildTradePlan(commodity, signal) {
-  const config = marketConfig[commodity];
+  const config = getEffectiveCommodityConfig(commodity);
   const userStrategy = getCurrentUserStrategy();
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
   const priceReady = isUsableMarketPrice(commodity);
@@ -5957,8 +6187,9 @@ async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   const marginRequirement = side === "short" ? tradePlan.shortMargin : tradePlan.longMargin;
   const capital = marginRequirement * contracts;
   const notionalValue = entryPrice * tradePlan.contractMultiplier * contracts;
-  const openFee = getEstimatedFees(marketConfig[commodity], contracts, 1);
-  const estimatedExitFee = getEstimatedFees(marketConfig[commodity], contracts, 1);
+  const config = getEffectiveCommodityConfig(commodity);
+  const openFee = getEstimatedFees(config, contracts, 1);
+  const estimatedExitFee = getEstimatedFees(config, contracts, 1);
   const trade = {
     id: nextTransactionId,
     commodity,
@@ -6054,7 +6285,8 @@ async function closePaperTrade(commodity, exitPrice, reason) {
   }
 
   const grossPnl = getTradeGrossPnl(trade, exitPrice);
-  const closeFee = Number(trade.estimatedExitFee) || getEstimatedFees(marketConfig[commodity], trade.contracts, 1);
+  const config = getEffectiveCommodityConfig(commodity);
+  const closeFee = Number(trade.estimatedExitFee) || getEstimatedFees(config, trade.contracts, 1);
   const totalFees = (Number(trade.openFee) || 0) + closeFee;
   const pnl = grossPnl - totalFees;
   paperEquity += pnl;
@@ -7508,6 +7740,7 @@ async function runLiveLLMAdvisor(options = {}) {
     }
     saveLastVerifiedLLMRun();
     if (typeof calculateSignal === "function") calculateSignal();
+    renderTokenCosts();
     const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
     llmStatusEl.textContent = `done in ${elapsed}s · ${new Date().toLocaleTimeString()}`;
   } catch (err) {
@@ -7673,6 +7906,14 @@ secondOpinionRunAllEl.addEventListener("click", () => {
   renderSecondOpinionResults(modelIds);
 });
 tokenCostsRefreshEl?.addEventListener("click", renderTokenCosts);
+document.querySelectorAll(".token-window-button").forEach((button) => {
+  button.addEventListener("click", () => {
+    document.querySelectorAll(".token-window-button").forEach((otherButton) => {
+      otherButton.dataset.active = otherButton === button ? "true" : "false";
+    });
+    renderTokenCosts();
+  });
+});
 tokenRefreshHoursEl?.addEventListener("change", () => {
   setLLMRefreshHours(tokenRefreshHoursEl.value);
   llmAutoCommodityKey = null;

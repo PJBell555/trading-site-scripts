@@ -1057,12 +1057,19 @@ body {
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns: minmax(150px, 1fr) minmax(180px, 1fr) minmax(150px, 0.7fr) minmax(150px, 0.7fr);
+  grid-template-columns:
+    minmax(120px, 0.8fr)
+    minmax(130px, 0.8fr)
+    repeat(4, minmax(108px, 0.65fr))
+    minmax(160px, 1fr)
+    minmax(120px, 0.65fr)
+    minmax(120px, 0.65fr);
   padding: 12px 14px;
 }
 
 .profile-commodity-name,
-.profile-commodity-capital-field {
+.profile-commodity-capital-field,
+.profile-commodity-terms-field {
   color: #dbeafe;
   display: grid;
   gap: 6px;
@@ -1079,7 +1086,8 @@ body {
   accent-color: var(--accent);
 }
 
-.profile-commodity-capital-field input {
+.profile-commodity-capital-field input,
+.profile-commodity-terms-field input {
   width: 100%;
   border-color: rgba(96, 165, 250, 0.24);
   background: #081225;

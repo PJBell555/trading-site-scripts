@@ -542,6 +542,176 @@ function consolidatePrimaryAndCritic(primary, criticReview) {
   };
 }
 
+function hasTokenUsageStore(env) {
+  return Boolean(env?.DB && typeof env.DB.prepare === "function");
+}
+
+function toFiniteNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
+
+function normalizeOpenRouterUsage(usage = {}) {
+  const promptTokens = toFiniteNumber(
+    usage.prompt_tokens ?? usage.promptTokens ?? usage.input_tokens ?? usage.inputTokens,
+    0
+  );
+  const completionTokens = toFiniteNumber(
+    usage.completion_tokens ?? usage.completionTokens ?? usage.output_tokens ?? usage.outputTokens,
+    0
+  );
+  const totalTokens = toFiniteNumber(
+    usage.total_tokens ?? usage.totalTokens,
+    promptTokens + completionTokens
+  );
+  const costUsd = toFiniteNumber(
+    usage.cost ?? usage.cost_usd ?? usage.costUsd ?? usage.total_cost ?? usage.totalCost,
+    0
+  );
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+    costUsd
+  };
+}
+
+async function recordTokenUsage(env, entry = {}) {
+  if (!hasTokenUsageStore(env)) {
+    return { stored: false, reason: "d1-not-configured" };
+  }
+
+  const usage = normalizeOpenRouterUsage(entry.usage);
+  const model = String(entry.model || "unknown");
+  const provider = String(entry.provider || "OpenRouter");
+  const job = String(entry.job || "unknown");
+  const metadata = JSON.stringify(entry.metadata || {});
+  const freeTier = usage.costUsd <= 0 || /(^|[:/])free\b/i.test(model) ? 1 : 0;
+
+  await env.DB.prepare(`
+    INSERT INTO token_usage (
+      event_time,
+      provider,
+      model,
+      job,
+      prompt_tokens,
+      completion_tokens,
+      total_tokens,
+      cost_usd,
+      free_tier,
+      metadata_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    new Date().toISOString(),
+    provider,
+    model,
+    job,
+    Math.round(usage.promptTokens),
+    Math.round(usage.completionTokens),
+    Math.round(usage.totalTokens),
+    usage.costUsd,
+    freeTier,
+    metadata
+  ).run();
+
+  return { stored: true };
+}
+
+async function safeRecordTokenUsage(env, entry = {}) {
+  try {
+    return await recordTokenUsage(env, entry);
+  } catch (error) {
+    return { stored: false, error: error.message };
+  }
+}
+
+function emptyTokenUsagePayload(source = "d1-not-configured", windowHours = 24) {
+  return {
+    generatedAt: new Date().toISOString(),
+    source,
+    windowHours,
+    totals: {
+      apiCalls: 0,
+      totalTokens: 0,
+      billableCostUsd: 0,
+      freeTierCalls: 0
+    },
+    models: [],
+    jobs: []
+  };
+}
+
+function getTokenWindowHours(url) {
+  const hours = Number(url.searchParams.get("hours") || 24);
+  if (!Number.isFinite(hours)) return 24;
+  return Math.min(744, Math.max(1, Math.round(hours)));
+}
+
+function getResults(result) {
+  return Array.isArray(result?.results) ? result.results : [];
+}
+
+async function getTokenUsageSummary(env, windowHours = 24) {
+  if (!hasTokenUsageStore(env)) {
+    return emptyTokenUsagePayload("d1-not-configured", windowHours);
+  }
+
+  const since = new Date(Date.now() - windowHours * 60 * 60 * 1000).toISOString();
+  const totalsResult = await env.DB.prepare(`
+    SELECT
+      COUNT(*) AS apiCalls,
+      COALESCE(SUM(total_tokens), 0) AS totalTokens,
+      COALESCE(SUM(cost_usd), 0) AS billableCostUsd,
+      COALESCE(SUM(CASE WHEN free_tier = 1 THEN 1 ELSE 0 END), 0) AS freeTierCalls
+    FROM token_usage
+    WHERE event_time >= ?
+  `).bind(since).first();
+
+  const modelsResult = await env.DB.prepare(`
+    SELECT
+      provider,
+      model,
+      COUNT(*) AS calls,
+      COALESCE(SUM(total_tokens), 0) AS totalTokens,
+      COALESCE(SUM(cost_usd), 0) AS billableCostUsd,
+      COALESCE(SUM(CASE WHEN free_tier = 1 THEN 1 ELSE 0 END), 0) AS freeTierCalls,
+      MAX(event_time) AS lastCalledAt
+    FROM token_usage
+    WHERE event_time >= ?
+    GROUP BY provider, model
+    ORDER BY calls DESC, totalTokens DESC
+  `).bind(since).all();
+
+  const jobsResult = await env.DB.prepare(`
+    SELECT
+      job,
+      COUNT(*) AS calls,
+      COALESCE(SUM(total_tokens), 0) AS totalTokens,
+      COALESCE(SUM(cost_usd), 0) AS billableCostUsd,
+      COALESCE(SUM(CASE WHEN free_tier = 1 THEN 1 ELSE 0 END), 0) AS freeTierCalls,
+      MAX(event_time) AS lastCalledAt
+    FROM token_usage
+    WHERE event_time >= ?
+    GROUP BY job
+    ORDER BY calls DESC, totalTokens DESC
+  `).bind(since).all();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-token-usage",
+    windowHours,
+    totals: {
+      apiCalls: Number(totalsResult?.apiCalls || 0),
+      totalTokens: Number(totalsResult?.totalTokens || 0),
+      billableCostUsd: Number(totalsResult?.billableCostUsd || 0),
+      freeTierCalls: Number(totalsResult?.freeTierCalls || 0)
+    },
+    models: getResults(modelsResult),
+    jobs: getResults(jobsResult)
+  };
+}
+
 async function createOpenRouterOpinion(env, body = {}) {
   const apiKey = env.OPENROUTER_API_KEY ? await env.OPENROUTER_API_KEY.get() : null;
   if (!apiKey) {
@@ -813,6 +983,31 @@ export default {
         }, 200, origin);
       }
 
+      if (url.pathname === "/token-usage") {
+        if (request.method !== "GET") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const usageSummary = await getTokenUsageSummary(env, getTokenWindowHours(url));
+        return jsonResponse(usageSummary, 200, origin);
+      }
+
+      if (url.pathname === "/token-usage/log") {
+        if (request.method !== "POST") {
+          return jsonResponse({ error: "Method not allowed" }, 405, origin);
+        }
+
+        const body = await request.json().catch(() => ({}));
+        const result = await safeRecordTokenUsage(env, {
+          provider: body.provider || "OpenRouter",
+          model: body.model,
+          job: body.job,
+          usage: body.usage,
+          metadata: body.metadata
+        });
+        return jsonResponse(result, result.stored ? 200 : 202, origin);
+      }
+
       if (url.pathname === "/models/openrouter/opinion") {
         if (request.method !== "POST") {
           return jsonResponse({ error: "Method not allowed" }, 405, origin);
@@ -820,7 +1015,18 @@ export default {
 
         const body = await request.json().catch(() => ({}));
         const opinion = await createOpenRouterOpinion(env, body);
-        return jsonResponse(opinion, 200, origin);
+        const tokenLog = await safeRecordTokenUsage(env, {
+          provider: "OpenRouter",
+          model: opinion.model,
+          job: "second-opinion",
+          usage: opinion.usage,
+          metadata: {
+            rawModelId: opinion.rawModelId,
+            commodity: body.commodity || body.commodityName,
+            horizon: body.horizon
+          }
+        });
+        return jsonResponse({ ...opinion, tokenLog }, 200, origin);
       }
 
       if (url.pathname === "/models/openrouter/advisory") {
@@ -831,16 +1037,39 @@ export default {
         const body = await request.json().catch(() => ({}));
         const startedAt = Date.now();
         const primary = await createOpenRouterAdvisory(env, body);
+        const primaryTokenLog = await safeRecordTokenUsage(env, {
+          provider: "OpenRouter",
+          model: primary.model,
+          job: "primary-advisory",
+          usage: primary.usage,
+          metadata: {
+            commodity: body.commodity || body.commodityName,
+            horizon: body.horizon,
+            elapsedMs: primary.elapsedMs
+          }
+        });
 
         const criticModel = getOpenRouterCriticModel(body.critic);
         if (!criticModel) {
-          return jsonResponse(primary, 200, origin);
+          return jsonResponse({ ...primary, tokenLog: primaryTokenLog }, 200, origin);
         }
 
         let critic = null;
         let criticError = null;
+        let criticTokenLog = null;
         try {
           critic = await createOpenRouterCriticReview(env, primary.advisory, body, criticModel);
+          criticTokenLog = await safeRecordTokenUsage(env, {
+            provider: "OpenRouter",
+            model: critic.model,
+            job: "critic-review",
+            usage: critic.usage,
+            metadata: {
+              commodity: body.commodity || body.commodityName,
+              horizon: body.horizon,
+              elapsedMs: critic.elapsedMs
+            }
+          });
         } catch (err) {
           criticError = err.message;
         }
@@ -852,7 +1081,11 @@ export default {
           primary,
           critic: critic || { model: criticModel, error: criticError },
           consolidated,
-          elapsedMs: Date.now() - startedAt
+          elapsedMs: Date.now() - startedAt,
+          tokenLog: {
+            primary: primaryTokenLog,
+            critic: criticTokenLog
+          }
         }, 200, origin);
       }
 

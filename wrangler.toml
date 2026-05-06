@@ -19,6 +19,16 @@ OPENROUTER_APP_NAME = "ComHedge 2"
 # file, so the pause survives auto-redeploys until reverted here.
 # PAUSE_GIT_WRITES = "true"
 
+# Token usage telemetry is optional until the D1 database is created.
+# To enable real token usage totals:
+#   npx wrangler d1 create comhedge-runtime
+#   npx wrangler d1 execute comhedge-runtime --remote --file schema/comhedge-d1.sql
+# Then uncomment this binding and replace database_id with the value from create.
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "comhedge-runtime"
+# database_id = "replace-with-d1-database-id"
+
 [[secrets_store_secrets]]
 binding = "OPENROUTER_API_KEY"
 store_id = "64990a5fc9b64196b63cfe82555e6fd4"
