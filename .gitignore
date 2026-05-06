@@ -3,3 +3,7 @@
 overnight-advisories.jsonl
 overnight-loop.log
 .overnight-cost-cents
+
+# Per-user Claude Code / agent tooling artifacts
+.claude/
+.playwright-mcp/

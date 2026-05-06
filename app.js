@@ -4139,6 +4139,11 @@ function getUserScopedTransactions() {
   return userScoped.filter((entry) => !entry.commodity || userCanTradeCommodity(entry.commodity));
 }
 
+function getAllTransactionsForLifecycleChecks() {
+  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  return getDedupedPaperCloseEntries(source);
+}
+
 function getBundledTransactionEntries() {
   const bundledLedger = window.COMHEDGE_BUNDLED_TRANSACTIONS;
   const bundledEntries = Array.isArray(bundledLedger?.transactions) ? bundledLedger.transactions : [];
@@ -4422,7 +4427,11 @@ function tradeFromOpeningEntry(entry) {
 
 function rebuildPaperStateFromHistory() {
   const activeTrades = new Map();
-  const chronological = getUserScopedTransactions().sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+  // Walk ALL users' transactions chronologically so that a close recorded by
+  // any browser correctly removes the trade from the active set. Without this,
+  // each browser is blind to other browsers' closes and re-fires duplicate
+  // close orders for the same trade.
+  const chronological = getAllTransactionsForLifecycleChecks().sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
   let latestClosed = null;
 
   chronological.forEach((entry) => {
@@ -4430,6 +4439,9 @@ function rebuildPaperStateFromHistory() {
     const lifecycleKey = getTradeLifecycleKey(entry);
     const key = identityKey || lifecycleKey;
     if (isOpeningTransaction(entry)) {
+      // Only the current user's opens belong in this browser's active set.
+      if (!isTransactionForCurrentUser(entry)) return;
+      if (entry.commodity && !userCanTradeCommodity(entry.commodity)) return;
       activeTrades.set(key, tradeFromOpeningEntry(entry));
       return;
     }
@@ -4437,7 +4449,8 @@ function rebuildPaperStateFromHistory() {
     if (isClosingTransaction(entry)) {
       if (identityKey) activeTrades.delete(identityKey);
       activeTrades.delete(lifecycleKey);
-      latestClosed = entry;
+      // Only count the current user's closes for martingale step computation.
+      if (isTransactionForCurrentUser(entry)) latestClosed = entry;
     }
   });
 
@@ -4458,7 +4471,10 @@ function hasClosingTransactionForTrade(trade) {
   const identityKey = getTradeIdentityKeyForTrade(trade);
   const openedAt = getTransactionDate(trade.openedAt || trade.time);
 
-  return getUserScopedTransactions().some((entry) => {
+  // Look across ALL users' transactions, not just the current user's. A close
+  // recorded by any browser is authoritative — otherwise concurrent browsers
+  // race to issue duplicate close orders for the same trade (zombie loop).
+  return getAllTransactionsForLifecycleChecks().some((entry) => {
     if (!isClosingTransaction(entry)) return false;
     const sameTradeId = tradeId && String(entry.tradeId || entry.id || "") === tradeId;
     const sameIdentity = identityKey && getTradeIdentityKey(entry) === identityKey;
@@ -5660,7 +5676,9 @@ async function recordTransaction(entry) {
   });
 
   if (isClosingTransaction(transaction)) {
-    const existingClose = getUserScopedTransactions().find((candidate) => {
+    // Cross-user check: if any browser (any user) has already recorded a close
+    // for this trade, do not write a duplicate.
+    const existingClose = getAllTransactionsForLifecycleChecks().find((candidate) => {
       if (!isClosingTransaction(candidate)) return false;
       const sameIdentity = getTradeIdentityKey(candidate) && getTradeIdentityKey(candidate) === getTradeIdentityKey(transaction);
       const sameTradeId = transaction.tradeId && String(candidate.tradeId || candidate.id || "") === String(transaction.tradeId);
@@ -5934,6 +5952,25 @@ async function closeOnlyPaperSweep() {
   for (const commodityMeta of commodities.filter(({ id }) => userCanTradeCommodity(id))) {
     const commodity = commodityMeta.id;
     if (!openPaperTrades.has(commodity)) continue;
+
+    // Ownership guard: never close a trade that doesn't belong to the current
+    // user. This prevents one user's browser from firing duplicate close
+    // orders for another user's trade if a stale openPaperTrades entry leaks
+    // in via localStorage or a partial sync.
+    const candidate = openPaperTrades.get(commodity);
+    if (candidate && !isTransactionForCurrentUser(candidate)) {
+      openPaperTrades.delete(commodity);
+      savePaperState();
+      continue;
+    }
+
+    // If a close has already been recorded for this trade by any browser,
+    // drop it locally instead of re-firing a redundant close order.
+    if (candidate && hasClosingTransactionForTrade(candidate)) {
+      openPaperTrades.delete(commodity);
+      savePaperState();
+      continue;
+    }
 
     const lastPriceCheck = lastPaperClosePriceChecks.get(commodity) || 0;
     const shouldRefreshForOpenTrade = !isUsableMarketPrice(commodity)

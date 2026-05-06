@@ -675,6 +675,14 @@ async function getAdvisoryFile(env) {
 }
 
 async function saveJsonFile(env, path, payload, message, sha = null) {
+  if (env.PAUSE_GIT_WRITES === "true" || env.PAUSE_GIT_WRITES === true) {
+    return {
+      paused: true,
+      content: { sha: sha || "paused", path },
+      commit: { sha: "paused", message }
+    };
+  }
+
   const branch = env.GITHUB_BRANCH || DEFAULT_BRANCH;
 
   return githubRequest(env, `/contents/${path}`, {
