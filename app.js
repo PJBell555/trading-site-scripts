@@ -5700,6 +5700,11 @@ function getTransactionTargetOrExitPrice(entry) {
   return Number.isFinite(targetPrice) ? formatPrice(targetPrice) : UNAVAILABLE_TEXT;
 }
 
+function getTransactionEntryPriceDisplay(entry) {
+  const entryPrice = Number(entry.entryPrice ?? entry.openPrice ?? entry.price);
+  return Number.isFinite(entryPrice) ? formatPrice(entryPrice) : UNAVAILABLE_TEXT;
+}
+
 function isOpeningTransaction(entry) {
   return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
 }
@@ -6102,7 +6107,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         entry.side ? formatSide(entry.side) : "-",
         entry.step ? `#${entry.step}` : "-",
         entry.contract,
-        formatPrice(entry.price),
+        getTransactionEntryPriceDisplay(entry),
         formatMoney(entry.capital),
         getTransactionTargetOrExitPrice(entry),
         formatSignedMoney(displayPnl)
@@ -6169,7 +6174,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         entry?.side ? formatSide(entry.side) : "-",
         entry?.step ? `#${entry.step}` : "-",
         entry?.contract || "-",
-        Number.isFinite(Number(entry?.price)) ? formatPrice(Number(entry.price)) : UNAVAILABLE_TEXT,
+        getTransactionEntryPriceDisplay(entry || {}),
         Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
         "-",
         Number.isFinite(Number(entry?.pnl)) ? formatSignedMoney(Number(entry.pnl)) : "-"
