@@ -12,10 +12,12 @@ ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
 OPENROUTER_APP_NAME = "ComHedge 2"
-# Temporary kill switch — set to "true" while a GH Pages deploy needs an
-# undisturbed build window, then revert. Auto-deploy from CF Workers Builds
-# picks this up so the pause survives auto-redeploys.
-PAUSE_GIT_WRITES = "true"
+# Set to "true" temporarily (and re-deploy) to halt all worker writes to
+# GitHub while a GH Pages deploy needs an undisturbed build window. The
+# saveJsonFile gate in workers/transactions.js short-circuits when this is
+# truthy. Auto-deploy from CF Workers Builds picks the value up from this
+# file, so the pause survives auto-redeploys until reverted here.
+# PAUSE_GIT_WRITES = "true"
 
 [[secrets_store_secrets]]
 binding = "OPENROUTER_API_KEY"
