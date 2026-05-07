@@ -177,6 +177,49 @@ body {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.leaderboard-rank-toolbar {
+  align-items: center;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 12px 14px;
+}
+
+.leaderboard-rank-toolbar strong {
+  color: #f8fafc;
+  display: block;
+  font-size: 1rem;
+  margin-top: 3px;
+}
+
+.leaderboard-rank-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.leaderboard-rank-button {
+  background: rgba(15, 23, 42, 0.84);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 7px;
+  color: #cfe4ff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 900;
+  padding: 8px 10px;
+}
+
+.leaderboard-rank-button[data-active="true"] {
+  background: linear-gradient(135deg, #2563eb, #1d4ed8);
+  border-color: rgba(147, 197, 253, 0.62);
+  color: #ffffff;
+}
+
 .leaderboard-stat,
 .leaderboard-panel {
   background: var(--panel-soft);
@@ -217,7 +260,7 @@ body {
 }
 
 .leaderboard-table {
-  min-width: 980px;
+  min-width: 1120px;
 }
 
 .rank-badge {
@@ -3754,6 +3797,15 @@ textarea::placeholder {
   .feature-form,
   .section-heading {
     grid-template-columns: 1fr;
+  }
+
+  .leaderboard-rank-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .leaderboard-rank-controls {
+    justify-content: flex-start;
   }
 
   .feature-description-field {

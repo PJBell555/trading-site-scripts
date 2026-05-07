@@ -45,6 +45,8 @@ const leaderboardWinRateEl = document.querySelector("#leaderboard-win-rate");
 const leaderboardUpdatedEl = document.querySelector("#leaderboard-updated");
 const leaderboardChartEl = document.querySelector("#leaderboard-chart");
 const leaderboardBodyEl = document.querySelector("#leaderboard-body");
+const leaderboardRankControlsEl = document.querySelector("#leaderboard-rank-controls");
+const leaderboardRankLabelEl = document.querySelector("#leaderboard-rank-label");
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -332,6 +334,16 @@ const ADVISORY_PENDING_LOCAL_KEY = "comhedge-pending-advisory-snapshots-v1";
 const MICRO_PREDICTION_HISTORY_LOCAL_KEY = "comhedge-micro-predictions-v1";
 const MICRO_PREDICTION_PENDING_LOCAL_KEY = "comhedge-pending-micro-predictions-v1";
 const MICRO_PREDICTION_CAPTURE_KEY = "comhedge-last-micro-prediction-key-v1";
+const LEADERBOARD_RANK_KEY = "comhedge-leaderboard-rank-v2";
+const LEADERBOARD_DEFAULT_RANK = "closed-pnl";
+const LEADERBOARD_RANK_OPTIONS = {
+  "closed-pnl": { label: "Closed P/L", emptyLast: true },
+  "total-pnl": { label: "Total P/L", emptyLast: true },
+  "open-pnl": { label: "Open P/L", emptyLast: true },
+  trades: { label: "Trades", emptyLast: true },
+  "win-rate": { label: "Win Rate", emptyLast: true },
+  expectancy: { label: "Expectancy", emptyLast: true }
+};
 const ADVISORY_CAPTURE_MS = 120000;
 const MICRO_PREDICTION_CAPTURE_MS = 60000;
 const MICRO_PREDICTION_HORIZONS = [60, 180, 300, 600];
@@ -401,6 +413,7 @@ let userListFilter = "all";
 let expandedUserEmail = "";
 let editingUserEmail = "";
 let activeSection = "home";
+let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
 let secondaryModelId = "gpt-5-mini";
@@ -1899,6 +1912,13 @@ function getUserWinRate(user) {
   return (wins / closedTrades.length) * 100;
 }
 
+function getUserTradeExpectancy(user) {
+  const closedTrades = getUserClosedPaperTrades(user);
+  if (!closedTrades.length) return NaN;
+  const total = closedTrades.reduce((sum, entry) => sum + getDisplayPnl(entry), 0);
+  return total / closedTrades.length;
+}
+
 function getLeaderBoardRows() {
   return userRoster.map((user) => {
     const closedPnl = getUserCurrentPnl(user);
@@ -1908,6 +1928,7 @@ function getLeaderBoardRows() {
     const tradeCount = entries.filter(isOpeningTransaction).length;
     const closedCount = entries.filter(isClosingTransaction).length;
     const winRate = getUserWinRate(user);
+    const expectancy = getUserTradeExpectancy(user);
     const lastTradeTime = getUserLastTradeTime(user);
     const groupNote = getUserAccountGroupNote(user);
 
@@ -1921,6 +1942,7 @@ function getLeaderBoardRows() {
       tradeCount,
       closedCount,
       winRate,
+      expectancy,
       lastTradeTime,
       groupNote
     };
@@ -1933,11 +1955,53 @@ function getLeaderBoardRows() {
   });
 }
 
-function getRankedLeaderBoardRows() {
+function getLeaderBoardRankValue(row, mode = leaderboardRankMode) {
+  if (mode === "closed-pnl") return row.closedPnl;
+  if (mode === "open-pnl") return row.openPnl;
+  if (mode === "trades") return row.tradeCount;
+  if (mode === "win-rate") return Number.isFinite(row.winRate) ? row.winRate : Number.NEGATIVE_INFINITY;
+  if (mode === "expectancy") return Number.isFinite(row.expectancy) ? row.expectancy : Number.NEGATIVE_INFINITY;
+  return row.totalPnl;
+}
+
+function getRankedLeaderBoardRows(mode = leaderboardRankMode) {
+  const safeMode = LEADERBOARD_RANK_OPTIONS[mode] ? mode : LEADERBOARD_DEFAULT_RANK;
   return getLeaderBoardRows().sort((left, right) => {
+    const leftHasTrades = left.tradeCount > 0;
+    const rightHasTrades = right.tradeCount > 0;
+    if (leftHasTrades !== rightHasTrades) return rightHasTrades ? 1 : -1;
+
+    const rankDelta = getLeaderBoardRankValue(right, safeMode) - getLeaderBoardRankValue(left, safeMode);
+    if (rankDelta) return rankDelta;
     const pnlDelta = right.totalPnl - left.totalPnl;
     if (pnlDelta) return pnlDelta;
     return String(left.name).localeCompare(String(right.name));
+  });
+}
+
+function loadLeaderBoardRankMode() {
+  try {
+    const stored = window.localStorage.getItem(LEADERBOARD_RANK_KEY);
+    leaderboardRankMode = LEADERBOARD_RANK_OPTIONS[stored] ? stored : LEADERBOARD_DEFAULT_RANK;
+  } catch (error) {
+    leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
+  }
+}
+
+function saveLeaderBoardRankMode() {
+  try {
+    window.localStorage.setItem(LEADERBOARD_RANK_KEY, leaderboardRankMode);
+  } catch (error) {
+    // Ignore storage failures; the selected rank mode still applies for this session.
+  }
+}
+
+function renderLeaderBoardRankControls() {
+  const option = LEADERBOARD_RANK_OPTIONS[leaderboardRankMode] || LEADERBOARD_RANK_OPTIONS[LEADERBOARD_DEFAULT_RANK];
+  if (leaderboardRankLabelEl) leaderboardRankLabelEl.textContent = option.label;
+  if (!leaderboardRankControlsEl) return;
+  leaderboardRankControlsEl.querySelectorAll("[data-leaderboard-rank]").forEach((button) => {
+    button.dataset.active = button.dataset.leaderboardRank === leaderboardRankMode ? "true" : "false";
   });
 }
 
@@ -1968,7 +2032,9 @@ function drawLeaderBoardChart(rows) {
   const pad = 42 * scale;
   const chartWidth = width - (pad * 2);
   const chartHeight = height - (pad * 1.7);
-  const topRows = getRankedLeaderBoardRows().filter((row) => row.tradeCount > 0).slice(0, 5);
+  const topRows = (Array.isArray(rows) ? rows : getRankedLeaderBoardRows())
+    .filter((row) => row.tradeCount > 0)
+    .slice(0, 5);
   const series = topRows.map((row) => ({
     row,
     points: getCumulativePnlSeries(row.user)
@@ -2058,8 +2124,8 @@ function drawLeaderBoardChart(rows) {
 function renderLeaderBoard() {
   if (!leaderboardBodyEl) return;
   if (!userRoster.length) loadUserRoster();
-  const groupedRows = getLeaderBoardRows();
-  const rankedRows = getRankedLeaderBoardRows();
+  renderLeaderBoardRankControls();
+  const rankedRows = getRankedLeaderBoardRows(leaderboardRankMode);
   const rankByEmail = new Map(rankedRows.map((row, index) => [normalizeEmail(row.email), index + 1]));
   const activeRows = rankedRows.filter((row) => row.tradeCount > 0);
   const teamTotal = rankedRows.reduce((total, row) => total + row.totalPnl, 0);
@@ -2083,10 +2149,10 @@ function renderLeaderBoard() {
   if (leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
 
   leaderboardBodyEl.innerHTML = "";
-  if (!groupedRows.length) {
+  if (!rankedRows.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    cell.colSpan = 9;
     cell.textContent = "No users available.";
     row.append(cell);
     leaderboardBodyEl.append(row);
@@ -2094,7 +2160,7 @@ function renderLeaderBoard() {
     return;
   }
 
-  groupedRows.forEach((entry) => {
+  rankedRows.forEach((entry) => {
     const row = document.createElement("tr");
     const rankCell = document.createElement("td");
     const rank = document.createElement("span");
@@ -2121,10 +2187,14 @@ function renderLeaderBoard() {
     [
       rankCell,
       userCell,
-      { value: formatSignedMoney(entry.totalPnl), className: entry.totalPnl >= 0 ? "gain" : "loss" },
       { value: formatSignedMoney(entry.closedPnl), className: entry.closedPnl >= 0 ? "gain" : "loss" },
       { value: formatSignedMoney(entry.openPnl), className: entry.openPnl >= 0 ? "gain" : "loss" },
+      { value: formatSignedMoney(entry.totalPnl), className: entry.totalPnl >= 0 ? "gain" : "loss" },
       { value: Number.isFinite(entry.winRate) ? formatPercent(entry.winRate) : "-" },
+      {
+        value: Number.isFinite(entry.expectancy) ? formatSignedMoney(entry.expectancy) : "-",
+        className: Number.isFinite(entry.expectancy) ? (entry.expectancy >= 0 ? "gain" : "loss") : ""
+      },
       { value: `${entry.tradeCount} opened / ${entry.closedCount} closed` },
       { value: entry.lastTradeTime ? formatRelativeDate(entry.lastTradeTime) : "No trades" }
     ].forEach((item) => {
@@ -8872,6 +8942,14 @@ leaderboardRefreshEl?.addEventListener("click", () => {
   renderLeaderBoard();
   loadSharedTransactionHistory(true);
 });
+leaderboardRankControlsEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-leaderboard-rank]");
+  if (!button) return;
+  const nextMode = button.dataset.leaderboardRank;
+  leaderboardRankMode = LEADERBOARD_RANK_OPTIONS[nextMode] ? nextMode : LEADERBOARD_DEFAULT_RANK;
+  saveLeaderBoardRankMode();
+  renderLeaderBoard();
+});
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 paperEquityInputEl.readOnly = true;
 paperEquityInputEl.setAttribute("aria-readonly", "true");
@@ -9010,6 +9088,7 @@ function initializeApp() {
   loadLocalAdvisoryHistory();
   loadLocalMicroPredictionHistory();
   loadPaperDecisionLog();
+  loadLeaderBoardRankMode();
   applySavedStrategyEdits();
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
