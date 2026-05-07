@@ -2262,6 +2262,11 @@ select {
   grid-column: 1 / -1;
 }
 
+.score-row .wide-metric strong {
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
 .thesis ul {
   display: grid;
   gap: 10px;

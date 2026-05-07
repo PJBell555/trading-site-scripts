@@ -104,6 +104,9 @@ const minShortEl = document.querySelector("#min-short");
 const setupGradeEl = document.querySelector("#setup-grade");
 const rewardRiskEl = document.querySelector("#reward-risk");
 const keyDriverEl = document.querySelector("#key-driver");
+const microEdgeEl = document.querySelector("#micro-edge");
+const shortTriggerEl = document.querySelector("#short-trigger");
+const microReadEl = document.querySelector("#micro-read");
 const paperEquityEl = document.querySelector("#paper-equity");
 const paperRiskEl = document.querySelector("#paper-risk");
 const paperEquityInputEl = document.querySelector("#paper-equity-input");
@@ -247,6 +250,7 @@ const latestPriceSources = new Map();
 const confirmedLivePrices = new Map();
 const confirmedLivePriceTimes = new Map();
 const confirmedLivePriceSources = new Map();
+const priceTickHistory = new Map();
 const productMinimums = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const PAPER_CLOSE_PRICE_REFRESH_MS = 5000;
@@ -276,6 +280,10 @@ const COINBASE_WS_STALE_MS = 180000;
 const PAPER_EXIT_PRICE_STALE_MS = 180000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-runtime.peter-bell54.workers.dev";
 const UNAVAILABLE_TEXT = "Not available";
+const PRICE_TICK_WINDOW_MS = 10 * 60 * 1000;
+const MICRO_PREDICTOR_MIN_TICKS = 6;
+const MICRO_SHORT_TRIGGER_BPS = -3.5;
+const MICRO_LONG_TRIGGER_BPS = 3.5;
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
@@ -3383,6 +3391,136 @@ function renderManualConvictionInput(commodity) {
   inputs.manualConviction.value = override === null ? "" : String(override);
 }
 
+function rememberPriceTick(commodity, price, value = new Date()) {
+  if (!Number.isFinite(price) || price <= 0) return;
+  const time = getTransactionDate(value).getTime();
+  if (!Number.isFinite(time)) return;
+
+  const ticks = priceTickHistory.get(commodity) || [];
+  const lastTick = ticks[ticks.length - 1];
+  if (lastTick && lastTick.price === price && time - lastTick.time < 1000) return;
+
+  ticks.push({ time, price });
+  const cutoff = time - PRICE_TICK_WINDOW_MS;
+  while (ticks.length && ticks[0].time < cutoff) ticks.shift();
+  priceTickHistory.set(commodity, ticks);
+}
+
+function getPriceAtOrBefore(ticks, targetTime) {
+  for (let index = ticks.length - 1; index >= 0; index -= 1) {
+    if (ticks[index].time <= targetTime) return ticks[index].price;
+  }
+  return null;
+}
+
+function getReturnBps(currentPrice, priorPrice) {
+  if (!Number.isFinite(currentPrice) || !Number.isFinite(priorPrice) || priorPrice <= 0) return 0;
+  return ((currentPrice - priorPrice) / priorPrice) * 10000;
+}
+
+function getRecentTickReturns(ticks) {
+  const returns = [];
+  for (let index = 1; index < ticks.length; index += 1) {
+    const prior = ticks[index - 1].price;
+    const current = ticks[index].price;
+    if (Number.isFinite(prior) && Number.isFinite(current) && prior > 0) {
+      returns.push(((current - prior) / prior) * 10000);
+    }
+  }
+  return returns.slice(-40);
+}
+
+function getStandardDeviation(values) {
+  if (!values.length) return 0;
+  const mean = values.reduce((total, value) => total + value, 0) / values.length;
+  const variance = values.reduce((total, value) => total + ((value - mean) ** 2), 0) / values.length;
+  return Math.sqrt(variance);
+}
+
+function getMicroPredictor(commodity) {
+  const ticks = priceTickHistory.get(commodity) || [];
+  if (ticks.length < MICRO_PREDICTOR_MIN_TICKS) {
+    return {
+      ready: false,
+      score: 0,
+      probabilityUp: 0.5,
+      probabilityDown: 0.5,
+      edgeLabel: "Waiting for ticks",
+      shortTrigger: false,
+      longTrigger: false,
+      longInvalidated: false,
+      read: "Waiting for enough Coinbase tick history"
+    };
+  }
+
+  const latest = ticks[ticks.length - 1];
+  const currentPrice = latest.price;
+  const now = latest.time;
+  const price10 = getPriceAtOrBefore(ticks, now - 10_000);
+  const price30 = getPriceAtOrBefore(ticks, now - 30_000);
+  const price60 = getPriceAtOrBefore(ticks, now - 60_000);
+  const price180 = getPriceAtOrBefore(ticks, now - 180_000);
+  const recentPrices = ticks.slice(-60).map(({ price }) => price);
+  const vwap = recentPrices.reduce((total, price) => total + price, 0) / recentPrices.length;
+  const ret10 = getReturnBps(currentPrice, price10);
+  const ret30 = getReturnBps(currentPrice, price30);
+  const ret60 = getReturnBps(currentPrice, price60);
+  const ret180 = getReturnBps(currentPrice, price180);
+  const acceleration = ret10 - (ret60 / 6);
+  const vwapDistance = getReturnBps(currentPrice, vwap);
+  const volatility = getStandardDeviation(getRecentTickReturns(ticks));
+  const lowerTape = ret10 < -0.8 && ret30 < -1.5 && currentPrice < vwap;
+  const failedLong = ret30 < -2.5 && ret60 < 0 && vwapDistance < -1.2;
+  const shortTrigger = ret10 <= -1.2 && ret30 <= -2.2 && vwapDistance < -0.8;
+  const longTrigger = ret10 >= 1.2 && ret30 >= 2.2 && vwapDistance > 0.8;
+  const rawScore = (
+    (ret10 * 1.7) +
+    (ret30 * 1.15) +
+    (ret60 * 0.7) +
+    (ret180 * 0.35) +
+    (acceleration * 1.1) +
+    (vwapDistance * 0.9) -
+    (lowerTape ? Math.min(volatility * 0.8, 8) : 0)
+  );
+  const score = clamp(Math.round(rawScore), -45, 45);
+  const probabilityUp = 1 / (1 + Math.exp(-score / 10));
+  const probabilityDown = 1 - probabilityUp;
+  const edge = score >= 6 ? "up" : score <= -6 ? "down" : "flat";
+  const read = edge === "down"
+    ? `Tape falling: 10s ${ret10.toFixed(1)} bps, 60s ${ret60.toFixed(1)} bps, below VWAP ${vwapDistance.toFixed(1)} bps`
+    : edge === "up"
+      ? `Tape rising: 10s ${ret10.toFixed(1)} bps, 60s ${ret60.toFixed(1)} bps, above VWAP ${vwapDistance.toFixed(1)} bps`
+      : `Tape mixed: 10s ${ret10.toFixed(1)} bps, 60s ${ret60.toFixed(1)} bps, VWAP gap ${vwapDistance.toFixed(1)} bps`;
+
+  return {
+    ready: true,
+    score,
+    probabilityUp,
+    probabilityDown,
+    edgeLabel: `${edge === "down" ? "Down" : edge === "up" ? "Up" : "Flat"} ${Math.round(Math.max(probabilityUp, probabilityDown) * 100)}%`,
+    shortTrigger,
+    longTrigger,
+    longInvalidated: failedLong || (lowerTape && ret60 < 0),
+    ret10,
+    ret30,
+    ret60,
+    ret180,
+    vwapDistance,
+    volatility,
+    read
+  };
+}
+
+function applyMicroPredictorToScore(automaticBounded, micro) {
+  if (!micro.ready) return automaticBounded;
+
+  let adjusted = (automaticBounded * 0.62) + micro.score;
+  if (micro.longInvalidated && automaticBounded > 0) adjusted -= Math.min(24, automaticBounded * 0.75);
+  if (micro.shortTrigger) adjusted = Math.min(adjusted, MICRO_SHORT_TRIGGER_BPS + micro.score);
+  if (micro.longTrigger) adjusted = Math.max(adjusted, MICRO_LONG_TRIGGER_BPS + micro.score);
+  return clamp(Math.round(adjusted), -100, 100);
+}
+
 function scoreCommodity(commodity, baseSignals) {
   const tweak = commodityTweaks[commodity] || { trend: 0, inventory: 0, geopolitics: 0, dollar: 0, curve: 0 };
   const baseScore = (
@@ -3393,10 +3531,12 @@ function scoreCommodity(commodity, baseSignals) {
     baseSignals.curve + tweak.curve
   ) * baseSignals.horizon;
   const automaticBounded = Math.max(-100, Math.min(100, Math.round(baseScore)));
+  const micro = getMicroPredictor(commodity);
+  const microAdjustedBounded = applyMicroPredictorToScore(automaticBounded, micro);
   const manualConviction = getManualConvictionOverride(commodity);
   const bounded = manualConviction === null
-    ? automaticBounded
-    : Math.sign(automaticBounded || 1) * Math.max(0, manualConviction - 40);
+    ? microAdjustedBounded
+    : Math.sign(microAdjustedBounded || automaticBounded || 1) * Math.max(0, manualConviction - 40);
   const baseConviction = manualConviction === null
     ? Math.min(100, 40 + Math.abs(bounded))
     : manualConviction;
@@ -3442,6 +3582,8 @@ function scoreCommodity(commodity, baseSignals) {
     baseConviction,
     karpathyAdjustment,
     automaticBounded,
+    microAdjustedBounded,
+    micro,
     manualOverride: manualConviction,
     label,
     chipLabel,
@@ -3755,6 +3897,7 @@ function getUsableMarketPriceSource(commodity) {
 function rememberConfirmedLivePrice(commodity, price, source) {
   if (!Number.isFinite(price) || price <= 0) return;
   const now = new Date();
+  rememberPriceTick(commodity, price, now);
   latestPrices.set(commodity, price);
   latestPriceTimes.set(commodity, now);
   latestPriceSources.set(commodity, source);
@@ -4166,7 +4309,9 @@ async function refreshSnapshotPrice(commodity) {
     }
 
     latestPrices.set(commodity, snapshotPrice);
-    latestPriceTimes.set(commodity, new Date(snapshot.fetchedAt || data.generatedAt || Date.now()));
+    const snapshotTime = new Date(snapshot.fetchedAt || data.generatedAt || Date.now());
+    rememberPriceTick(commodity, snapshotPrice, snapshotTime);
+    latestPriceTimes.set(commodity, snapshotTime);
     latestPriceSources.set(commodity, snapshot.ok ? "GitHub snapshot" : "Unavailable snapshot");
 
     const minimumTradeValue = Number(snapshot.minimumTradeValue);
@@ -7390,6 +7535,13 @@ function calculateSignal() {
   if (geopolitics < -6) reasons.push("Calmer supply conditions remove some urgency from the long side.");
   if (curve > 6) reasons.push("Backwardation suggests nearby demand is healthy.");
   if (curve < -6) reasons.push("Contango implies looser prompt conditions and weaker urgency.");
+  if (primarySignal.micro.ready && primarySignal.micro.shortTrigger) {
+    reasons.unshift("The short-horizon tape is breaking lower, so the model is allowed to override a stale long bias.");
+  } else if (primarySignal.micro.ready && primarySignal.micro.longInvalidated) {
+    reasons.unshift("Recent ticks invalidated the long setup; the advisor should wait or lean short until price reclaims VWAP.");
+  } else if (primarySignal.micro.ready && primarySignal.micro.longTrigger) {
+    reasons.unshift("The short-horizon tape is rising, which confirms the long side for now.");
+  }
 
   if (reasons.length < 3) {
     reasons.push("The setup is mixed, so conviction depends more on execution quality than raw direction.");
@@ -7449,6 +7601,13 @@ function calculateSignal() {
   setupGradeEl.textContent = tradePlan.setupGrade;
   rewardRiskEl.textContent = tradePlan.rewardRisk;
   keyDriverEl.textContent = tradePlan.keyDriver;
+  if (microEdgeEl) microEdgeEl.textContent = primarySignal.micro.edgeLabel;
+  if (shortTriggerEl) {
+    shortTriggerEl.textContent = primarySignal.micro.ready
+      ? primarySignal.micro.shortTrigger ? "Armed" : primarySignal.micro.longInvalidated ? "Long invalidated" : "Not armed"
+      : "Waiting";
+  }
+  if (microReadEl) microReadEl.textContent = primarySignal.micro.read;
   riskCopyEl.textContent = riskNotes[commodity];
   reasonsEl.innerHTML = "";
   paperStepsEl.innerHTML = "";
