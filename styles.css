@@ -2258,6 +2258,10 @@ select {
   padding: 16px 18px;
 }
 
+.score-row .wide-metric {
+  grid-column: 1 / -1;
+}
+
 .thesis ul {
   display: grid;
   gap: 10px;

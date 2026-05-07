@@ -101,6 +101,9 @@ const buyWindowEl = document.querySelector("#buy-window");
 const priceSourceEl = document.querySelector("#price-source");
 const minLongEl = document.querySelector("#min-long");
 const minShortEl = document.querySelector("#min-short");
+const setupGradeEl = document.querySelector("#setup-grade");
+const rewardRiskEl = document.querySelector("#reward-risk");
+const keyDriverEl = document.querySelector("#key-driver");
 const paperEquityEl = document.querySelector("#paper-equity");
 const paperRiskEl = document.querySelector("#paper-risk");
 const paperEquityInputEl = document.querySelector("#paper-equity-input");
@@ -3891,7 +3894,28 @@ function getPaperEntryThresholdSource() {
   return advisoryScoreThresholdIsManual ? "manual" : "Karpathy";
 }
 
-function buildTradePlan(commodity, signal) {
+function gradeSignal(signal, rewardRisk) {
+  if (signal.tone === "wait") return "C";
+  if (signal.conviction >= 75 && rewardRisk >= 1.4) return "A";
+  if (signal.conviction >= 60 && rewardRisk >= 1.15) return "B";
+  return "C";
+}
+
+function getDriverSummary(baseSignals = {}, signal) {
+  const drivers = [
+    { label: "trend", value: Number(baseSignals.trend) || 0 },
+    { label: "inventory pressure", value: Number(baseSignals.inventory) || 0 },
+    { label: "US dollar pressure", value: Number(baseSignals.dollar) || 0 },
+    { label: "supply risk", value: Number(baseSignals.geopolitics) || 0 },
+    { label: "curve structure", value: Number(baseSignals.curve) || 0 }
+  ].sort((a, b) => Math.abs(b.value) - Math.abs(a.value));
+
+  const [primary, secondary] = drivers;
+  const direction = signal.tone === "short" ? "short" : signal.tone === "long" ? "long" : "wait";
+  return `${primary.label} and ${secondary.label} drive the ${direction} bias`;
+}
+
+function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const config = getEffectiveCommodityConfig(commodity);
   const userStrategy = getCurrentUserStrategy();
   const maxMartingaleStep = getCurrentMartingaleMaxStep();
@@ -3914,6 +3938,9 @@ function buildTradePlan(commodity, signal) {
   const stopLoss = priceReady ? (longBias ? livePrice * (1 - stopOffset) : shortBias ? livePrice * (1 + stopOffset) : livePrice * (1 - 0.0035)) : null;
   const entryPrice = shortBias ? shortEntry : longEntry;
   const targetPrice = sellPrice;
+  const reward = priceReady ? Math.abs(sellPrice - buyPrice) : null;
+  const risk = priceReady ? Math.abs(buyPrice - stopLoss) : null;
+  const rewardRisk = Number.isFinite(risk) && risk > 0 ? reward / risk : 0;
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
@@ -3976,6 +4003,9 @@ function buildTradePlan(commodity, signal) {
     learnedThreshold,
     entryThresholdSource,
     entryThreshold,
+    setupGrade: gradeSignal(signal, rewardRisk),
+    rewardRisk: `${rewardRisk.toFixed(2)}x`,
+    keyDriver: getDriverSummary(baseSignals, signal),
     riskPct,
     size: Number.isFinite(plannedContracts) ? `${plannedContracts} contract${plannedContracts === 1 ? "" : "s"}` : UNAVAILABLE_TEXT,
     status,
@@ -7333,7 +7363,7 @@ function calculateSignal() {
   renderManualConvictionInput(commodity);
   const baseSignals = readBaseSignals();
   const primarySignal = scoreCommodity(commodity, baseSignals);
-  const tradePlan = buildTradePlan(commodity, primarySignal);
+  const tradePlan = buildTradePlan(commodity, primarySignal, baseSignals);
   if (!tradePlan.priceReady) {
     connectCoinbaseWebSocket(commodity);
     refreshCoinbasePrice(commodity);
@@ -7416,6 +7446,9 @@ function calculateSignal() {
   priceSourceEl.textContent = tradePlan.priceSource;
   minLongEl.textContent = tradePlan.priceReady ? tradePlan.minLong : UNAVAILABLE_TEXT;
   minShortEl.textContent = tradePlan.priceReady ? tradePlan.minShort : UNAVAILABLE_TEXT;
+  setupGradeEl.textContent = tradePlan.setupGrade;
+  rewardRiskEl.textContent = tradePlan.rewardRisk;
+  keyDriverEl.textContent = tradePlan.keyDriver;
   riskCopyEl.textContent = riskNotes[commodity];
   reasonsEl.innerHTML = "";
   paperStepsEl.innerHTML = "";
