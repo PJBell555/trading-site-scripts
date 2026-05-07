@@ -1265,14 +1265,6 @@
             </div>
           </div>
           <div>
-            <span class="stat-label">Advisory</span>
-            <div id="advisory-horizon-filters" class="filter-row">
-              <button class="filter-button" type="button" data-advisory-horizon="intraday" data-active="true"><span class="check">✓</span>Intraday</button>
-              <button class="filter-button" type="button" data-advisory-horizon="swing"><span class="check"></span>Swing</button>
-              <button class="filter-button" type="button" data-advisory-horizon="position"><span class="check"></span>Position</button>
-            </div>
-          </div>
-          <div>
             <span class="stat-label">Window</span>
             <div id="advisory-period-filters" class="filter-row">
               <button class="filter-button" type="button" data-advisory-period="hour" data-active="true">✓ Hour</button>
@@ -1320,6 +1312,14 @@
             <p id="accuracy-evaluation-window">Evaluating next samples</p>
           </div>
         </div>
+        <div class="chart-shell">
+          <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
+        </div>
+        <div class="chart-legend" aria-label="Chart legend">
+          <span><i class="price-line"></i>Actual price</span>
+          <span><i class="advisory-line"></i>Advisory lane</span>
+          <span>Use the scorecard for the 60% question; use the chart to inspect timing.</span>
+        </div>
         <div class="accuracy-breakdown" aria-label="Recent advisory outcomes">
           <div class="accuracy-bars" id="accuracy-bars"></div>
           <div class="history-wrap accuracy-table-wrap">
@@ -1338,14 +1338,6 @@
               <tbody id="accuracy-outcomes"></tbody>
             </table>
           </div>
-        </div>
-        <div class="chart-shell">
-          <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
-        </div>
-        <div class="chart-legend" aria-label="Chart legend">
-          <span><i class="price-line"></i>Actual price</span>
-          <span><i class="advisory-line"></i>Advisory lane</span>
-          <span>Use the scorecard for the 60% question; use the chart to inspect timing.</span>
         </div>
       </section>
     </main>

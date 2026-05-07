@@ -149,7 +149,6 @@ const liveAgentSelectEl = document.querySelector("#live-agent-select");
 const liveChannelSelectEl = document.querySelector("#live-channel-select");
 const advisoryHistoryStatusEl = document.querySelector("#advisory-history-status");
 const advisoryCommodityFiltersEl = document.querySelector("#advisory-commodity-filters");
-const advisoryHorizonFiltersEl = document.querySelector("#advisory-horizon-filters");
 const advisoryPeriodFiltersEl = document.querySelector("#advisory-period-filters");
 const syncAdvisoryHistoryEl = document.querySelector("#sync-advisory-history");
 const advisorySampleCountEl = document.querySelector("#advisory-sample-count");
@@ -300,7 +299,7 @@ const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1
 const ADVISORY_HISTORY_LOCAL_KEY = "comhedge-advisory-history-v1";
 const ADVISORY_PENDING_LOCAL_KEY = "comhedge-pending-advisory-snapshots-v1";
 const ADVISORY_CAPTURE_MS = 120000;
-const ADVISORY_HORIZONS = ["intraday", "swing", "position"];
+const ADVISORY_HORIZON = "intraday";
 const ADVISORY_PERIODS = {
   hour: 60 * 60 * 1000,
   day: 24 * 60 * 60 * 1000,
@@ -308,11 +307,7 @@ const ADVISORY_PERIODS = {
   month: 31 * 24 * 60 * 60 * 1000,
   year: 366 * 24 * 60 * 60 * 1000
 };
-const ADVISORY_EVALUATION_WINDOWS = {
-  intraday: 10 * 60 * 1000,
-  swing: 60 * 60 * 1000,
-  position: 4 * 60 * 60 * 1000
-};
+const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
 const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
 const DEFAULT_USER_STRATEGY = {
   name: "Martingale with Karpathy loop",
@@ -361,7 +356,6 @@ let historyPeriodFilter = "all";
 let historyFiltersTouched = false;
 let expandedTransactionId = null;
 let advisoryCommodityFilter = "oil";
-let advisoryHorizonFilter = "intraday";
 let advisoryPeriodFilter = "hour";
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
@@ -3336,13 +3330,6 @@ function renderAdvisoryFilterButtons() {
     advisoryCommodityFiltersEl.append(button);
   });
 
-  advisoryHorizonFiltersEl.querySelectorAll("[data-advisory-horizon]").forEach((button) => {
-    const horizon = button.dataset.advisoryHorizon;
-    const active = horizon === advisoryHorizonFilter;
-    button.dataset.active = String(active);
-    button.textContent = `${active ? "✓ " : ""}${horizon[0].toUpperCase()}${horizon.slice(1)}`;
-  });
-
   advisoryPeriodFiltersEl.querySelectorAll("[data-advisory-period]").forEach((button) => {
     const period = button.dataset.advisoryPeriod;
     const active = period === advisoryPeriodFilter;
@@ -5371,7 +5358,11 @@ function getAdvisoryLocalConviction(entry) {
 }
 
 function getAdvisoryLLMConviction(entry) {
-  return parseOptionalNumber(entry?.llmConviction);
+  const rowValue = parseOptionalNumber(entry?.llmConviction);
+  if (rowValue !== null) return rowValue;
+
+  const latest = getLatestLLMConvictionForCommodity(entry?.commodity);
+  return latest ? latest.conviction : null;
 }
 
 function formatAdvisoryScoreValue(value) {
@@ -5443,9 +5434,9 @@ function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
   lastAdvisorySnapshotKey = batchKey;
   window.localStorage.setItem(ADVISORY_SNAPSHOT_KEY, batchKey);
 
-  const snapshots = ADVISORY_HORIZONS.map((horizon) => (
-    buildAdvisorySnapshot(commodity, horizon, baseSignals, tradePlan.livePrice, tradePlan.priceSource)
-  ));
+  const snapshots = [
+    buildAdvisorySnapshot(commodity, ADVISORY_HORIZON, baseSignals, tradePlan.livePrice, tradePlan.priceSource)
+  ];
   mergeAdvisoryHistory(snapshots);
   renderAdvisoryChart();
   saveSharedAdvisorySnapshots(snapshots);
@@ -5458,14 +5449,21 @@ function getAdvisoryPeriodStart() {
 
 function getFilteredAdvisorySamples() {
   const start = getAdvisoryPeriodStart();
-  const snapshotSamples = advisoryHistory.filter((entry) => (
-    entry.commodity === advisoryCommodityFilter
-    && entry.horizon === advisoryHorizonFilter
-    && new Date(entry.time || 0).getTime() >= start
-  ));
-  if (advisoryHorizonFilter !== "intraday") return snapshotSamples;
+  const byKey = new Map();
 
-  const byKey = new Map(snapshotSamples.map((entry) => [entry.snapshotKey, entry]));
+  advisoryHistory
+    .filter((entry) => {
+      const time = new Date(entry.time || 0).getTime();
+      return entry.commodity === advisoryCommodityFilter && Number.isFinite(time) && time >= start;
+    })
+    .forEach((entry) => {
+      const time = new Date(entry.time || 0).getTime();
+      const key = `${entry.commodity}|${Math.floor(time / ADVISORY_CAPTURE_MS)}`;
+      if (!byKey.has(key)) {
+        byKey.set(key, { ...entry, horizon: ADVISORY_HORIZON });
+      }
+    });
+
   transactionHistory
     .filter((entry) => (
       isOpeningTransaction(entry)
@@ -5484,7 +5482,7 @@ function getFilteredAdvisorySamples() {
         time: getTransactionDate(entry.time).toISOString(),
         commodity: entry.commodity,
         commodityName: entry.commodityName,
-        horizon: "intraday",
+        horizon: ADVISORY_HORIZON,
         price,
         priceSource: "Paper trade ledger",
         bounded: conviction,
@@ -5503,8 +5501,6 @@ function getFilteredAdvisorySamples() {
 }
 
 function getPaperTradeAdvisoryEvaluations() {
-  if (advisoryHorizonFilter !== "intraday") return [];
-
   const start = getAdvisoryPeriodStart();
 
   return transactionHistory
@@ -5586,7 +5582,7 @@ function saveAdvisoryScoreThreshold() {
 }
 
 function getAdvisoryEvaluationWindow() {
-  return ADVISORY_EVALUATION_WINDOWS[advisoryHorizonFilter] || ADVISORY_EVALUATION_WINDOWS.intraday;
+  return ADVISORY_EVALUATION_WINDOW_MS;
 }
 
 function getCorrectnessThreshold(price) {
@@ -5678,16 +5674,13 @@ function renderAccuracyOutcomes(evaluations) {
   accuracyOutcomesEl.innerHTML = "";
   const recentEvaluations = evaluations
     .filter((item) => item && item.entry && Number.isFinite(Number(item.startPrice)) && Number.isFinite(Number(item.endPrice)))
-    .slice(-12)
     .reverse();
 
   if (!recentEvaluations.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 7;
-    cell.textContent = advisoryHorizonFilter === "intraday"
-      ? "No evaluated outcomes in this window. Use Week or Month to include older paper trade outcomes."
-      : "No evaluated outcomes yet. More snapshots are needed after each advisory.";
+    cell.textContent = "No evaluated outcomes in this window. Use Week or Month to include older paper trade outcomes.";
     row.append(cell);
     accuracyOutcomesEl.append(row);
     return;
@@ -5869,7 +5862,7 @@ function renderAdvisoryChart() {
   context.textAlign = "left";
   context.fillStyle = "#f8fafc";
   context.font = `700 ${15 * scale}px Aptos, Segoe UI, sans-serif`;
-  const title = `${commodities.find(({ id }) => id === advisoryCommodityFilter)?.name || "Commodity"} ${advisoryHorizonFilter} advisory`;
+  const title = `${commodities.find(({ id }) => id === advisoryCommodityFilter)?.name || "Commodity"} advisory`;
   context.fillText(title, padding.left, 24 * scale);
 
   context.fillStyle = "#bfdbfe";
@@ -7863,14 +7856,6 @@ advisoryCommodityFiltersEl.addEventListener("click", (event) => {
   if (!button) return;
 
   advisoryCommodityFilter = button.dataset.advisoryCommodity;
-  renderAdvisoryFilterButtons();
-  renderAdvisoryChart();
-});
-advisoryHorizonFiltersEl.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-advisory-horizon]");
-  if (!button) return;
-
-  advisoryHorizonFilter = button.dataset.advisoryHorizon;
   renderAdvisoryFilterButtons();
   renderAdvisoryChart();
 });
