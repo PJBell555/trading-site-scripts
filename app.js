@@ -1836,6 +1836,9 @@ function getUserOpenPaperTrades(user) {
       if (isClosingTransaction(entry)) {
         if (identityKey) active.delete(identityKey);
         active.delete(lifecycleKey);
+        Array.from(active.entries()).forEach(([activeKey, activeEntry]) => {
+          if (samePaperTradeIdentity(entry, activeEntry)) active.delete(activeKey);
+        });
       }
     });
   return Array.from(active.values());
