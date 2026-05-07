@@ -379,6 +379,15 @@ const DEFAULT_BROKER_ACCOUNT = {
   webhookUrl: "",
   notes: ""
 };
+const DEFAULT_SERVER_PAPER_TRADING = {
+  enabled: false,
+  commodities: ["oil"],
+  riskPct: PAPER_DEFAULT_RISK_PCT,
+  maxOpenTrades: 1,
+  entryThreshold: PAPER_MIN_CONVICTION,
+  lastEvaluationAt: null,
+  lastDecision: "Not evaluated yet"
+};
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -1133,6 +1142,13 @@ function getDefaultUsers() {
       createdAt: "2026-02-02T12:00:00.000Z",
       lastActiveAt: minutesAgo(10),
       sessions: 23,
+      paperTrading: {
+        enabled: true,
+        commodities: ["oil"],
+        riskPct: PAPER_DEFAULT_RISK_PCT,
+        maxOpenTrades: 1,
+        entryThreshold: PAPER_MIN_CONVICTION
+      },
       enabled: true
     },
     {
@@ -1196,6 +1212,13 @@ function getDefaultUsers() {
       createdAt: "2026-02-02T12:00:00.000Z",
       lastActiveAt: daysAgo(2),
       sessions: 12,
+      paperTrading: {
+        enabled: true,
+        commodities: ["oil"],
+        riskPct: PAPER_DEFAULT_RISK_PCT,
+        maxOpenTrades: 1,
+        entryThreshold: PAPER_MIN_CONVICTION
+      },
       enabled: true
     }
   ];
@@ -1301,6 +1324,9 @@ function normalizeUserRecord(user, fallback = {}) {
     profileEquity
   );
   const commodityTradeTerms = normalizeCommodityTradeTermsMap(user?.commodityTradeTerms ?? fallback.commodityTradeTerms);
+  const defaultServerPaperTrading = ["peter@pjbell.com", "ai4ses@gmail.com"].includes(email)
+    ? { enabled: true, commodities: ["oil"], riskPct: profileRiskPct, maxOpenTrades: 1, entryThreshold: PAPER_MIN_CONVICTION }
+    : {};
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -1317,6 +1343,7 @@ function normalizeUserRecord(user, fallback = {}) {
     commodityTradeTerms,
     strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
     brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
+    paperTrading: normalizeServerPaperTrading(user?.paperTrading ?? defaultServerPaperTrading, fallback.paperTrading),
     sessionHistory: sessionHistory
       .filter((session) => session && session.time)
       .slice(0, 25),
@@ -1488,6 +1515,23 @@ function normalizeBrokerAccount(account = {}) {
   };
 }
 
+function normalizeServerPaperTrading(settings = {}, fallback = {}) {
+  const merged = {
+    ...DEFAULT_SERVER_PAPER_TRADING,
+    ...(fallback && typeof fallback === "object" ? fallback : {}),
+    ...(settings && typeof settings === "object" ? settings : {})
+  };
+  return {
+    enabled: merged.enabled === true,
+    commodities: normalizeSavedCommodityIds(merged.commodities || merged.commodityIds || DEFAULT_SERVER_PAPER_TRADING.commodities),
+    riskPct: clamp(Number(merged.riskPct) || PAPER_DEFAULT_RISK_PCT, 0.1, 25),
+    maxOpenTrades: clamp(Math.round(Number(merged.maxOpenTrades) || 1), 1, 10),
+    entryThreshold: clamp(Math.round(Number(merged.entryThreshold) || PAPER_MIN_CONVICTION), 1, 100),
+    lastEvaluationAt: merged.lastEvaluationAt || null,
+    lastDecision: String(merged.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision).trim()
+  };
+}
+
 function getCurrentUserCommodityIds() {
   return normalizeCommodityIds(getCurrentUserProfile()?.commodities);
 }
@@ -1569,7 +1613,8 @@ function getSharedUserProfilesPayload() {
       commodityAllocations: normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity),
       commodityTradeTerms: normalizeCommodityTradeTermsMap(user.commodityTradeTerms),
       strategy: normalizeUserStrategy(user.strategy),
-      brokerAccount: normalizeBrokerAccount(user.brokerAccount)
+      brokerAccount: normalizeBrokerAccount(user.brokerAccount),
+      paperTrading: normalizeServerPaperTrading(user.paperTrading)
     };
     if (String(user.avatarDataUrl || "").startsWith("data:image/")) {
       profile.avatarDataUrl = user.avatarDataUrl;
@@ -1619,6 +1664,7 @@ function mergeUserRecords(existing, incoming) {
     commodityTradeTerms: normalizeCommodityTradeTermsMap(incoming.commodityTradeTerms || existing.commodityTradeTerms),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
+    paperTrading: normalizeServerPaperTrading(incoming.paperTrading, existing.paperTrading),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
     sessionHistory: Array.from(sessionsByKey.values())
       .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
@@ -1707,6 +1753,13 @@ function mergeSharedUserProfiles(profiles) {
       const nextBrokerAccount = normalizeBrokerAccount(profile.brokerAccount);
       if (JSON.stringify(nextBrokerAccount) !== JSON.stringify(normalizeBrokerAccount(user.brokerAccount))) {
         user.brokerAccount = nextBrokerAccount;
+        changed = true;
+      }
+    }
+    if (profile.paperTrading && typeof profile.paperTrading === "object") {
+      const nextPaperTrading = normalizeServerPaperTrading(profile.paperTrading, user.paperTrading);
+      if (JSON.stringify(nextPaperTrading) !== JSON.stringify(normalizeServerPaperTrading(user.paperTrading))) {
+        user.paperTrading = nextPaperTrading;
         changed = true;
       }
     }
@@ -2458,6 +2511,26 @@ function saveUserBrokerAccountSettings(user, container) {
   userManagementStatusEl.textContent = `${user.name || user.email} broker account metadata saved`;
 }
 
+function saveUserPaperTradingSettings(user, container) {
+  const selectedCommodities = Array.from(container.querySelectorAll("[data-server-paper-commodity]"))
+    .filter((input) => input.checked)
+    .map((input) => input.value);
+  user.paperTrading = normalizeServerPaperTrading({
+    enabled: container.querySelector("[data-server-paper-field='enabled']")?.checked,
+    commodities: selectedCommodities.length ? selectedCommodities : ["oil"],
+    riskPct: container.querySelector("[data-server-paper-field='riskPct']")?.value,
+    maxOpenTrades: container.querySelector("[data-server-paper-field='maxOpenTrades']")?.value,
+    entryThreshold: container.querySelector("[data-server-paper-field='entryThreshold']")?.value,
+    lastEvaluationAt: user.paperTrading?.lastEvaluationAt || null,
+    lastDecision: user.paperTrading?.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision
+  });
+
+  saveUserRoster();
+  saveSharedSettings();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${user.name || user.email} server paper trader settings saved`;
+}
+
 function renderCurrentUserStrategy() {
   if (!userStrategyBannerEl) return;
 
@@ -2510,6 +2583,7 @@ function createUserProfilePanel(user) {
   const commoditiesCard = document.createElement("section");
   const strategyCard = document.createElement("section");
   const brokerCard = document.createElement("section");
+  const serverPaperCard = document.createElement("section");
   const statsCard = document.createElement("section");
   const actionsCard = document.createElement("section");
   const historyCard = document.createElement("section");
@@ -2844,6 +2918,56 @@ function createUserProfilePanel(user) {
   brokerSave.addEventListener("click", () => saveUserBrokerAccountSettings(user, brokerCard));
   brokerCard.append(brokerSave);
 
+  const serverPaper = normalizeServerPaperTrading(user.paperTrading);
+  serverPaperCard.className = "user-profile-subcard profile-server-paper-card";
+  serverPaperCard.innerHTML = `
+    <h3>Server Paper Trader</h3>
+    <div class="profile-security-note">
+      Cloudflare can evaluate this paper account on a schedule, so trades continue even when the user's browser is closed.
+    </div>
+    <div class="profile-strategy-grid">
+      <label class="profile-toggle-row">
+        <input data-server-paper-field="enabled" type="checkbox"${serverPaper.enabled ? " checked" : ""}>
+        Enable scheduled paper trading
+      </label>
+      <label>
+        Risk %
+        <input data-server-paper-field="riskPct" type="number" min="0.1" max="25" step="0.1" value="${formatNumberInput(serverPaper.riskPct, 2)}">
+      </label>
+      <label>
+        Max open trades
+        <input data-server-paper-field="maxOpenTrades" type="number" min="1" max="10" step="1" value="${serverPaper.maxOpenTrades}">
+      </label>
+      <label>
+        Entry threshold
+        <input data-server-paper-field="entryThreshold" type="number" min="1" max="100" step="1" value="${serverPaper.entryThreshold}">
+      </label>
+      <div class="profile-strategy-wide server-paper-commodities">
+        <span class="stat-label">Scheduled commodities</span>
+        ${commodities.map(({ id, name }) => `
+          <label class="profile-toggle-row">
+            <input data-server-paper-commodity type="checkbox" value="${id}"${serverPaper.commodities.includes(id) ? " checked" : ""}>
+            ${name}
+          </label>
+        `).join("")}
+      </div>
+      <div>
+        <span class="stat-label">Last evaluation</span>
+        <strong>${serverPaper.lastEvaluationAt ? formatRelativeDate(serverPaper.lastEvaluationAt) : "Never"}</strong>
+      </div>
+      <div class="profile-strategy-wide">
+        <span class="stat-label">Last scheduler decision</span>
+        <strong>${escapeHtml(serverPaper.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision)}</strong>
+      </div>
+    </div>
+  `;
+  const serverPaperSave = document.createElement("button");
+  serverPaperSave.type = "button";
+  serverPaperSave.className = "filter-button profile-commodity-save";
+  serverPaperSave.textContent = "Save server trader";
+  serverPaperSave.addEventListener("click", () => saveUserPaperTradingSettings(user, serverPaperCard));
+  serverPaperCard.append(serverPaperSave);
+
   statsCard.className = "user-profile-subcard";
   statsCard.innerHTML = `
     <h3>Session Statistics</h3>
@@ -2909,7 +3033,7 @@ function createUserProfilePanel(user) {
   });
   historyCard.append(table);
 
-  wrapper.append(profileCard, commoditiesCard, strategyCard, brokerCard, statsCard, actionsCard, historyCard);
+  wrapper.append(profileCard, commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
 

@@ -158,3 +158,18 @@ CREATE TABLE IF NOT EXISTS runtime_documents (
   payload_json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS paper_scheduler_runs (
+  run_id TEXT PRIMARY KEY,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  status TEXT NOT NULL,
+  evaluated_users INTEGER NOT NULL DEFAULT 0,
+  opened_trades INTEGER NOT NULL DEFAULT 0,
+  closed_trades INTEGER NOT NULL DEFAULT 0,
+  skipped_trades INTEGER NOT NULL DEFAULT 0,
+  payload_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_paper_scheduler_runs_started
+  ON paper_scheduler_runs (started_at DESC);

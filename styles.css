@@ -220,6 +220,16 @@ body {
   color: #ffffff;
 }
 
+.server-paper-commodities {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.server-paper-commodities .stat-label {
+  grid-column: 1 / -1;
+}
+
 .leaderboard-stat,
 .leaderboard-panel {
   background: var(--panel-soft);

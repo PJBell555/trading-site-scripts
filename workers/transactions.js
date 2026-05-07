@@ -5,7 +5,34 @@ const DEFAULT_SETTINGS_PATH = "settings.json";
 const DEFAULT_ADVISORY_PATH = "advisory-snapshots.json";
 const MAX_ADVISORY_SNAPSHOTS = 20000;
 const COINBASE_SANDBOX_BASE_URL = "https://api-sandbox.coinbase.com/api/v3/brokerage";
+const COINBASE_PRODUCTS_BASE_URL = "https://api.coinbase.com/api/v3/brokerage/products";
 const DEFAULT_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
+const PAPER_SCHEDULER_RUN_LIMIT = 20;
+const PAPER_SCHEDULER_DEFAULT_THRESHOLD = 50;
+const PAPER_SCHEDULER_PRICE_STALE_MS = 30 * 60 * 1000;
+const PAPER_SCHEDULER_MIN_EVALUATION_MS = 4 * 60 * 1000;
+const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
+const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
+const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 100000;
+const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
+const SERVER_COMMODITIES = {
+  oil: {
+    id: "oil",
+    name: "Oil",
+    ticker: "NOL-18MAY26-CDE",
+    productId: "NOL-18MAY26-CDE",
+    productType: "Coinbase futures contract",
+    contractMultiplier: 10,
+    marginRateLong: 1 / 7.2,
+    marginRateShort: 1 / 6.2,
+    feePerContractSide: 1.17
+  },
+  "natural-gas": { id: "natural-gas", name: "Natural Gas", ticker: "NATURAL-GAS-USD", productId: "NATURAL-GAS-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 },
+  gold: { id: "gold", name: "Gold", ticker: "GOLD-USD", productId: "GOLD-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 },
+  silver: { id: "silver", name: "Silver", ticker: "SILVER-USD", productId: "SILVER-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 },
+  copper: { id: "copper", name: "Copper", ticker: "COPPER-USD", productId: "COPPER-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 },
+  platinum: { id: "platinum", name: "Platinum", ticker: "PLATINUM-USD", productId: "PLATINUM-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 }
+};
 
 function corsHeaders(origin) {
   return {
@@ -76,13 +103,52 @@ function isOpeningTransaction(entry) {
   return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
 }
 
+function normalizeEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function getTransactionDate(value) {
+  const date = new Date(value || 0);
+  return Number.isNaN(date.getTime()) ? new Date(0) : date;
+}
+
 function getTradeLifecycleKey(entry) {
   return [
+    normalizeEmail(entry.userEmail || entry.profileEmail || entry.accountEmail || ""),
     entry.commodity || "commodity",
     entry.contract || "contract",
     entry.side || "side",
     entry.step || "step"
   ].join("|");
+}
+
+function getTradeIdentityKey(entry = {}) {
+  const tradeId = entry.tradeId || entry.id;
+  if (!tradeId) return "";
+  const openedAt = entry.openedAt ? getTransactionDate(entry.openedAt) : null;
+  const openedAtKey = openedAt && openedAt.getTime() ? openedAt.toISOString() : "";
+  return openedAtKey
+    ? `${tradeId}|${openedAtKey}`
+    : `${normalizeEmail(entry.userEmail || "")}|${tradeId}`;
+}
+
+function samePaperTradeIdentity(left = {}, right = {}) {
+  const leftIdentity = getTradeIdentityKey(left);
+  const rightIdentity = getTradeIdentityKey(right);
+  if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
+
+  return (
+    normalizeEmail(left.userEmail || "") === normalizeEmail(right.userEmail || "") &&
+    String(left.commodity || "") === String(right.commodity || "") &&
+    String(left.contract || "") === String(right.contract || "") &&
+    String(left.side || "") === String(right.side || "") &&
+    String(left.step || "") === String(right.step || "") &&
+    String(left.tradeId || "") === String(right.tradeId || "")
+  );
 }
 
 function mergeTransactions(existing = [], incoming = []) {
@@ -1456,6 +1522,503 @@ const PAPER_LEDGER_SOURCE = "cloudflare-d1-paper-trading-ledger";
 const ACTUAL_LEDGER_SOURCE = "cloudflare-d1-actual-trade-ledger";
 const MICRO_PREDICTION_SOURCE = "cloudflare-d1-micro-predictions";
 
+function getEnabledPaperTraderEmails(env) {
+  return new Set(String(env.PAPER_TRADER_EMAILS || "")
+    .split(",")
+    .map(normalizeEmail)
+    .filter(Boolean));
+}
+
+function normalizeCommodityIds(ids = ["oil"]) {
+  const values = Array.isArray(ids) ? ids : [ids];
+  const normalized = values
+    .map((id) => String(id || "").trim().toLowerCase())
+    .filter((id) => SERVER_COMMODITIES[id]);
+  return normalized.length ? [...new Set(normalized)] : ["oil"];
+}
+
+function getUserPaperSchedulerSettings(user = {}, env) {
+  const email = normalizeEmail(user.email);
+  const explicit = user.paperTrading && typeof user.paperTrading === "object"
+    ? user.paperTrading
+    : {};
+  const enabledEmails = getEnabledPaperTraderEmails(env);
+  const enabled = typeof explicit.enabled === "boolean"
+    ? explicit.enabled
+    : Boolean(user.paperTradingEnabled || enabledEmails.has(email));
+
+  return {
+    enabled,
+    commodities: normalizeCommodityIds(explicit.commodities || user.commodities || ["oil"]),
+    riskPct: clamp(Number(explicit.riskPct ?? user.paperRiskPct ?? PAPER_SCHEDULER_DEFAULT_RISK_PCT) || PAPER_SCHEDULER_DEFAULT_RISK_PCT, 0.1, 25),
+    maxOpenTrades: clamp(Math.round(Number(explicit.maxOpenTrades ?? PAPER_SCHEDULER_DEFAULT_MAX_OPEN) || PAPER_SCHEDULER_DEFAULT_MAX_OPEN), 1, 10),
+    entryThreshold: clamp(Math.round(Number(explicit.entryThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD) || PAPER_SCHEDULER_DEFAULT_THRESHOLD), 1, 100),
+    minEvaluationMs: Math.max(60000, Number(explicit.minEvaluationMs) || PAPER_SCHEDULER_MIN_EVALUATION_MS),
+    lastEvaluationAt: explicit.lastEvaluationAt || null,
+    lastDecision: explicit.lastDecision || "Not evaluated yet"
+  };
+}
+
+function updateUserPaperSchedulerSettings(user, nextSettings = {}) {
+  user.paperTrading = {
+    ...(user.paperTrading && typeof user.paperTrading === "object" ? user.paperTrading : {}),
+    ...nextSettings
+  };
+}
+
+function getTransactionUserEmail(entry = {}) {
+  return normalizeEmail(entry.userEmail || entry.profileEmail || entry.accountEmail || entry.email);
+}
+
+function getTransactionsForUser(transactions = [], userEmail) {
+  const email = normalizeEmail(userEmail);
+  return transactions.filter((entry) => getTransactionUserEmail(entry) === email);
+}
+
+function getOpenPaperTradesForUser(transactions = [], userEmail) {
+  const active = new Map();
+  getTransactionsForUser(transactions, userEmail)
+    .slice()
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
+    .forEach((entry) => {
+      const identityKey = getTradeIdentityKey(entry);
+      const lifecycleKey = getTradeLifecycleKey(entry);
+      const key = identityKey || lifecycleKey;
+      if (!key) return;
+      if (isOpeningTransaction(entry)) active.set(key, entry);
+      if (isClosingTransaction(entry)) {
+        if (identityKey) active.delete(identityKey);
+        active.delete(lifecycleKey);
+        Array.from(active.entries()).forEach(([activeKey, activeEntry]) => {
+          if (samePaperTradeIdentity(activeEntry, entry)) active.delete(activeKey);
+        });
+      }
+    });
+  return Array.from(active.values());
+}
+
+function getClosedPaperTradesForUser(transactions = [], userEmail) {
+  return getTransactionsForUser(transactions, userEmail)
+    .filter(isClosingTransaction)
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+}
+
+function getNextServerMartingaleStep(transactions = [], userEmail, maxStep = 4) {
+  const closed = getClosedPaperTradesForUser(transactions, userEmail);
+  let highestLosingStep = 0;
+  for (const entry of closed) {
+    if (Number(entry.pnl) >= 0) break;
+    highestLosingStep = Math.max(highestLosingStep, Number(entry.step) || 1);
+  }
+  if (!highestLosingStep) return 1;
+  return highestLosingStep >= maxStep ? 1 : Math.min(maxStep, highestLosingStep + 1);
+}
+
+async function getLatestAdvisoryByCommodity(env, commodity) {
+  const row = await env.DB.prepare(`
+    SELECT payload_json
+    FROM advisory_snapshots
+    WHERE commodity = ?
+    ORDER BY snapshot_time DESC
+    LIMIT 1
+  `).bind(commodity).first();
+  return parseStoredJson(row?.payload_json, null);
+}
+
+function getServerCommodityConfig(user = {}, commodity = "oil") {
+  const base = SERVER_COMMODITIES[commodity] || SERVER_COMMODITIES.oil;
+  const terms = user.commodityTradeTerms && typeof user.commodityTradeTerms === "object"
+    ? user.commodityTradeTerms[commodity] || {}
+    : {};
+  return {
+    ...base,
+    ...terms,
+    id: commodity,
+    name: base.name,
+    ticker: terms.ticker || base.ticker,
+    productId: terms.productId || base.productId
+  };
+}
+
+async function fetchCoinbaseProductPrice(productId) {
+  if (!productId) return null;
+  const response = await fetch(`${COINBASE_PRODUCTS_BASE_URL}/${encodeURIComponent(productId)}`, {
+    headers: { "Accept": "application/json" }
+  });
+  if (!response.ok) return null;
+  const data = await response.json().catch(() => null);
+  const price = Number(data?.price || data?.mid_market_price || data?.approximate_quote_24h);
+  return Number.isFinite(price) && price > 0
+    ? { price, source: "Coinbase product API", time: new Date().toISOString() }
+    : null;
+}
+
+async function getServerMarketPrice(env, user, commodity, advisory = null) {
+  const config = getServerCommodityConfig(user, commodity);
+  let live = null;
+  try {
+    live = await fetchCoinbaseProductPrice(config.productId);
+  } catch (_error) {
+    live = null;
+  }
+  if (live) return live;
+
+  const advisoryPrice = Number(advisory?.price);
+  const advisoryTime = getTransactionDate(advisory?.time);
+  const advisoryFresh = Date.now() - advisoryTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;
+  if (Number.isFinite(advisoryPrice) && advisoryPrice > 0 && advisoryFresh) {
+    return {
+      price: advisoryPrice,
+      source: "Latest advisory snapshot",
+      time: advisoryTime.toISOString()
+    };
+  }
+
+  const micro = await env.DB.prepare(`
+    SELECT price, prediction_time
+    FROM micro_predictions
+    WHERE commodity = ?
+    ORDER BY prediction_time DESC
+    LIMIT 1
+  `).bind(commodity).first();
+  const microPrice = Number(micro?.price);
+  const microTime = getTransactionDate(micro?.prediction_time);
+  const microFresh = Date.now() - microTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;
+  if (Number.isFinite(microPrice) && microPrice > 0 && microFresh) {
+    return {
+      price: microPrice,
+      source: "Latest micro prediction tick",
+      time: microTime.toISOString()
+    };
+  }
+
+  return null;
+}
+
+function getServerSignal(advisory = {}) {
+  const tone = ["long", "short", "wait"].includes(advisory?.tone) ? advisory.tone : "wait";
+  const conviction = Number(advisory?.conviction ?? advisory?.llmScore ?? advisory?.localScore ?? 0);
+  return {
+    tone,
+    side: tone === "long" || tone === "short" ? tone : null,
+    conviction: Number.isFinite(conviction) ? Math.round(conviction) : 0,
+    label: advisory?.label || tone
+  };
+}
+
+function getServerTradeTerms(config, side, price, step) {
+  const contractMultiplier = Number(config.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
+  const marginRate = side === "short"
+    ? Number(config.marginRateShort) || 1
+    : Number(config.marginRateLong) || 1;
+  const marginRequirement = price * contractMultiplier * marginRate;
+  const targetOffset = 0.01;
+  const stopOffset = 0.0075;
+  const targetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
+  const stopPrice = side === "short" ? price * (1 + stopOffset) : price * (1 - stopOffset);
+  const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1));
+  const contracts = Math.max(1, Math.min(PAPER_SCHEDULER_MAX_CONTRACTS, Math.floor(plannedCapital / marginRequirement) || 1));
+  const feePerContractSide = Number(config.feePerContractSide) >= 0 ? Number(config.feePerContractSide) : 0;
+  const openFee = feePerContractSide * contracts;
+  const estimatedExitFee = feePerContractSide * contracts;
+
+  return {
+    contractMultiplier,
+    marginRequirement,
+    contracts,
+    capital: marginRequirement * contracts,
+    notionalValue: price * contractMultiplier * contracts,
+    targetPrice,
+    stopPrice,
+    feePerContractSide,
+    openFee,
+    estimatedExitFee,
+    totalEstimatedFees: openFee + estimatedExitFee
+  };
+}
+
+function getServerTradeGrossPnl(trade, exitPrice) {
+  const entryPrice = Number(trade.entryPrice ?? trade.price);
+  const multiplier = Number(trade.contractMultiplier) > 0 ? Number(trade.contractMultiplier) : 1;
+  const contracts = Number(trade.contracts) > 0 ? Number(trade.contracts) : Number(trade.quantity) || 1;
+  const move = trade.side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice;
+  return move * multiplier * contracts;
+}
+
+function getServerExitTrigger(trade, price) {
+  const targetPrice = Number(trade.targetPrice);
+  const stopPrice = Number(trade.stopPrice);
+  if (!Number.isFinite(price) || !Number.isFinite(targetPrice) || !Number.isFinite(stopPrice)) return null;
+  const hitTarget = trade.side === "short" ? price <= targetPrice : price >= targetPrice;
+  const hitStop = trade.side === "short" ? price >= stopPrice : price <= stopPrice;
+  if (hitTarget) return trade.side === "short" ? "COVER TARGET" : "SELL TARGET";
+  if (hitStop) return trade.side === "short" ? "COVER STOP" : "SELL STOP";
+  return null;
+}
+
+function makeServerTransaction(entry = {}) {
+  return {
+    id: entry.id || `srv-${Date.now()}`,
+    time: entry.time || new Date().toISOString(),
+    source: "cloudflare-paper-scheduler",
+    ...entry
+  };
+}
+
+async function recordPaperSchedulerRun(env, run) {
+  await env.DB.prepare(`
+    INSERT INTO paper_scheduler_runs (
+      run_id,
+      started_at,
+      finished_at,
+      status,
+      evaluated_users,
+      opened_trades,
+      closed_trades,
+      skipped_trades,
+      payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).bind(
+    run.runId,
+    run.startedAt,
+    run.finishedAt || new Date().toISOString(),
+    run.status || "completed",
+    run.evaluatedUsers || 0,
+    run.openedTrades || 0,
+    run.closedTrades || 0,
+    run.skippedTrades || 0,
+    JSON.stringify(run)
+  ).run();
+}
+
+async function loadPaperSchedulerRuns(env) {
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM paper_scheduler_runs
+    ORDER BY started_at DESC
+    LIMIT ?
+  `).bind(PAPER_SCHEDULER_RUN_LIMIT).all();
+  return getResults(result).map((row) => parseStoredJson(row.payload_json)).filter(Boolean);
+}
+
+async function runPaperTradingScheduler(env, options = {}) {
+  if (!hasRuntimeStore(env)) {
+    return { status: "skipped", reason: "d1-not-configured" };
+  }
+
+  const startedAt = new Date().toISOString();
+  const run = {
+    runId: `paper-scheduler-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    startedAt,
+    status: "running",
+    evaluatedUsers: 0,
+    openedTrades: 0,
+    closedTrades: 0,
+    skippedTrades: 0,
+    decisions: []
+  };
+
+  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const users = Array.isArray(settings.users) ? settings.users : [];
+  const payload = await loadTransactionPayloadD1(env, "paper_transactions", PAPER_LEDGER_SOURCE);
+  const transactions = payload.transactions || [];
+
+  try {
+    for (const user of users) {
+      const email = normalizeEmail(user.email);
+      if (!email) continue;
+      const schedulerSettings = getUserPaperSchedulerSettings(user, env);
+      if (!schedulerSettings.enabled) continue;
+      const lastEvaluationAt = schedulerSettings.lastEvaluationAt ? getTransactionDate(schedulerSettings.lastEvaluationAt) : null;
+      if (!options.force && lastEvaluationAt && Date.now() - lastEvaluationAt.getTime() < schedulerSettings.minEvaluationMs) {
+        run.skippedTrades += 1;
+        continue;
+      }
+
+      run.evaluatedUsers += 1;
+      const openTrades = getOpenPaperTradesForUser(transactions, email);
+      let activeOpenCount = openTrades.length;
+      let lastDecision = "No eligible commodities evaluated";
+
+      for (const commodity of schedulerSettings.commodities) {
+        const config = getServerCommodityConfig(user, commodity);
+        const advisory = await getLatestAdvisoryByCommodity(env, commodity);
+        const price = await getServerMarketPrice(env, user, commodity, advisory);
+        if (!price) {
+          lastDecision = `${commodity}: skipped, no fresh price`;
+          run.skippedTrades += 1;
+          continue;
+        }
+
+        const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
+        for (const openTrade of commodityOpenTrades) {
+          const closeAction = getServerExitTrigger(openTrade, price.price);
+          if (!closeAction) continue;
+          const grossPnl = getServerTradeGrossPnl(openTrade, price.price);
+          const closeFee = Number(openTrade.estimatedExitFee) || Number(openTrade.feePerContractSide || 0) * (Number(openTrade.contracts) || 1);
+          const totalFees = (Number(openTrade.openFee) || 0) + closeFee;
+          const pnl = grossPnl - totalFees;
+          const close = makeServerTransaction({
+            id: `srv-close-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+            tradeId: openTrade.tradeId || openTrade.id,
+            userEmail: email,
+            userName: user.name || "",
+            commodity,
+            commodityName: config.name,
+            action: closeAction,
+            side: openTrade.side,
+            step: Number(openTrade.step) || 1,
+            contract: openTrade.contract || config.ticker,
+            price: price.price,
+            entryPrice: Number(openTrade.entryPrice ?? openTrade.price),
+            targetPrice: Number(openTrade.targetPrice),
+            stopPrice: Number(openTrade.stopPrice),
+            exitPrice: price.price,
+            contractMultiplier: Number(openTrade.contractMultiplier) || config.contractMultiplier,
+            contracts: Number(openTrade.contracts) || 1,
+            marginRequirement: Number(openTrade.marginRequirement) || null,
+            notionalValue: Number(openTrade.notionalValue) || null,
+            openFee: Number(openTrade.openFee) || 0,
+            closeFee,
+            estimatedExitFee: Number(openTrade.estimatedExitFee) || closeFee,
+            totalEstimatedFees: totalFees,
+            grossPnl,
+            netPnl: pnl,
+            pnl,
+            capital: Number(openTrade.capital) || null,
+            openedAt: openTrade.openedAt || openTrade.time,
+            closedAt: new Date().toISOString(),
+            note: `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`
+          });
+          transactions.push(close);
+          run.closedTrades += 1;
+          activeOpenCount = Math.max(0, activeOpenCount - 1);
+          lastDecision = `${commodity}: closed ${openTrade.side} at ${price.price}`;
+        }
+
+        if (activeOpenCount >= schedulerSettings.maxOpenTrades) {
+          if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: max open trades reached`;
+          continue;
+        }
+
+        const hasCommodityOpen = getOpenPaperTradesForUser(transactions, email).some((trade) => trade.commodity === commodity);
+        if (hasCommodityOpen) continue;
+
+        const signal = getServerSignal(advisory);
+        if (!signal.side || signal.conviction < schedulerSettings.entryThreshold) {
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${schedulerSettings.entryThreshold}`;
+          run.skippedTrades += 1;
+          continue;
+        }
+
+        const step = getNextServerMartingaleStep(transactions, email, Number(user.strategy?.martingaleSteps) || 4);
+        const terms = getServerTradeTerms(config, signal.side, price.price, step);
+        const open = makeServerTransaction({
+          id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+          tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
+          userEmail: email,
+          userName: user.name || "",
+          commodity,
+          commodityName: config.name,
+          action: signal.side === "short" ? "SELL SHORT" : "BUY",
+          side: signal.side,
+          step,
+          contract: config.ticker,
+          price: price.price,
+          entryPrice: price.price,
+          targetEntryPrice: price.price,
+          targetPrice: terms.targetPrice,
+          stopPrice: terms.stopPrice,
+          contractMultiplier: terms.contractMultiplier,
+          contracts: terms.contracts,
+          marginRequirement: terms.marginRequirement,
+          notionalValue: terms.notionalValue,
+          openFee: terms.openFee,
+          estimatedExitFee: terms.estimatedExitFee,
+          totalEstimatedFees: terms.totalEstimatedFees,
+          feePerContractSide: terms.feePerContractSide,
+          capital: terms.capital,
+          pnl: 0,
+          openedAt: new Date().toISOString(),
+          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}`
+        });
+        transactions.push(open);
+        run.openedTrades += 1;
+        activeOpenCount += 1;
+        lastDecision = `${commodity}: opened ${signal.side} at ${price.price}`;
+      }
+
+      updateUserPaperSchedulerSettings(user, {
+        ...schedulerSettings,
+        lastEvaluationAt: new Date().toISOString(),
+        lastDecision
+      });
+      run.decisions.push({ email, name: user.name || "", decision: lastDecision });
+    }
+
+    const mergedTransactions = mergeTransactions(payload.transactions || [], transactions);
+    await replaceTransactionsD1(env, "paper_transactions", mergedTransactions);
+    await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
+      ...settings,
+      users,
+      generatedAt: new Date().toISOString(),
+      source: "cloudflare-d1-shared-settings"
+    });
+    run.status = "completed";
+  } catch (error) {
+    run.status = "failed";
+    run.error = error.message;
+  } finally {
+    run.finishedAt = new Date().toISOString();
+    await recordPaperSchedulerRun(env, run);
+  }
+
+  return run;
+}
+
+async function handlePaperSchedulerRoute(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({ error: "Paper scheduler requires the Cloudflare D1 runtime store." }, 503, origin);
+  }
+
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const enabledEmails = getEnabledPaperTraderEmails(env);
+    const users = (Array.isArray(settings.users) ? settings.users : []).map((user) => {
+      const scheduler = getUserPaperSchedulerSettings(user, env);
+      return {
+        name: user.name || "",
+        email: user.email || "",
+        enabled: scheduler.enabled,
+        enabledByWorkerList: enabledEmails.has(normalizeEmail(user.email)),
+        commodities: scheduler.commodities,
+        riskPct: scheduler.riskPct,
+        maxOpenTrades: scheduler.maxOpenTrades,
+        entryThreshold: scheduler.entryThreshold,
+        lastEvaluationAt: scheduler.lastEvaluationAt,
+        lastDecision: scheduler.lastDecision
+      };
+    });
+    return jsonResponse({
+      generatedAt: new Date().toISOString(),
+      storage: "d1",
+      users,
+      runs: await loadPaperSchedulerRuns(env)
+    }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const run = await runPaperTradingScheduler(env, {
+    force: body.force === true || url.searchParams.get("force") === "true"
+  });
+  return jsonResponse(run, run.status === "failed" ? 500 : 200, origin);
+}
+
 function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {}) {
   return {
     ...current,
@@ -1931,9 +2494,19 @@ export default {
         return handleActualTradesRoute(env, request, origin);
       }
 
+      if (url.pathname === "/paper-scheduler" || url.pathname === "/paper-scheduler/run") {
+        return handlePaperSchedulerRoute(env, request, origin);
+      }
+
       return handlePaperLedgerRoute(env, request, origin);
     } catch (error) {
       return jsonResponse({ error: error.message }, 500, origin);
     }
+  },
+
+  async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(runPaperTradingScheduler(env).catch((error) => {
+      console.error("paper scheduler failed", error);
+    }));
   }
 };
