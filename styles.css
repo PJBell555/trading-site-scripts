@@ -2871,7 +2871,7 @@ select {
   align-items: center;
   display: grid;
   gap: 10px;
-  grid-template-columns: 54px 1fr auto;
+  grid-template-columns: 132px 1fr auto;
   color: #dbeafe;
   font-weight: 800;
 }
@@ -2896,6 +2896,10 @@ select {
 
 .accuracy-bar-row[data-tone="short"] .accuracy-bar-track i {
   background: var(--danger);
+}
+
+.accuracy-bar-row[data-metric="trade"] {
+  color: #fef3c7;
 }
 
 .accuracy-table {

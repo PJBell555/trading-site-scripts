@@ -1276,7 +1276,7 @@
         </div>
         <div class="accuracy-dashboard" aria-label="Advisory accuracy summary">
           <div class="accuracy-card" id="accuracy-verdict-card">
-            <span class="stat-label">Threshold test</span>
+            <span class="stat-label">Forecast threshold test</span>
             <strong id="accuracy-verdict">Needs data</strong>
             <p id="accuracy-verdict-copy">Waiting for enough evaluated advisories.</p>
           </div>
@@ -1289,19 +1289,14 @@
             <p>Score is conviction, not historical accuracy.</p>
           </div>
           <div class="accuracy-card">
-            <span class="stat-label">Qualified accuracy</span>
+            <span class="stat-label">Forecast accuracy</span>
             <strong id="accuracy-high-conviction">-</strong>
-            <p id="accuracy-high-conviction-count">0 calls at or above threshold</p>
+            <p id="accuracy-high-conviction-count">0 forecast calls at or above threshold</p>
           </div>
           <div class="accuracy-card">
-            <span class="stat-label">All evaluated calls</span>
+            <span class="stat-label">Trade accuracy</span>
             <strong id="accuracy-all-calls">-</strong>
-            <p id="accuracy-all-count">0 evaluated</p>
-          </div>
-          <div class="accuracy-card">
-            <span class="stat-label">Average follow-through</span>
-            <strong id="accuracy-average-move">-</strong>
-            <p id="accuracy-evaluation-window">Evaluating next samples</p>
+            <p id="accuracy-all-count">0 closed trades</p>
           </div>
         </div>
         <div class="chart-shell">
@@ -1310,7 +1305,7 @@
         <div class="chart-legend" aria-label="Chart legend">
           <span><i class="price-line"></i>Actual price of oil</span>
           <span><i class="advisory-line"></i>Advisory lane</span>
-          <span>Correct means long rose or short fell after the evaluation window, beyond the noise filter. Wait calls are excluded.</span>
+          <span>Forecast correct means long rose or short fell after the evaluation window. Trade correct means a closed long/short trade had positive net P/L.</span>
         </div>
         <div class="accuracy-breakdown" aria-label="Recent advisory outcomes">
           <div class="accuracy-bars" id="accuracy-bars"></div>
@@ -1319,7 +1314,7 @@
               <thead>
                 <tr>
                   <th>Time</th>
-                  <th>Signal</th>
+                  <th>Metric / signal</th>
                   <th>Local score</th>
                   <th>LLM score</th>
                   <th>Then</th>

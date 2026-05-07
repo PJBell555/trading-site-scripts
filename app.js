@@ -5535,6 +5535,7 @@ function getPaperTradeAdvisoryEvaluations() {
         move: endPrice - startPrice,
         correct: netPnl > 0,
         qualified: getAdvisoryLocalConviction({ localConviction: conviction }) >= advisoryScoreThreshold,
+        metric: "trade",
         source: "paper-trade",
         pnl: netPnl
       };
@@ -5621,7 +5622,8 @@ function evaluateAdvisorySamples(samples) {
       endPrice,
       move,
       correct,
-      qualified: getAdvisoryLocalConviction(entry) >= advisoryScoreThreshold
+      qualified: getAdvisoryLocalConviction(entry) >= advisoryScoreThreshold,
+      metric: "forecast"
     };
   }).filter(Boolean);
 }
@@ -5641,14 +5643,16 @@ function summarizeEvaluations(evaluations, predicate = () => true) {
   };
 }
 
-function renderAccuracyBars(evaluations) {
-  const tones = [
-    { id: "long", label: "Long" },
-    { id: "short", label: "Short" }
+function renderAccuracyBars(forecastEvaluations, tradeEvaluations) {
+  const rows = [
+    { id: "long", metric: "forecast", label: "Forecast long", evaluations: forecastEvaluations },
+    { id: "short", metric: "forecast", label: "Forecast short", evaluations: forecastEvaluations },
+    { id: "long", metric: "trade", label: "Trade long", evaluations: tradeEvaluations },
+    { id: "short", metric: "trade", label: "Trade short", evaluations: tradeEvaluations }
   ];
 
   accuracyBarsEl.innerHTML = "";
-  tones.forEach(({ id, label }) => {
+  rows.forEach(({ id, metric, label, evaluations }) => {
     const summary = summarizeEvaluations(evaluations, (item) => item.entry.tone === id);
     const row = document.createElement("div");
     const text = document.createElement("span");
@@ -5659,27 +5663,28 @@ function renderAccuracyBars(evaluations) {
 
     row.className = "accuracy-bar-row";
     row.dataset.tone = id;
+    row.dataset.metric = metric;
     text.textContent = label;
     track.className = "accuracy-bar-track";
     fill.style.width = `${width}%`;
-    value.textContent = summary.count ? `${formatPercent(summary.accuracy)} / ${summary.count}` : "No calls";
+    value.textContent = summary.count ? `${formatPercent(summary.accuracy)} / ${summary.count}` : metric === "trade" ? "No trades" : "No calls";
     track.append(fill);
     row.append(text, track, value);
     accuracyBarsEl.append(row);
   });
 }
 
-function renderAccuracyOutcomes(evaluations) {
+function renderAccuracyOutcomes(forecastEvaluations, tradeEvaluations) {
   accuracyOutcomesEl.innerHTML = "";
-  const recentEvaluations = evaluations
+  const recentEvaluations = [...forecastEvaluations, ...tradeEvaluations]
     .filter((item) => item && item.entry && Number.isFinite(Number(item.startPrice)) && Number.isFinite(Number(item.endPrice)))
-    .reverse();
+    .sort((a, b) => new Date(b.entry.time || 0) - new Date(a.entry.time || 0));
 
   if (!recentEvaluations.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 7;
-    cell.textContent = "No evaluated outcomes in this window. Use Week or Month to include older paper trade outcomes.";
+    cell.textContent = "No evaluated forecast or closed trade outcomes in this window. Use Week or Month to include older outcomes.";
     row.append(cell);
     accuracyOutcomesEl.append(row);
     return;
@@ -5687,15 +5692,22 @@ function renderAccuracyOutcomes(evaluations) {
 
   recentEvaluations.forEach((item) => {
     const row = document.createElement("tr");
+    const isTrade = item.metric === "trade";
+    const signalLabel = `${isTrade ? "Trade" : "Forecast"}: ${item.entry.label || item.entry.tone}`;
+    const resultLabel = item.correct ? "Correct" : "Wrong";
+    const resultValue = isTrade && Number.isFinite(Number(item.pnl))
+      ? `${resultLabel} (${formatSignedMoney(Number(item.pnl))})`
+      : resultLabel;
     row.dataset.result = item.correct ? "correct" : "wrong";
+    row.dataset.metric = item.metric || "forecast";
     [
       formatTradeTime(item.entry.time),
-      item.entry.label || item.entry.tone,
+      signalLabel,
       `${formatAdvisoryScoreValue(getAdvisoryLocalConviction(item.entry))}${item.qualified ? " qualified" : ""}`,
       formatAdvisoryScoreValue(getAdvisoryLLMConviction(item.entry)),
       formatPrice(item.startPrice),
       `${formatPrice(item.endPrice)} (${item.move >= 0 ? "+" : ""}${formatPrice(item.move)})`,
-      item.correct ? "Correct" : "Wrong"
+      resultValue
     ].forEach((value) => {
       const cell = document.createElement("td");
       cell.textContent = value;
@@ -5706,16 +5718,17 @@ function renderAccuracyOutcomes(evaluations) {
 }
 
 function renderAdvisoryAccuracy(samples) {
-  const evaluations = [
-    ...evaluateAdvisorySamples(samples),
-    ...getPaperTradeAdvisoryEvaluations()
-  ]
+  const forecastEvaluations = evaluateAdvisorySamples(samples)
     .filter((item) => isActionableAdvisoryTone(item?.entry?.tone))
     .sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
-  const allSummary = summarizeEvaluations(evaluations);
-  const qualifiedSummary = summarizeEvaluations(evaluations, (item) => item.qualified);
-  const averageAbsMove = evaluations.length
-    ? evaluations.reduce((total, item) => total + Math.abs(item.move), 0) / evaluations.length
+  const tradeEvaluations = getPaperTradeAdvisoryEvaluations()
+    .filter((item) => isActionableAdvisoryTone(item?.entry?.tone))
+    .sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
+  const forecastSummary = summarizeEvaluations(forecastEvaluations);
+  const tradeSummary = summarizeEvaluations(tradeEvaluations);
+  const qualifiedSummary = summarizeEvaluations(forecastEvaluations, (item) => item.qualified);
+  const averageAbsMove = forecastEvaluations.length
+    ? forecastEvaluations.reduce((total, item) => total + Math.abs(item.move), 0) / forecastEvaluations.length
     : NaN;
   const windowMinutes = Math.round(getAdvisoryEvaluationWindow() / 60000);
   const sampleFloor = 10;
@@ -5729,18 +5742,22 @@ function renderAdvisoryAccuracy(samples) {
       ? "Passing"
       : "Below 60%";
   accuracyVerdictCopyEl.textContent = qualifiedSummary.count < sampleFloor
-    ? `Need ${sampleFloor - qualifiedSummary.count} more evaluated calls with score ${advisoryScoreThreshold}+.`
+    ? `Need ${sampleFloor - qualifiedSummary.count} more forecast calls with score ${advisoryScoreThreshold}+.`
     : isReady
-      ? "Qualified calls are above the 60% accuracy target."
-      : "Qualified calls are not reliable enough yet.";
+      ? "Qualified forecasts are above the 60% accuracy target."
+      : "Qualified forecasts are not reliable enough yet.";
   accuracyHighConvictionEl.textContent = formatPercent(qualifiedSummary.accuracy);
-  accuracyHighConvictionCountEl.textContent = `${qualifiedSummary.correct} of ${qualifiedSummary.count} calls with score ${advisoryScoreThreshold}+`;
-  accuracyAllCallsEl.textContent = formatPercent(allSummary.accuracy);
-  accuracyAllCountEl.textContent = `${allSummary.correct} of ${allSummary.count} evaluated`;
-  accuracyAverageMoveEl.textContent = Number.isFinite(averageAbsMove) ? formatPrice(averageAbsMove) : "-";
-  accuracyEvaluationWindowEl.textContent = `Each call judged about ${windowMinutes} min later`;
-  renderAccuracyBars(evaluations);
-  renderAccuracyOutcomes(evaluations);
+  accuracyHighConvictionCountEl.textContent = `${qualifiedSummary.correct} of ${qualifiedSummary.count} forecast calls with score ${advisoryScoreThreshold}+`;
+  accuracyAllCallsEl.textContent = formatPercent(tradeSummary.accuracy);
+  accuracyAllCountEl.textContent = `${tradeSummary.correct} of ${tradeSummary.count} closed trades with positive net P/L`;
+  if (accuracyAverageMoveEl) {
+    accuracyAverageMoveEl.textContent = Number.isFinite(averageAbsMove) ? formatPrice(averageAbsMove) : "-";
+  }
+  if (accuracyEvaluationWindowEl) {
+    accuracyEvaluationWindowEl.textContent = `${forecastSummary.count} forecast calls judged about ${windowMinutes} min later`;
+  }
+  renderAccuracyBars(forecastEvaluations, tradeEvaluations);
+  renderAccuracyOutcomes(forecastEvaluations, tradeEvaluations);
 }
 
 function drawChartMessage(context, canvas, message) {
