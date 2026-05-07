@@ -1,7 +1,125 @@
 {
-  "generatedAt": "2026-05-06T20:36:43.849Z",
+  "generatedAt": "2026-05-07T16:04:37.746Z",
   "source": "cloudflare-github-master-paper-trading-ledger",
   "transactions": [
+    {
+      "id": 245,
+      "time": "2026-05-07T16:02:37.125Z",
+      "userEmail": "peter@pjbell.com",
+      "userName": "Peter Bell",
+      "tradeId": 245,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "BUY",
+      "side": "long",
+      "step": 3,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 93.505,
+      "entryPrice": 93.505,
+      "targetEntryPrice": 93.2712375,
+      "targetPrice": 94.44005,
+      "stopPrice": 92.8037125,
+      "contractMultiplier": 10,
+      "contracts": 4,
+      "marginRequirement": 129.86805555555554,
+      "notionalValue": 3740.2,
+      "openFee": 4.68,
+      "estimatedExitFee": 4.68,
+      "totalEstimatedFees": 9.36,
+      "feePerContractSide": 1.17,
+      "feeLabel": "Coinbase displayed futures fee estimate",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "open",
+        "orderId": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+        "productId": "NOL-18MAY26-CDE",
+        "submittedProductId": "NOL-18MAY26-CDE",
+        "returnedProductId": "BTC-USD",
+        "side": "BUY",
+        "sentAt": "2026-05-07T16:02:37.123Z",
+        "request": {
+          "client_order_id": "atlas-open-245-1778169756853",
+          "product_id": "NOL-18MAY26-CDE",
+          "side": "BUY",
+          "order_configuration": {
+            "market_market_ioc": {
+              "base_size": "4"
+            }
+          }
+        },
+        "response": {
+          "success": true,
+          "success_response": {
+            "order_id": "f898eaf4-6ffc-47be-a159-7ff292e5cdcf",
+            "product_id": "BTC-USD",
+            "side": "SELL",
+            "client_order_id": "sandbox_success_order",
+            "attached_order_id": ""
+          },
+          "order_configuration": {
+            "limit_limit_gtc": {
+              "base_size": "1",
+              "limit_price": "70000.44",
+              "post_only": false,
+              "rfq_disabled": false,
+              "reduce_only": false
+            }
+          }
+        }
+      },
+      "openedAt": "2026-05-07T16:02:36.852Z",
+      "capital": 519.4722222222222,
+      "pnl": 0,
+      "note": "Oil long opened at 49 conviction",
+      "closedAt": null,
+      "sharedKey": "245|BUY|NOL-18MAY26-CDE|2026-05-07T16:02:37.125Z|93.5050"
+    },
+    {
+      "id": 244,
+      "time": "2026-05-07T02:02:19.997Z",
+      "userEmail": "peter@pjbell.com",
+      "userName": "Peter Bell",
+      "tradeId": 243,
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "action": "SELL STOP",
+      "side": "long",
+      "step": 2,
+      "contract": "NOL-18MAY26-CDE",
+      "price": 95.095,
+      "entryPrice": 95.815,
+      "targetEntryPrice": 95.5754625,
+      "targetPrice": 96.77315,
+      "stopPrice": 95.0963875,
+      "contractMultiplier": 10,
+      "contracts": 2,
+      "marginRequirement": 95.815,
+      "notionalValue": 1916.3,
+      "openFee": 0.5,
+      "closeFee": 0.5,
+      "estimatedExitFee": 0.5,
+      "totalEstimatedFees": 1,
+      "feePerContractSide": 0.25,
+      "feeLabel": "Estimated exchange/brokerage fee",
+      "coinbaseSandbox": {
+        "sandbox": true,
+        "intent": "close",
+        "error": "Coinbase sandbox close timed out",
+        "productId": "NOL-18MAY26-CDE",
+        "side": "SELL",
+        "sentAt": "2026-05-07T02:02:19.996Z"
+      },
+      "grossPnl": -14.399999999999977,
+      "netPnl": -15.399999999999977,
+      "exitPrice": 95.095,
+      "openedAt": "2026-05-06T20:35:42.514Z",
+      "closedAt": "2026-05-07T02:02:14.526Z",
+      "durationMs": 19592012,
+      "capital": 191.63,
+      "pnl": -15.399999999999977,
+      "note": "Oil long closed from $95.81",
+      "sharedKey": "243|SELL STOP|NOL-18MAY26-CDE|2026-05-07T02:02:19.997Z|95.0950"
+    },
     {
       "id": 243,
       "time": "2026-05-06T20:36:00.437Z",
