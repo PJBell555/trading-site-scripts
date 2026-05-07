@@ -47,6 +47,8 @@ const leaderboardChartEl = document.querySelector("#leaderboard-chart");
 const leaderboardBodyEl = document.querySelector("#leaderboard-body");
 const leaderboardRankControlsEl = document.querySelector("#leaderboard-rank-controls");
 const leaderboardRankLabelEl = document.querySelector("#leaderboard-rank-label");
+const leaderboardPeriodControlsEl = document.querySelector("#leaderboard-period-controls");
+const leaderboardPeriodLabelEl = document.querySelector("#leaderboard-period-label");
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -339,7 +341,9 @@ const MICRO_PREDICTION_HISTORY_LOCAL_KEY = "comhedge-micro-predictions-v1";
 const MICRO_PREDICTION_PENDING_LOCAL_KEY = "comhedge-pending-micro-predictions-v1";
 const MICRO_PREDICTION_CAPTURE_KEY = "comhedge-last-micro-prediction-key-v1";
 const LEADERBOARD_RANK_KEY = "comhedge-leaderboard-rank-v2";
+const LEADERBOARD_PERIOD_KEY = "comhedge-leaderboard-period-v1";
 const LEADERBOARD_DEFAULT_RANK = "closed-pnl";
+const LEADERBOARD_DEFAULT_PERIOD = "all";
 const LEADERBOARD_RANK_OPTIONS = {
   "closed-pnl": { label: "Closed P/L", emptyLast: true },
   "total-pnl": { label: "Total P/L", emptyLast: true },
@@ -347,6 +351,14 @@ const LEADERBOARD_RANK_OPTIONS = {
   trades: { label: "Trades", emptyLast: true },
   "win-rate": { label: "Win Rate", emptyLast: true },
   expectancy: { label: "Expectancy", emptyLast: true }
+};
+const LEADERBOARD_PERIOD_OPTIONS = {
+  all: { label: "All Time", ms: null },
+  hour: { label: "Hour", ms: 60 * 60 * 1000 },
+  day: { label: "Day", ms: 24 * 60 * 60 * 1000 },
+  week: { label: "Week", ms: 7 * 24 * 60 * 60 * 1000 },
+  month: { label: "Month", ms: 31 * 24 * 60 * 60 * 1000 },
+  year: { label: "Year", ms: 366 * 24 * 60 * 60 * 1000 }
 };
 const ADVISORY_CAPTURE_MS = 120000;
 const MICRO_PREDICTION_CAPTURE_MS = 60000;
@@ -511,6 +523,7 @@ let expandedUserEmail = "";
 let editingUserEmail = "";
 let activeSection = "home";
 let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
+let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
 let activeSkillSystem = "micro-predictor";
 let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
@@ -2051,9 +2064,24 @@ function getUserPaperLedgerEntries(user) {
   return getDedupedPaperCloseEntries(source).filter((entry) => entryBelongsToUser(entry, user));
 }
 
-function getUserOpenPaperTrades(user) {
+function getLeaderBoardPeriodCutoff(mode = leaderboardPeriodMode) {
+  const option = LEADERBOARD_PERIOD_OPTIONS[mode] || LEADERBOARD_PERIOD_OPTIONS[LEADERBOARD_DEFAULT_PERIOD];
+  return Number.isFinite(option.ms) ? Date.now() - option.ms : null;
+}
+
+function isEntryInLeaderBoardPeriod(entry, cutoff = getLeaderBoardPeriodCutoff()) {
+  if (!Number.isFinite(cutoff)) return true;
+  const time = getTransactionDate(entry.closedAt || entry.time || entry.openedAt).getTime();
+  return Number.isFinite(time) && time >= cutoff;
+}
+
+function getUserLeaderBoardEntries(user, cutoff = getLeaderBoardPeriodCutoff()) {
+  return getUserPaperLedgerEntries(user).filter((entry) => isEntryInLeaderBoardPeriod(entry, cutoff));
+}
+
+function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user)) {
   const active = new Map();
-  getUserPaperLedgerEntries(user)
+  entries
     .slice()
     .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
     .forEach((entry) => {
@@ -2072,8 +2100,8 @@ function getUserOpenPaperTrades(user) {
   return Array.from(active.values());
 }
 
-function getUserOpenPnl(user) {
-  return getUserOpenPaperTrades(user).reduce((total, entry) => {
+function getUserOpenPnl(user, entries = getUserPaperLedgerEntries(user)) {
+  return getUserOpenPaperTrades(user, entries).reduce((total, entry) => {
     const commodity = entry.commodity || "oil";
     const livePrice = getUsableMarketPrice(commodity);
     if (!Number.isFinite(livePrice)) return total;
@@ -2092,16 +2120,16 @@ function getUserOpenPnl(user) {
   }, 0);
 }
 
-function getUserLastTradeTime(user) {
-  const times = getUserPaperLedgerEntries(user)
+function getUserLastTradeTime(user, entries = getUserPaperLedgerEntries(user)) {
+  const times = entries
     .map((entry) => getTransactionDate(entry.time).getTime())
     .filter(Number.isFinite);
   if (!times.length) return null;
   return new Date(Math.max(...times));
 }
 
-function getUserTradeCount(user) {
-  return getUserPaperLedgerEntries(user).filter((entry) => isOpeningTransaction(entry)).length;
+function getUserTradeCount(user, entries = getUserPaperLedgerEntries(user)) {
+  return entries.filter((entry) => isOpeningTransaction(entry)).length;
 }
 
 function getUserAccountGroupNote(user) {
@@ -2116,35 +2144,38 @@ function getUserAccountGroupNote(user) {
   return `${sameNameAccounts.length + 1} accounts for this user name`;
 }
 
-function getUserClosedPaperTrades(user) {
-  return getUserPaperLedgerEntries(user).filter(isClosingTransaction);
+function getUserClosedPaperTrades(user, entries = getUserPaperLedgerEntries(user)) {
+  return entries.filter(isClosingTransaction);
 }
 
-function getUserWinRate(user) {
-  const closedTrades = getUserClosedPaperTrades(user);
+function getUserWinRate(user, entries = getUserPaperLedgerEntries(user)) {
+  const closedTrades = getUserClosedPaperTrades(user, entries);
   if (!closedTrades.length) return NaN;
   const wins = closedTrades.filter((entry) => getDisplayPnl(entry) > 0).length;
   return (wins / closedTrades.length) * 100;
 }
 
-function getUserTradeExpectancy(user) {
-  const closedTrades = getUserClosedPaperTrades(user);
+function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user)) {
+  const closedTrades = getUserClosedPaperTrades(user, entries);
   if (!closedTrades.length) return NaN;
   const total = closedTrades.reduce((sum, entry) => sum + getDisplayPnl(entry), 0);
   return total / closedTrades.length;
 }
 
 function getLeaderBoardRows() {
+  const cutoff = getLeaderBoardPeriodCutoff();
   return userRoster.map((user) => {
-    const closedPnl = getUserCurrentPnl(user);
-    const openPnl = getUserOpenPnl(user);
+    const entries = getUserLeaderBoardEntries(user, cutoff);
+    const closedPnl = entries
+      .filter(isClosingTransaction)
+      .reduce((total, entry) => total + getDisplayPnl(entry), 0);
+    const openPnl = getUserOpenPnl(user, entries);
     const totalPnl = closedPnl + openPnl;
-    const entries = getUserPaperLedgerEntries(user);
     const tradeCount = entries.filter(isOpeningTransaction).length;
     const closedCount = entries.filter(isClosingTransaction).length;
-    const winRate = getUserWinRate(user);
-    const expectancy = getUserTradeExpectancy(user);
-    const lastTradeTime = getUserLastTradeTime(user);
+    const winRate = getUserWinRate(user, entries);
+    const expectancy = getUserTradeExpectancy(user, entries);
+    const lastTradeTime = getUserLastTradeTime(user, entries);
     const groupNote = getUserAccountGroupNote(user);
 
     return {
@@ -2203,11 +2234,28 @@ function loadLeaderBoardRankMode() {
   }
 }
 
+function loadLeaderBoardPeriodMode() {
+  try {
+    const stored = window.localStorage.getItem(LEADERBOARD_PERIOD_KEY);
+    leaderboardPeriodMode = LEADERBOARD_PERIOD_OPTIONS[stored] ? stored : LEADERBOARD_DEFAULT_PERIOD;
+  } catch (error) {
+    leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
+  }
+}
+
 function saveLeaderBoardRankMode() {
   try {
     window.localStorage.setItem(LEADERBOARD_RANK_KEY, leaderboardRankMode);
   } catch (error) {
     // Ignore storage failures; the selected rank mode still applies for this session.
+  }
+}
+
+function saveLeaderBoardPeriodMode() {
+  try {
+    window.localStorage.setItem(LEADERBOARD_PERIOD_KEY, leaderboardPeriodMode);
+  } catch (error) {
+    // Ignore storage failures; the selected period still applies for this session.
   }
 }
 
@@ -2220,9 +2268,19 @@ function renderLeaderBoardRankControls() {
   });
 }
 
+function renderLeaderBoardPeriodControls() {
+  const option = LEADERBOARD_PERIOD_OPTIONS[leaderboardPeriodMode] || LEADERBOARD_PERIOD_OPTIONS[LEADERBOARD_DEFAULT_PERIOD];
+  if (leaderboardPeriodLabelEl) leaderboardPeriodLabelEl.textContent = option.label;
+  if (!leaderboardPeriodControlsEl) return;
+  leaderboardPeriodControlsEl.querySelectorAll("[data-leaderboard-period]").forEach((button) => {
+    button.dataset.active = button.dataset.leaderboardPeriod === leaderboardPeriodMode ? "true" : "false";
+  });
+}
+
 function getCumulativePnlSeries(user) {
   let total = 0;
-  const points = getUserPaperLedgerEntries(user)
+  const cutoff = getLeaderBoardPeriodCutoff();
+  const points = getUserLeaderBoardEntries(user, cutoff)
     .slice()
     .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
     .map((entry) => {
@@ -2349,6 +2407,7 @@ function renderLeaderBoard() {
   if (!leaderboardBodyEl) return;
   if (!userRoster.length) loadUserRoster();
   renderLeaderBoardRankControls();
+  renderLeaderBoardPeriodControls();
   const rankedRows = getRankedLeaderBoardRows(leaderboardRankMode);
   const rankByEmail = new Map(rankedRows.map((row, index) => [normalizeEmail(row.email), index + 1]));
   const activeRows = rankedRows.filter((row) => row.tradeCount > 0);
@@ -9349,6 +9408,14 @@ leaderboardRankControlsEl?.addEventListener("click", (event) => {
   saveLeaderBoardRankMode();
   renderLeaderBoard();
 });
+leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-leaderboard-period]");
+  if (!button) return;
+  const nextMode = button.dataset.leaderboardPeriod;
+  leaderboardPeriodMode = LEADERBOARD_PERIOD_OPTIONS[nextMode] ? nextMode : LEADERBOARD_DEFAULT_PERIOD;
+  saveLeaderBoardPeriodMode();
+  renderLeaderBoard();
+});
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 paperEquityInputEl.readOnly = true;
 paperEquityInputEl.setAttribute("aria-readonly", "true");
@@ -9496,6 +9563,7 @@ function initializeApp() {
   loadLocalMicroPredictionHistory();
   loadPaperDecisionLog();
   loadLeaderBoardRankMode();
+  loadLeaderBoardPeriodMode();
   applySavedStrategyEdits();
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();

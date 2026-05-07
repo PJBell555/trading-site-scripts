@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-leaderboard-carry-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-leaderboard-periods-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -134,6 +134,20 @@
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="trades">Trades</button>
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="win-rate">Win Rate</button>
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="expectancy">Expectancy</button>
+        </div>
+      </div>
+      <div class="leaderboard-rank-toolbar" aria-label="Leader board time window controls">
+        <div>
+          <span class="stat-label">Time window</span>
+          <strong id="leaderboard-period-label">All Time</strong>
+        </div>
+        <div class="leaderboard-rank-controls" id="leaderboard-period-controls">
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="all" data-active="true">All</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="hour">Hour</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="day">Day</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="week">Week</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="month">Month</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-period="year">Year</button>
         </div>
       </div>
 
@@ -1576,6 +1590,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-leaderboard-carry-1"></script>
+  <script src="./app.js?v=comhedge-leaderboard-periods-1"></script>
 </body>
 </html>
