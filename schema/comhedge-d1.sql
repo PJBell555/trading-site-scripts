@@ -120,6 +120,39 @@ CREATE INDEX IF NOT EXISTS idx_advisory_snapshots_commodity
 CREATE INDEX IF NOT EXISTS idx_advisory_snapshots_tone
   ON advisory_snapshots (tone, snapshot_time DESC);
 
+CREATE TABLE IF NOT EXISTS micro_predictions (
+  prediction_key TEXT PRIMARY KEY,
+  prediction_time TEXT NOT NULL,
+  commodity TEXT,
+  price REAL,
+  horizon_seconds INTEGER NOT NULL,
+  score REAL,
+  probability_up REAL,
+  probability_down REAL,
+  predicted_tone TEXT,
+  short_trigger INTEGER NOT NULL DEFAULT 0,
+  long_trigger INTEGER NOT NULL DEFAULT 0,
+  long_invalidated INTEGER NOT NULL DEFAULT 0,
+  evaluated_at TEXT,
+  future_price REAL,
+  move_bps REAL,
+  correct INTEGER,
+  payload_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_micro_predictions_time
+  ON micro_predictions (prediction_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_micro_predictions_commodity
+  ON micro_predictions (commodity, prediction_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_micro_predictions_horizon
+  ON micro_predictions (horizon_seconds, prediction_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_micro_predictions_tone
+  ON micro_predictions (predicted_tone, prediction_time DESC);
+
 CREATE TABLE IF NOT EXISTS runtime_documents (
   document_key TEXT PRIMARY KEY,
   payload_json TEXT NOT NULL,

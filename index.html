@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-user-inline-panel-23">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-micro-learning-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -442,45 +442,94 @@
       <div class="skills-workspace">
         <aside class="skills-sidebar" aria-label="Skill categories">
           <div class="skills-category is-active">
-            <span>Brain</span>
-            <strong>Market Expertise</strong>
+            <span>Micro</span>
+            <strong>Short-Term Predictor</strong>
           </div>
           <div class="skills-category">
-            <span>Trade</span>
-            <strong>Lessons from Trades</strong>
+            <span>D1</span>
+            <strong>Learning Store</strong>
+          </div>
+          <div class="skills-category">
+            <span>Score</span>
+            <strong>Advisory Evaluator</strong>
           </div>
           <div class="skills-category">
             <span>Paper</span>
-            <strong>Lessons from Paper Trades</strong>
+            <strong>Paper Execution</strong>
           </div>
           <div class="skills-category">
-            <span>Search</span>
-            <strong>Research Levers</strong>
+            <span>Loop</span>
+            <strong>Karpathy Coach</strong>
           </div>
           <div class="skills-category">
-            <span>Data</span>
-            <strong>Data Feeds</strong>
-          </div>
-          <div class="skills-category">
-            <span>Prompt</span>
-            <strong>Prompts for Advisories</strong>
+            <span>LLM</span>
+            <strong>Scheduled Advisor</strong>
           </div>
         </aside>
         <div class="skills-files">
           <div class="skills-file-toolbar">
-            <span class="skills-icon">Brain</span>
-            <input type="text" placeholder="Search files..." aria-label="Search skill files">
-            <button class="filter-button" type="button">+</button>
+            <span class="skills-icon">SYS</span>
+            <input type="text" placeholder="Search systems..." aria-label="Search skill systems">
+            <button class="filter-button" type="button">Inspect</button>
           </div>
-          <div class="skills-empty">
-            <strong>No skill files yet.</strong>
-            <span>Create your first one.</span>
+          <div class="system-skill-list" aria-label="Built trading systems">
+            <article class="system-skill-card" data-system-tone="active">
+              <span>Live</span>
+              <strong>Microstructure Predictor</strong>
+              <p>Reads Coinbase tick history, 10s/30s/60s returns, acceleration, VWAP distance, and volatility to classify the next move as long, short, or flat.</p>
+            </article>
+            <article class="system-skill-card">
+              <span>Shared</span>
+              <strong>D1 Learning Store</strong>
+              <p>Stores micro predictions, future prices, move basis points, and correct or wrong outcomes in Cloudflare D1 instead of GitHub commits.</p>
+            </article>
+            <article class="system-skill-card">
+              <span>Live</span>
+              <strong>Advisory Accuracy Lab</strong>
+              <p>Compares advisory score thresholds against evaluated outcomes so users can see when a score is conviction versus demonstrated accuracy.</p>
+            </article>
+            <article class="system-skill-card">
+              <span>Guarded</span>
+              <strong>Paper Trading Engine</strong>
+              <p>Acts on qualified advisories with target, stop, minimum trade value, margin, and closed-trade P/L tracking before any live execution is enabled.</p>
+            </article>
+            <article class="system-skill-card">
+              <span>Coach</span>
+              <strong>Karpathy Feedback Loop</strong>
+              <p>Turns evaluated trades and micro predictions into threshold guidance, especially when short calls underperform or long bias dominates.</p>
+            </article>
+            <article class="system-skill-card">
+              <span>Scheduled</span>
+              <strong>LLM Advisory Checkpoint</strong>
+              <p>Runs the selected advisory model on a schedule, keeps its conviction separate from the local predictor, and displays the latest verified LLM score.</p>
+            </article>
           </div>
         </div>
         <div class="skills-detail">
-          <div class="skills-detail-empty">
-            <strong>Select a skill file</strong>
-            <span>Choose or create a file to view its notes, rules, examples, and training material.</span>
+          <div class="skills-detail-card">
+            <span class="stat-label">Current system map</span>
+            <h3>What users can examine and tune</h3>
+            <div class="system-adjust-grid">
+              <div>
+                <strong>Inputs</strong>
+                <span>Trend, inventory, dollar pressure, geopolitics, curve structure, manual score, model choice.</span>
+              </div>
+              <div>
+                <strong>Micro signals</strong>
+                <span>Return windows, VWAP distance, volatility, short trigger, long invalidation, edge probability.</span>
+              </div>
+              <div>
+                <strong>Thresholds</strong>
+                <span>User advisory score threshold plus learned Karpathy recommendation from evaluated outcomes.</span>
+              </div>
+              <div>
+                <strong>Execution rules</strong>
+                <span>Paper-only sizing, target, stop loss, buy window, minimum long value, minimum short value.</span>
+              </div>
+            </div>
+            <div class="system-note">
+              The first editable layer is the visible score threshold. The next layer should expose micro trigger settings once enough short and long samples exist to avoid tuning from noise.
+            </div>
           </div>
         </div>
       </div>
@@ -556,6 +605,22 @@
           Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.
         </div>
       </article>
+
+      <section class="karpathy-coach-panel" aria-label="Karpathy loop coach">
+        <div>
+          <p class="eyebrow">Coach logic</p>
+          <h3>How the Karpathy loop improves the strategy</h3>
+          <p>
+            The loop does not guess better by itself. It records each forecast, waits for the future price or closed trade result, scores whether the call worked, then recommends stricter or looser thresholds only after there are enough evaluated samples.
+          </p>
+        </div>
+        <div class="coach-step-grid">
+          <div><strong>Observe</strong><span>Capture advisory score, micro score, long or short tone, entry price, and horizon.</span></div>
+          <div><strong>Evaluate</strong><span>Compare against future price and closed paper-trade P/L.</span></div>
+          <div><strong>Coach</strong><span>Flag weak short accuracy, excessive long bias, or threshold settings that admit too many low-quality calls.</span></div>
+          <div><strong>Adjust</strong><span>Recommend threshold changes first; change predictor weights only after the sample size is meaningful.</span></div>
+        </div>
+      </section>
 
       <div class="strategy-adapt-label">Adapt - extract methodology</div>
       <div class="strategy-card-grid">
@@ -1323,6 +1388,38 @@
             <p id="accuracy-all-count">0 closed trades</p>
           </div>
         </div>
+        <div class="micro-learning-panel" aria-label="Micro predictor learning loop">
+          <div class="section-heading micro-learning-heading">
+            <div>
+              <p class="eyebrow">Karpathy loop</p>
+              <h3>Micro predictor learning</h3>
+            </div>
+            <span class="shared-status" id="micro-learning-status">Collecting samples</span>
+          </div>
+          <div class="accuracy-dashboard micro-learning-summary">
+            <div class="accuracy-card">
+              <span class="stat-label">Micro long accuracy</span>
+              <strong id="micro-learning-long">No evaluated calls</strong>
+              <p>Predictor expected price to rise.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Micro short accuracy</span>
+              <strong id="micro-learning-short">No evaluated calls</strong>
+              <p>Predictor expected price to fall.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Micro flat accuracy</span>
+              <strong id="micro-learning-flat">No evaluated calls</strong>
+              <p>Predictor expected no meaningful move.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Next threshold change</span>
+              <strong>Guidance</strong>
+              <p id="micro-learning-guidance">Collecting short samples before changing the trigger.</p>
+            </div>
+          </div>
+          <div class="accuracy-bars micro-learning-bars" id="micro-learning-bars"></div>
+        </div>
         <div class="chart-shell">
           <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
         </div>
@@ -1361,6 +1458,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-backend-throttle-48"></script>
+  <script src="./app.js?v=comhedge-micro-learning-1"></script>
 </body>
 </html>

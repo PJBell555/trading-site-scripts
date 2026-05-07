@@ -836,6 +836,185 @@ async function loadAdvisoryPayloadD1(env) {
   };
 }
 
+function getMicroPredictionKey(entry = {}) {
+  if (entry.predictionKey) return entry.predictionKey;
+  const horizon = Number(entry.horizonSeconds) || 60;
+  const time = new Date(entry.time || Date.now()).getTime();
+  const bucket = Number.isFinite(time) ? Math.floor(time / 10000) : Date.now();
+  return [
+    entry.commodity || "commodity",
+    horizon,
+    bucket,
+    Number(entry.price || 0).toFixed(4)
+  ].join("|");
+}
+
+function normalizeMicroPrediction(entry = {}) {
+  const price = Number(entry.price);
+  const score = Number(entry.score);
+  const horizonSeconds = Number(entry.horizonSeconds || entry.horizon_seconds || 60);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(score) || !Number.isFinite(horizonSeconds)) return null;
+
+  const predictedTone = ["long", "short", "flat", "wait"].includes(entry.predictedTone)
+    ? entry.predictedTone
+    : score <= -6 ? "short" : score >= 6 ? "long" : "flat";
+  const predictionKey = getMicroPredictionKey({ ...entry, horizonSeconds, predictedTone });
+  const payload = {
+    ...entry,
+    predictionKey,
+    horizonSeconds,
+    predictedTone,
+    time: entry.time || new Date().toISOString()
+  };
+
+  return {
+    prediction_key: predictionKey,
+    prediction_time: textOrNull(payload.time),
+    commodity: textOrNull(entry.commodity || "oil"),
+    price: numberOrNull(price),
+    horizon_seconds: integerOrNull(horizonSeconds),
+    score: numberOrNull(score),
+    probability_up: numberOrNull(firstPresent(entry.probabilityUp, entry.probability_up)),
+    probability_down: numberOrNull(firstPresent(entry.probabilityDown, entry.probability_down)),
+    predicted_tone: textOrNull(predictedTone),
+    short_trigger: entry.shortTrigger ? 1 : 0,
+    long_trigger: entry.longTrigger ? 1 : 0,
+    long_invalidated: entry.longInvalidated ? 1 : 0,
+    payload_json: JSON.stringify(payload),
+    updated_at: new Date().toISOString()
+  };
+}
+
+async function upsertMicroPredictionsD1(env, predictions = []) {
+  let stored = 0;
+  for (const prediction of predictions) {
+    const row = normalizeMicroPrediction(prediction);
+    if (!row) continue;
+
+    await env.DB.prepare(`
+      INSERT INTO micro_predictions (
+        prediction_key,
+        prediction_time,
+        commodity,
+        price,
+        horizon_seconds,
+        score,
+        probability_up,
+        probability_down,
+        predicted_tone,
+        short_trigger,
+        long_trigger,
+        long_invalidated,
+        payload_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(prediction_key) DO UPDATE SET
+        prediction_time = excluded.prediction_time,
+        commodity = excluded.commodity,
+        price = excluded.price,
+        horizon_seconds = excluded.horizon_seconds,
+        score = excluded.score,
+        probability_up = excluded.probability_up,
+        probability_down = excluded.probability_down,
+        predicted_tone = excluded.predicted_tone,
+        short_trigger = excluded.short_trigger,
+        long_trigger = excluded.long_trigger,
+        long_invalidated = excluded.long_invalidated,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.prediction_key,
+      row.prediction_time,
+      row.commodity,
+      row.price,
+      row.horizon_seconds,
+      row.score,
+      row.probability_up,
+      row.probability_down,
+      row.predicted_tone,
+      row.short_trigger,
+      row.long_trigger,
+      row.long_invalidated,
+      row.payload_json,
+      row.updated_at
+    ).run();
+    stored += 1;
+  }
+  return stored;
+}
+
+async function evaluateMicroPredictionsD1(env) {
+  await env.DB.prepare(`
+    UPDATE micro_predictions
+    SET
+      evaluated_at = (
+        SELECT MIN(next.prediction_time)
+        FROM micro_predictions next
+        WHERE next.commodity = micro_predictions.commodity
+          AND strftime('%s', next.prediction_time) >= strftime('%s', micro_predictions.prediction_time) + micro_predictions.horizon_seconds
+      ),
+      future_price = (
+        SELECT next.price
+        FROM micro_predictions next
+        WHERE next.commodity = micro_predictions.commodity
+          AND strftime('%s', next.prediction_time) >= strftime('%s', micro_predictions.prediction_time) + micro_predictions.horizon_seconds
+        ORDER BY next.prediction_time ASC
+        LIMIT 1
+      ),
+      updated_at = ?
+    WHERE evaluated_at IS NULL
+  `).bind(new Date().toISOString()).run();
+
+  await env.DB.prepare(`
+    UPDATE micro_predictions
+    SET
+      move_bps = CASE
+        WHEN price > 0 AND future_price IS NOT NULL THEN ((future_price - price) / price) * 10000
+        ELSE move_bps
+      END,
+      correct = CASE
+        WHEN future_price IS NULL THEN correct
+        WHEN predicted_tone = 'long' AND ((future_price - price) / price) * 10000 > 0.5 THEN 1
+        WHEN predicted_tone = 'short' AND ((future_price - price) / price) * 10000 < -0.5 THEN 1
+        WHEN predicted_tone IN ('flat', 'wait') AND abs(((future_price - price) / price) * 10000) <= 2 THEN 1
+        ELSE 0
+      END,
+      updated_at = ?
+    WHERE evaluated_at IS NOT NULL
+      AND future_price IS NOT NULL
+      AND correct IS NULL
+  `).bind(new Date().toISOString()).run();
+}
+
+async function loadMicroPredictionPayloadD1(env, limit = 500) {
+  await evaluateMicroPredictionsD1(env);
+  const result = await env.DB.prepare(`
+    SELECT payload_json, evaluated_at, future_price, move_bps, correct
+    FROM micro_predictions
+    ORDER BY prediction_time DESC
+    LIMIT ?
+  `).bind(Math.max(1, Math.min(Number(limit) || 500, 2000))).all();
+
+  const predictions = getResults(result).map((row) => {
+    const payload = parseStoredJson(row.payload_json);
+    if (!payload) return null;
+    return {
+      ...payload,
+      evaluatedAt: row.evaluated_at,
+      futurePrice: row.future_price,
+      moveBps: row.move_bps,
+      correct: row.correct === null || row.correct === undefined ? null : Boolean(row.correct)
+    };
+  }).filter(Boolean);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: MICRO_PREDICTION_SOURCE,
+    storage: "d1",
+    predictions
+  };
+}
+
 async function getRuntimeDocumentD1(env, documentKey, fallbackPayload) {
   const row = await env.DB.prepare(`
     SELECT payload_json
@@ -1275,6 +1454,7 @@ async function saveAdvisoryFile(env, file, path, payload) {
 const SETTINGS_DOCUMENT_KEY = "settings";
 const PAPER_LEDGER_SOURCE = "cloudflare-d1-paper-trading-ledger";
 const ACTUAL_LEDGER_SOURCE = "cloudflare-d1-actual-trade-ledger";
+const MICRO_PREDICTION_SOURCE = "cloudflare-d1-micro-predictions";
 
 function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {}) {
   return {
@@ -1354,6 +1534,34 @@ async function handleD1Advisories(env, request, origin) {
     added: newSnapshots.length,
     merged: saved.snapshots.length,
     snapshots: saved.snapshots
+  }, 200, origin);
+}
+
+async function handleMicroPredictionsRoute(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({
+      error: "Micro predictor learning requires the Cloudflare D1 runtime store."
+    }, 503, origin);
+  }
+
+  if (request.method === "GET") {
+    const url = new URL(request.url);
+    const payload = await loadMicroPredictionPayloadD1(env, url.searchParams.get("limit") || 500);
+    return jsonResponse(payload, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const incoming = Array.isArray(body.predictions) ? body.predictions : [];
+  const added = await upsertMicroPredictionsD1(env, incoming);
+  const payload = await loadMicroPredictionPayloadD1(env, body.limit || 500);
+
+  return jsonResponse({
+    ...payload,
+    added
   }, 200, origin);
 }
 
@@ -1713,6 +1921,10 @@ export default {
 
       if (url.pathname === "/advisories") {
         return handleAdvisoriesRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/micro-predictions") {
+        return handleMicroPredictionsRoute(env, request, origin);
       }
 
       if (url.pathname === "/actual-trades") {

@@ -172,6 +172,12 @@ const accuracyEvaluationWindowEl = document.querySelector("#accuracy-evaluation-
 const accuracyBarsEl = document.querySelector("#accuracy-bars");
 const accuracyOutcomesEl = document.querySelector("#accuracy-outcomes");
 const advisoryChartEl = document.querySelector("#advisory-chart");
+const microLearningStatusEl = document.querySelector("#micro-learning-status");
+const microLearningLongEl = document.querySelector("#micro-learning-long");
+const microLearningShortEl = document.querySelector("#micro-learning-short");
+const microLearningFlatEl = document.querySelector("#micro-learning-flat");
+const microLearningGuidanceEl = document.querySelector("#micro-learning-guidance");
+const microLearningBarsEl = document.querySelector("#micro-learning-bars");
 const reasonsEl = document.querySelector("#reasons");
 const riskCopyEl = document.querySelector("#risk-copy");
 
@@ -304,7 +310,12 @@ const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
 const ADVISORY_HISTORY_LOCAL_KEY = "comhedge-advisory-history-v1";
 const ADVISORY_PENDING_LOCAL_KEY = "comhedge-pending-advisory-snapshots-v1";
+const MICRO_PREDICTION_HISTORY_LOCAL_KEY = "comhedge-micro-predictions-v1";
+const MICRO_PREDICTION_PENDING_LOCAL_KEY = "comhedge-pending-micro-predictions-v1";
+const MICRO_PREDICTION_CAPTURE_KEY = "comhedge-last-micro-prediction-key-v1";
 const ADVISORY_CAPTURE_MS = 120000;
+const MICRO_PREDICTION_CAPTURE_MS = 60000;
+const MICRO_PREDICTION_HORIZONS = [60, 180, 300, 600];
 const ADVISORY_HORIZON = "intraday";
 const ADVISORY_PERIODS = {
   hour: 60 * 60 * 1000,
@@ -343,6 +354,7 @@ const openPaperTrades = new Map();
 const transactionHistory = [];
 const liveTradeLedger = [];
 const advisoryHistory = [];
+const microPredictionHistory = [];
 const PAPER_ACTION_PENDING_TTL_MS = 10000;
 const pendingPaperActions = new Map();
 const lastPaperClosePriceChecks = new Map();
@@ -382,11 +394,13 @@ let backendSyncInFlight = false;
 let backendHistoryWriteInFlight = false;
 let backendSettingsSyncInFlight = false;
 let backendAdvisorySyncInFlight = false;
+let backendMicroPredictionSyncInFlight = false;
 let backendHistoryReady = false;
 let pendingHistorySaveRetry = false;
 let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
 let nextBackendAdvisorySyncAt = 0;
+let nextBackendMicroPredictionSyncAt = 0;
 let backendHistoryDirty = false;
 let backendHistorySaveTimer = null;
 let lastBackendHistorySaveAttemptAt = 0;
@@ -403,6 +417,7 @@ const PAPER_DECISION_LOG_CAPTURE_MS = 60000;
 let paperDecisionLog = [];
 let lastPaperDecisionLogKey = "";
 let lastPaperDecisionLogAt = 0;
+let lastMicroPredictionKey = "";
 
 async function hashAccessPassword(value) {
   const bytes = new TextEncoder().encode(value);
@@ -3486,6 +3501,7 @@ function getMicroPredictor(commodity) {
   const probabilityUp = 1 / (1 + Math.exp(-score / 10));
   const probabilityDown = 1 - probabilityUp;
   const edge = score >= 6 ? "up" : score <= -6 ? "down" : "flat";
+  const predictedTone = edge === "down" ? "short" : edge === "up" ? "long" : "flat";
   const read = edge === "down"
     ? `Tape falling: 10s ${ret10.toFixed(1)} bps, 60s ${ret60.toFixed(1)} bps, below VWAP ${vwapDistance.toFixed(1)} bps`
     : edge === "up"
@@ -3497,6 +3513,7 @@ function getMicroPredictor(commodity) {
     score,
     probabilityUp,
     probabilityDown,
+    predictedTone,
     edgeLabel: `${edge === "down" ? "Down" : edge === "up" ? "Up" : "Flat"} ${Math.round(Math.max(probabilityUp, probabilityDown) * 100)}%`,
     shortTrigger,
     longTrigger,
@@ -5509,6 +5526,267 @@ async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
   }
 }
 
+function getMicroPredictionUrl() {
+  return `${getHistoryApiUrl()}/micro-predictions`;
+}
+
+function getMicroPredictionKey(commodity, horizonSeconds, time, price) {
+  const bucket = Math.floor(new Date(time).getTime() / MICRO_PREDICTION_CAPTURE_MS);
+  return `${commodity}|${horizonSeconds}|${bucket}|${Number(price || 0).toFixed(4)}`;
+}
+
+function mergeMicroPredictionHistory(entries = []) {
+  const byKey = new Map(microPredictionHistory.map((entry) => [entry.predictionKey, entry]));
+  entries.forEach((entry) => {
+    if (!entry?.predictionKey) return;
+    byKey.set(entry.predictionKey, {
+      ...entry,
+      score: parseOptionalNumber(entry.score) ?? 0,
+      price: parseOptionalNumber(entry.price),
+      futurePrice: parseOptionalNumber(entry.futurePrice),
+      moveBps: parseOptionalNumber(entry.moveBps),
+      correct: typeof entry.correct === "boolean" ? entry.correct : null
+    });
+  });
+  microPredictionHistory.splice(
+    0,
+    microPredictionHistory.length,
+    ...Array.from(byKey.values()).sort((a, b) => new Date(b.time || 0) - new Date(a.time || 0)).slice(0, 2000)
+  );
+  saveLocalMicroPredictionHistory();
+}
+
+function saveLocalMicroPredictionHistory() {
+  try {
+    window.localStorage.setItem(MICRO_PREDICTION_HISTORY_LOCAL_KEY, JSON.stringify(microPredictionHistory.slice(0, 1000)));
+  } catch (_error) {
+    // Local cache is optional. D1 remains the shared source.
+  }
+}
+
+function loadLocalMicroPredictionHistory() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(MICRO_PREDICTION_HISTORY_LOCAL_KEY) || "[]");
+    if (Array.isArray(stored) && stored.length) mergeMicroPredictionHistory(stored);
+  } catch (_error) {
+    microPredictionHistory.splice(0, microPredictionHistory.length);
+  }
+}
+
+function loadPendingMicroPredictions() {
+  try {
+    const pending = JSON.parse(window.localStorage.getItem(MICRO_PREDICTION_PENDING_LOCAL_KEY) || "[]");
+    return Array.isArray(pending) ? pending.filter((entry) => entry?.predictionKey) : [];
+  } catch (_error) {
+    return [];
+  }
+}
+
+function savePendingMicroPredictions(predictions = []) {
+  try {
+    window.localStorage.setItem(MICRO_PREDICTION_PENDING_LOCAL_KEY, JSON.stringify(predictions.slice(-1500)));
+  } catch (_error) {
+    // Best-effort retry buffer.
+  }
+}
+
+function queuePendingMicroPredictions(predictions = []) {
+  const byKey = new Map(loadPendingMicroPredictions().map((entry) => [entry.predictionKey, entry]));
+  predictions.forEach((entry) => {
+    if (entry?.predictionKey) byKey.set(entry.predictionKey, entry);
+  });
+  const pending = Array.from(byKey.values()).sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+  savePendingMicroPredictions(pending);
+  return pending.length;
+}
+
+function clearPendingMicroPredictions(savedPredictions = []) {
+  const savedKeys = new Set(savedPredictions.map((entry) => entry?.predictionKey).filter(Boolean));
+  if (!savedKeys.size) return loadPendingMicroPredictions().length;
+  const remaining = loadPendingMicroPredictions().filter((entry) => !savedKeys.has(entry.predictionKey));
+  savePendingMicroPredictions(remaining);
+  return remaining.length;
+}
+
+function buildMicroPredictions(commodity, signal, tradePlan) {
+  const micro = signal?.micro;
+  if (!tradePlan?.priceReady || !micro?.ready) return [];
+
+  const time = new Date();
+  return MICRO_PREDICTION_HORIZONS.map((horizonSeconds) => ({
+    predictionKey: getMicroPredictionKey(commodity, horizonSeconds, time, tradePlan.livePrice),
+    time: time.toISOString(),
+    commodity,
+    commodityName: commodities.find(({ id }) => id === commodity)?.name || commodity,
+    contract: tradePlan.ticker,
+    price: tradePlan.livePrice,
+    priceSource: tradePlan.priceSource,
+    horizonSeconds,
+    score: micro.score,
+    probabilityUp: micro.probabilityUp,
+    probabilityDown: micro.probabilityDown,
+    predictedTone: micro.predictedTone || (micro.score <= -6 ? "short" : micro.score >= 6 ? "long" : "flat"),
+    shortTrigger: Boolean(micro.shortTrigger),
+    longTrigger: Boolean(micro.longTrigger),
+    longInvalidated: Boolean(micro.longInvalidated),
+    ret10: micro.ret10,
+    ret30: micro.ret30,
+    ret60: micro.ret60,
+    ret180: micro.ret180,
+    vwapDistance: micro.vwapDistance,
+    volatility: micro.volatility,
+    automaticBounded: signal.automaticBounded,
+    microAdjustedBounded: signal.microAdjustedBounded,
+    advisoryTone: signal.tone,
+    advisoryConviction: signal.conviction
+  }));
+}
+
+async function flushPendingMicroPredictions() {
+  const pending = loadPendingMicroPredictions();
+  if (!pending.length || !hasHistoryBackend()) return false;
+  return saveSharedMicroPredictions(pending, { queueOnFail: false, statusLabel: "Retrying micro loop" });
+}
+
+async function loadSharedMicroPredictions(manual = false) {
+  if (!hasHistoryBackend()) {
+    renderMicroLearningLoop();
+    return false;
+  }
+  if (!manual && isBackendBackoffActive(nextBackendMicroPredictionSyncAt)) return false;
+  if (backendMicroPredictionSyncInFlight) return false;
+  backendMicroPredictionSyncInFlight = true;
+
+  try {
+    if (microLearningStatusEl) microLearningStatusEl.textContent = "Syncing micro loop";
+    const response = await fetchWithTimeout(`${getMicroPredictionUrl()}?limit=1000&ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("micro predictions unavailable");
+    const data = await response.json();
+    mergeMicroPredictionHistory(Array.isArray(data?.predictions) ? data.predictions : []);
+    nextBackendMicroPredictionSyncAt = 0;
+    await flushPendingMicroPredictions();
+    renderMicroLearningLoop();
+    return true;
+  } catch (_error) {
+    nextBackendMicroPredictionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    renderMicroLearningLoop();
+    return false;
+  } finally {
+    backendMicroPredictionSyncInFlight = false;
+  }
+}
+
+async function saveSharedMicroPredictions(predictions, options = {}) {
+  const { queueOnFail = true, statusLabel = "Saving micro loop" } = options;
+  if (!predictions.length) return false;
+  if (!hasHistoryBackend()) {
+    queuePendingMicroPredictions(predictions);
+    renderMicroLearningLoop();
+    return false;
+  }
+
+  try {
+    if (microLearningStatusEl) microLearningStatusEl.textContent = statusLabel;
+    const response = await fetchWithTimeout(getMicroPredictionUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ predictions, limit: 1000 })
+    });
+    if (!response.ok) throw new Error("micro prediction save failed");
+    const data = await response.json();
+    const savedPredictions = Array.isArray(data?.predictions) ? data.predictions : predictions;
+    mergeMicroPredictionHistory(savedPredictions);
+    clearPendingMicroPredictions(predictions);
+    nextBackendMicroPredictionSyncAt = 0;
+    renderMicroLearningLoop();
+    return true;
+  } catch (_error) {
+    nextBackendMicroPredictionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    if (queueOnFail) queuePendingMicroPredictions(predictions);
+    renderMicroLearningLoop();
+    return false;
+  }
+}
+
+function maybeRecordMicroPrediction(commodity, signal, tradePlan) {
+  if (!tradePlan?.priceReady || !signal?.micro?.ready) return;
+  const batchKey = `${commodity}|${Math.floor(Date.now() / MICRO_PREDICTION_CAPTURE_MS)}`;
+  const savedBatchKey = window.localStorage.getItem(MICRO_PREDICTION_CAPTURE_KEY);
+  if (batchKey === lastMicroPredictionKey || batchKey === savedBatchKey) return;
+  lastMicroPredictionKey = batchKey;
+  window.localStorage.setItem(MICRO_PREDICTION_CAPTURE_KEY, batchKey);
+
+  const predictions = buildMicroPredictions(commodity, signal, tradePlan);
+  if (!predictions.length) return;
+  mergeMicroPredictionHistory(predictions);
+  renderMicroLearningLoop();
+  saveSharedMicroPredictions(predictions);
+}
+
+function summarizeMicroPredictions(tone) {
+  const rows = microPredictionHistory.filter((entry) => (
+    entry.predictedTone === tone && typeof entry.correct === "boolean"
+  ));
+  const correct = rows.filter((entry) => entry.correct).length;
+  return {
+    tone,
+    count: rows.length,
+    correct,
+    accuracy: rows.length ? Math.round((correct / rows.length) * 100) : null
+  };
+}
+
+function formatMicroSummary(summary) {
+  if (!summary.count) return "No evaluated calls";
+  return `${summary.accuracy}% / ${summary.count}`;
+}
+
+function getMicroLearningGuidance(shortSummary, longSummary) {
+  if (shortSummary.count < 20) return "Collecting short samples before changing the trigger.";
+  if (shortSummary.accuracy < 45) return "Short trigger is too loose; require stronger 10s/30s downside and below-VWAP confirmation.";
+  if (shortSummary.accuracy < 55) return "Short trigger is near break-even; keep collecting and avoid raising short size.";
+  if (longSummary.count >= 20 && longSummary.accuracy - shortSummary.accuracy > 20) {
+    return "Long bias still dominates; lower the macro weight when micro tape turns down.";
+  }
+  return "Short trigger is usable; keep logging outcomes before promoting it to execution.";
+}
+
+function renderMicroAccuracyBar(summary) {
+  const width = summary.accuracy === null ? 0 : summary.accuracy;
+  return `
+    <div class="accuracy-bar-row" data-tone="${escapeHtml(summary.tone)}">
+      <span>${summary.tone[0].toUpperCase()}${summary.tone.slice(1)}</span>
+      <span class="accuracy-bar-track"><i style="width:${width}%"></i></span>
+      <strong>${summary.count ? `${summary.accuracy}% / ${summary.count}` : "No data"}</strong>
+    </div>
+  `;
+}
+
+function renderMicroLearningLoop() {
+  const longSummary = summarizeMicroPredictions("long");
+  const shortSummary = summarizeMicroPredictions("short");
+  const flatSummary = summarizeMicroPredictions("flat");
+  const evaluatedCount = longSummary.count + shortSummary.count + flatSummary.count;
+  const pendingCount = loadPendingMicroPredictions().length;
+
+  if (microLearningStatusEl) {
+    microLearningStatusEl.textContent = evaluatedCount
+      ? `${evaluatedCount} evaluated${pendingCount ? `, ${pendingCount} queued` : ""}`
+      : `Collecting samples${pendingCount ? `, ${pendingCount} queued` : ""}`;
+  }
+  if (microLearningLongEl) microLearningLongEl.textContent = formatMicroSummary(longSummary);
+  if (microLearningShortEl) microLearningShortEl.textContent = formatMicroSummary(shortSummary);
+  if (microLearningFlatEl) microLearningFlatEl.textContent = formatMicroSummary(flatSummary);
+  if (microLearningGuidanceEl) microLearningGuidanceEl.textContent = getMicroLearningGuidance(shortSummary, longSummary);
+  if (microLearningBarsEl) {
+    microLearningBarsEl.innerHTML = [
+      renderMicroAccuracyBar(longSummary),
+      renderMicroAccuracyBar(shortSummary),
+      renderMicroAccuracyBar(flatSummary)
+    ].join("");
+  }
+}
+
 function getAdvisorySnapshotKey(commodity, horizon, time) {
   const minute = Math.floor(new Date(time).getTime() / ADVISORY_CAPTURE_MS);
   return `${commodity}|${horizon}|${minute}`;
@@ -6321,10 +6599,12 @@ async function initializeBackendState() {
   const historyLoad = autoSyncTransactionHistory();
   const settingsLoad = loadSharedSettings();
   const advisoryLoad = loadSharedAdvisoryHistory();
+  const microPredictionLoad = loadSharedMicroPredictions();
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
-    advisoryLoad
+    advisoryLoad,
+    microPredictionLoad
   ]);
 
   calculateSignal();
@@ -7628,6 +7908,7 @@ function calculateSignal() {
   renderKarpathyLoop(primarySignal, tradePlan);
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
+  maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
   applyLLMDisplayOverride(commodity);
   maybeAutoTriggerLLM();
 }
@@ -8233,6 +8514,7 @@ function initializeApp() {
   loadModelSettings();
   loadLastVerifiedLLMRun();
   loadLocalAdvisoryHistory();
+  loadLocalMicroPredictionHistory();
   loadPaperDecisionLog();
   applySavedStrategyEdits();
   loadOpenBrainMemory();
@@ -8256,6 +8538,7 @@ function initializeApp() {
   renderHistoryFilterButtons();
   renderPeriodFilterButtons();
   renderAdvisoryFilterButtons();
+  renderMicroLearningLoop();
   loadBundledTransactionHistory();
   calculateSignal();
   initializeBackendState();
@@ -8265,6 +8548,7 @@ function initializeApp() {
   window.setInterval(loadSharedSettings, BACKEND_SETTINGS_SYNC_MS);
   window.setInterval(autoSyncTransactionHistory, BACKEND_TRANSACTION_SYNC_MS);
   window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
+  window.setInterval(loadSharedMicroPredictions, BACKEND_ADVISORY_SYNC_MS);
   window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
