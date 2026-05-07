@@ -546,6 +546,318 @@ function hasTokenUsageStore(env) {
   return Boolean(env?.DB && typeof env.DB.prepare === "function");
 }
 
+function hasRuntimeStore(env) {
+  return hasTokenUsageStore(env);
+}
+
+function parseStoredJson(value, fallback = null) {
+  try {
+    return value ? JSON.parse(value) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function firstPresent(...values) {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function textOrNull(value) {
+  const first = firstPresent(value);
+  return first === undefined ? null : String(first);
+}
+
+function numberOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
+function integerOrNull(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+function getEntryTime(entry = {}) {
+  return textOrNull(firstPresent(
+    entry.time,
+    entry.transactionTime,
+    entry.openedAt,
+    entry.closedAt,
+    entry.sentAt,
+    new Date().toISOString()
+  ));
+}
+
+const TRANSACTION_TABLES = new Set(["paper_transactions", "actual_transactions"]);
+
+function assertTransactionTable(table) {
+  if (!TRANSACTION_TABLES.has(table)) {
+    throw new Error("Invalid transaction table");
+  }
+  return table;
+}
+
+function normalizeD1Transaction(entry = {}) {
+  const transactionKey = getTransactionKey(entry);
+  const payloadEntry = { ...entry, sharedKey: transactionKey };
+  const now = new Date().toISOString();
+
+  return {
+    transaction_key: transactionKey,
+    trade_id: textOrNull(firstPresent(entry.tradeId, entry.id)),
+    user_email: textOrNull(firstPresent(entry.userEmail, entry.profileEmail, entry.accountEmail, entry.email)),
+    commodity: textOrNull(entry.commodity),
+    commodity_name: textOrNull(entry.commodityName),
+    action: textOrNull(entry.action),
+    side: textOrNull(entry.side),
+    step: integerOrNull(entry.step),
+    contract: textOrNull(entry.contract),
+    price: numberOrNull(entry.price),
+    entry_price: numberOrNull(firstPresent(entry.entryPrice, entry.actualEntry, entry.price)),
+    target_entry_price: numberOrNull(entry.targetEntryPrice),
+    target_price: numberOrNull(firstPresent(entry.targetPrice, entry.targetExitPrice)),
+    stop_price: numberOrNull(entry.stopPrice),
+    exit_price: numberOrNull(firstPresent(entry.exitPrice, entry.actualExit)),
+    committed: numberOrNull(firstPresent(entry.committed, entry.capital, entry.marginRequirement)),
+    capital: numberOrNull(firstPresent(entry.capital, entry.marginRequirement, entry.committed)),
+    gross_pnl: numberOrNull(entry.grossPnl),
+    net_pnl: numberOrNull(firstPresent(entry.netPnl, entry.pnl)),
+    pnl: numberOrNull(entry.pnl),
+    opened_at: textOrNull(entry.openedAt),
+    closed_at: textOrNull(entry.closedAt),
+    transaction_time: getEntryTime(entry),
+    payload_json: JSON.stringify(payloadEntry),
+    updated_at: now
+  };
+}
+
+async function upsertTransactionRows(env, table, entries = []) {
+  assertTransactionTable(table);
+
+  for (const entry of entries) {
+    const row = normalizeD1Transaction(entry);
+    await env.DB.prepare(`
+      INSERT INTO ${table} (
+        transaction_key,
+        trade_id,
+        user_email,
+        commodity,
+        commodity_name,
+        action,
+        side,
+        step,
+        contract,
+        price,
+        entry_price,
+        target_entry_price,
+        target_price,
+        stop_price,
+        exit_price,
+        committed,
+        capital,
+        gross_pnl,
+        net_pnl,
+        pnl,
+        opened_at,
+        closed_at,
+        transaction_time,
+        payload_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(transaction_key) DO UPDATE SET
+        trade_id = excluded.trade_id,
+        user_email = excluded.user_email,
+        commodity = excluded.commodity,
+        commodity_name = excluded.commodity_name,
+        action = excluded.action,
+        side = excluded.side,
+        step = excluded.step,
+        contract = excluded.contract,
+        price = excluded.price,
+        entry_price = excluded.entry_price,
+        target_entry_price = excluded.target_entry_price,
+        target_price = excluded.target_price,
+        stop_price = excluded.stop_price,
+        exit_price = excluded.exit_price,
+        committed = excluded.committed,
+        capital = excluded.capital,
+        gross_pnl = excluded.gross_pnl,
+        net_pnl = excluded.net_pnl,
+        pnl = excluded.pnl,
+        opened_at = excluded.opened_at,
+        closed_at = excluded.closed_at,
+        transaction_time = excluded.transaction_time,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.transaction_key,
+      row.trade_id,
+      row.user_email,
+      row.commodity,
+      row.commodity_name,
+      row.action,
+      row.side,
+      row.step,
+      row.contract,
+      row.price,
+      row.entry_price,
+      row.target_entry_price,
+      row.target_price,
+      row.stop_price,
+      row.exit_price,
+      row.committed,
+      row.capital,
+      row.gross_pnl,
+      row.net_pnl,
+      row.pnl,
+      row.opened_at,
+      row.closed_at,
+      row.transaction_time,
+      row.payload_json,
+      row.updated_at
+    ).run();
+  }
+}
+
+async function loadTransactionPayloadD1(env, table, source) {
+  assertTransactionTable(table);
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM ${table}
+    ORDER BY transaction_time DESC
+  `).all();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source,
+    transactions: getResults(result)
+      .map((row) => parseStoredJson(row.payload_json))
+      .filter(Boolean)
+  };
+}
+
+async function replaceTransactionsD1(env, table, transactions = []) {
+  assertTransactionTable(table);
+  await env.DB.prepare(`DELETE FROM ${table}`).run();
+  await upsertTransactionRows(env, table, transactions);
+}
+
+function normalizeD1AdvisorySnapshot(entry = {}) {
+  const snapshot = normalizeAdvisorySnapshot(entry);
+  if (!snapshot) return null;
+
+  const snapshotKey = getAdvisorySnapshotKey(snapshot);
+  const payloadEntry = { ...snapshot, snapshotKey };
+  const now = new Date().toISOString();
+
+  return {
+    snapshot_key: snapshotKey,
+    snapshot_time: textOrNull(snapshot.time || now),
+    commodity: textOrNull(snapshot.commodity),
+    commodity_name: textOrNull(snapshot.commodityName),
+    price: numberOrNull(snapshot.price),
+    conviction: numberOrNull(snapshot.conviction),
+    llm_score: numberOrNull(firstPresent(snapshot.llmScore, snapshot.llm_score)),
+    local_score: numberOrNull(firstPresent(snapshot.localScore, snapshot.local_score, snapshot.conviction)),
+    tone: textOrNull(snapshot.tone),
+    label: textOrNull(snapshot.label),
+    action: textOrNull(snapshot.action),
+    payload_json: JSON.stringify(payloadEntry),
+    updated_at: now
+  };
+}
+
+async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
+  for (const snapshot of snapshots) {
+    const row = normalizeD1AdvisorySnapshot(snapshot);
+    if (!row) continue;
+
+    await env.DB.prepare(`
+      INSERT INTO advisory_snapshots (
+        snapshot_key,
+        snapshot_time,
+        commodity,
+        commodity_name,
+        price,
+        conviction,
+        llm_score,
+        local_score,
+        tone,
+        label,
+        action,
+        payload_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(snapshot_key) DO UPDATE SET
+        snapshot_time = excluded.snapshot_time,
+        commodity = excluded.commodity,
+        commodity_name = excluded.commodity_name,
+        price = excluded.price,
+        conviction = excluded.conviction,
+        llm_score = excluded.llm_score,
+        local_score = excluded.local_score,
+        tone = excluded.tone,
+        label = excluded.label,
+        action = excluded.action,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.snapshot_key,
+      row.snapshot_time,
+      row.commodity,
+      row.commodity_name,
+      row.price,
+      row.conviction,
+      row.llm_score,
+      row.local_score,
+      row.tone,
+      row.label,
+      row.action,
+      row.payload_json,
+      row.updated_at
+    ).run();
+  }
+}
+
+async function loadAdvisoryPayloadD1(env) {
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM advisory_snapshots
+    ORDER BY snapshot_time DESC
+    LIMIT ?
+  `).bind(MAX_ADVISORY_SNAPSHOTS).all();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-advisory-snapshots",
+    snapshots: getResults(result)
+      .map((row) => parseStoredJson(row.payload_json))
+      .filter(Boolean)
+  };
+}
+
+async function getRuntimeDocumentD1(env, documentKey, fallbackPayload) {
+  const row = await env.DB.prepare(`
+    SELECT payload_json
+    FROM runtime_documents
+    WHERE document_key = ?
+  `).bind(documentKey).first();
+
+  return parseStoredJson(row?.payload_json, fallbackPayload);
+}
+
+async function saveRuntimeDocumentD1(env, documentKey, payload) {
+  await env.DB.prepare(`
+    INSERT INTO runtime_documents (document_key, payload_json, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(document_key) DO UPDATE SET
+      payload_json = excluded.payload_json,
+      updated_at = excluded.updated_at
+  `).bind(documentKey, JSON.stringify(payload), new Date().toISOString()).run();
+
+  return { stored: "d1", key: documentKey };
+}
+
 function toFiniteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
@@ -960,6 +1272,312 @@ async function saveAdvisoryFile(env, file, path, payload) {
   );
 }
 
+const SETTINGS_DOCUMENT_KEY = "settings";
+const PAPER_LEDGER_SOURCE = "cloudflare-d1-paper-trading-ledger";
+const ACTUAL_LEDGER_SOURCE = "cloudflare-d1-actual-trade-ledger";
+
+function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {}) {
+  return {
+    ...current,
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-shared-settings",
+    coinbaseSandboxEnabled: typeof incoming.coinbaseSandboxEnabled === "boolean"
+      ? incoming.coinbaseSandboxEnabled
+      : Boolean(current.coinbaseSandboxEnabled),
+    users: Array.isArray(incoming.users) ? incoming.users : current.users || [],
+    userProfiles: incoming.userProfiles && typeof incoming.userProfiles === "object" && !Array.isArray(incoming.userProfiles)
+      ? mergeUserProfiles(current.userProfiles || {}, incoming.userProfiles)
+      : current.userProfiles || {}
+  };
+}
+
+async function handleD1Settings(env, request, origin) {
+  if (request.method === "GET") {
+    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    return jsonResponse({
+      ...defaultSettingsPayload(),
+      ...settings,
+      source: "cloudflare-d1-shared-settings",
+      storage: "d1"
+    }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const current = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const settings = mergeSettingsPayload(current, body);
+  await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, settings);
+
+  return jsonResponse({
+    commit: null,
+    storage: "d1",
+    settings
+  }, 200, origin);
+}
+
+async function handleD1Advisories(env, request, origin) {
+  if (request.method === "GET") {
+    const payload = await loadAdvisoryPayloadD1(env);
+    return jsonResponse({ ...payload, storage: "d1" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const current = await loadAdvisoryPayloadD1(env);
+  const incoming = Array.isArray(body.snapshots) ? body.snapshots : [];
+  const newSnapshots = getNewAdvisorySnapshots(current.snapshots, incoming);
+
+  if (!newSnapshots.length) {
+    return jsonResponse({
+      commit: null,
+      storage: "d1",
+      skipped: true,
+      reason: "No new advisory snapshots",
+      merged: current.snapshots.length,
+      snapshots: current.snapshots
+    }, 200, origin);
+  }
+
+  const snapshots = mergeAdvisorySnapshots(current.snapshots, newSnapshots);
+  await upsertAdvisorySnapshotsD1(env, snapshots);
+  const saved = await loadAdvisoryPayloadD1(env);
+
+  return jsonResponse({
+    commit: null,
+    storage: "d1",
+    added: newSnapshots.length,
+    merged: saved.snapshots.length,
+    snapshots: saved.snapshots
+  }, 200, origin);
+}
+
+function transactionSetsMatch(existing = [], next = []) {
+  const existingKeys = new Set(existing.map((transaction) => transaction?.sharedKey || JSON.stringify(transaction)));
+  const nextKeys = new Set(next.map((transaction) => transaction?.sharedKey || JSON.stringify(transaction)));
+  return existingKeys.size === nextKeys.size && [...existingKeys].every((key) => nextKeys.has(key));
+}
+
+async function handleD1TransactionLedger(env, request, table, source, origin) {
+  if (request.method === "GET") {
+    const payload = await loadTransactionPayloadD1(env, table, source);
+    return jsonResponse({ ...payload, storage: "d1" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const current = await loadTransactionPayloadD1(env, table, source);
+  const cleanupOnly = body.mode === "cleanup";
+
+  if (cleanupOnly) {
+    const compacted = compactPayload(current);
+    await replaceTransactionsD1(env, table, compacted.transactions);
+    const saved = await loadTransactionPayloadD1(env, table, source);
+
+    return jsonResponse({
+      commit: null,
+      backup: null,
+      storage: "d1",
+      cleaned: true,
+      removed: compacted.removed || 0,
+      merged: saved.transactions.length,
+      transactions: saved.transactions
+    }, 200, origin);
+  }
+
+  const incoming = Array.isArray(body.transactions) ? body.transactions : [];
+  const mergedTransactions = mergeTransactions(current.transactions, incoming);
+  if (transactionSetsMatch(current.transactions, mergedTransactions)) {
+    return jsonResponse({
+      commit: null,
+      backup: null,
+      storage: "d1",
+      unchanged: true,
+      cleaned: false,
+      removed: 0,
+      merged: current.transactions.length,
+      transactions: current.transactions
+    }, 200, origin);
+  }
+
+  await upsertTransactionRows(env, table, mergedTransactions);
+  const saved = await loadTransactionPayloadD1(env, table, source);
+
+  return jsonResponse({
+    commit: null,
+    backup: null,
+    storage: "d1",
+    cleaned: false,
+    removed: 0,
+    merged: saved.transactions.length,
+    transactions: saved.transactions
+  }, 200, origin);
+}
+
+async function handleSettingsRoute(env, request, origin) {
+  if (hasRuntimeStore(env)) {
+    return handleD1Settings(env, request, origin);
+  }
+
+  if (request.method === "GET") {
+    const { payload } = await getSettingsFile(env);
+    return jsonResponse({ ...payload, storage: "github-fallback" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const { file, path, payload } = await getSettingsFile(env);
+  const settings = {
+    ...payload,
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-github-shared-settings",
+    coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled),
+    users: Array.isArray(body.users) ? body.users : payload.users || [],
+    userProfiles: body.userProfiles && typeof body.userProfiles === "object" && !Array.isArray(body.userProfiles)
+      ? mergeUserProfiles(payload.userProfiles || {}, body.userProfiles)
+      : payload.userProfiles || {}
+  };
+  const result = await saveSettingsFile(env, file, path, settings);
+
+  return jsonResponse({
+    commit: result.commit?.sha,
+    storage: "github-fallback",
+    settings
+  }, 200, origin);
+}
+
+async function handleAdvisoriesRoute(env, request, origin) {
+  if (hasRuntimeStore(env)) {
+    return handleD1Advisories(env, request, origin);
+  }
+
+  if (request.method === "GET") {
+    const { payload } = await getAdvisoryFile(env);
+    return jsonResponse({ ...payload, storage: "github-fallback" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const { file, path, payload } = await getAdvisoryFile(env);
+  const incoming = Array.isArray(body.snapshots) ? body.snapshots : [];
+  const newSnapshots = getNewAdvisorySnapshots(payload.snapshots, incoming);
+
+  if (!newSnapshots.length) {
+    return jsonResponse({
+      commit: null,
+      storage: "github-fallback",
+      skipped: true,
+      reason: "No new advisory snapshots",
+      merged: Array.isArray(payload.snapshots) ? payload.snapshots.length : 0,
+      snapshots: Array.isArray(payload.snapshots) ? payload.snapshots : []
+    }, 200, origin);
+  }
+
+  const updatedPayload = {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-github-advisory-snapshots",
+    snapshots: mergeAdvisorySnapshots(payload.snapshots, newSnapshots)
+  };
+  const result = await saveAdvisoryFile(env, file, path, updatedPayload);
+
+  return jsonResponse({
+    commit: result.commit?.sha,
+    storage: "github-fallback",
+    added: newSnapshots.length,
+    merged: updatedPayload.snapshots.length,
+    snapshots: updatedPayload.snapshots
+  }, 200, origin);
+}
+
+async function handlePaperLedgerRoute(env, request, origin) {
+  if (hasRuntimeStore(env)) {
+    return handleD1TransactionLedger(env, request, "paper_transactions", PAPER_LEDGER_SOURCE, origin);
+  }
+
+  if (request.method === "GET") {
+    const { payload } = await getMasterFile(env);
+    return jsonResponse({ ...payload, storage: "github-fallback" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const { file, payload } = await getMasterFile(env);
+  const cleanupOnly = body.mode === "cleanup";
+  const incoming = cleanupOnly ? [] : Array.isArray(body.transactions) ? body.transactions : [];
+  const mergedTransactions = cleanupOnly
+    ? compactPayload(payload).transactions
+    : mergeTransactions(payload.transactions, incoming);
+
+  if (!cleanupOnly && transactionSetsMatch(payload.transactions || [], mergedTransactions)) {
+    return jsonResponse({
+      commit: null,
+      backup: null,
+      storage: "github-fallback",
+      unchanged: true,
+      cleaned: false,
+      removed: 0,
+      merged: mergedTransactions.length,
+      transactions: payload.transactions
+    }, 200, origin);
+  }
+
+  const updatedPayload = cleanupOnly
+    ? compactPayload(payload)
+    : {
+        generatedAt: new Date().toISOString(),
+        source: "cloudflare-github-master-paper-trading-ledger",
+        transactions: mergedTransactions
+      };
+  const result = await saveMasterFile(env, file, updatedPayload);
+  const backup = await saveDailyBackup(env, updatedPayload);
+
+  return jsonResponse({
+    commit: result.commit?.sha,
+    backup,
+    storage: "github-fallback",
+    cleaned: cleanupOnly,
+    removed: updatedPayload.removed || 0,
+    merged: updatedPayload.transactions.length,
+    transactions: updatedPayload.transactions
+  }, 200, origin);
+}
+
+async function handleActualTradesRoute(env, request, origin) {
+  if (hasRuntimeStore(env)) {
+    return handleD1TransactionLedger(env, request, "actual_transactions", ACTUAL_LEDGER_SOURCE, origin);
+  }
+
+  if (request.method === "GET") {
+    return jsonResponse({
+      generatedAt: new Date().toISOString(),
+      source: "github-fallback-unavailable-actual-trades",
+      storage: "github-fallback",
+      transactions: []
+    }, 200, origin);
+  }
+
+  return jsonResponse({
+    error: "Actual trades require the Cloudflare D1 runtime store."
+  }, 503, origin);
+}
+
 export default {
   async fetch(request, env) {
     const origin = getAllowedOrigin(request, env);
@@ -1090,130 +1708,18 @@ export default {
       }
 
       if (url.pathname === "/settings") {
-        if (request.method === "GET") {
-          const { payload } = await getSettingsFile(env);
-          return jsonResponse(payload, 200, origin);
-        }
-
-        if (request.method !== "POST") {
-          return jsonResponse({ error: "Method not allowed" }, 405, origin);
-        }
-
-        const body = await request.json().catch(() => ({}));
-        const { file, path, payload } = await getSettingsFile(env);
-        const settings = {
-          ...payload,
-          generatedAt: new Date().toISOString(),
-          source: "cloudflare-github-shared-settings",
-          coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled),
-          users: Array.isArray(body.users) ? body.users : payload.users || [],
-          userProfiles: body.userProfiles && typeof body.userProfiles === "object" && !Array.isArray(body.userProfiles)
-            ? mergeUserProfiles(payload.userProfiles || {}, body.userProfiles)
-            : payload.userProfiles || {}
-        };
-        const result = await saveSettingsFile(env, file, path, settings);
-
-        return jsonResponse({
-          commit: result.commit?.sha,
-          settings
-        }, 200, origin);
+        return handleSettingsRoute(env, request, origin);
       }
 
       if (url.pathname === "/advisories") {
-        if (request.method === "GET") {
-          const { payload } = await getAdvisoryFile(env);
-          return jsonResponse(payload, 200, origin);
-        }
-
-        if (request.method !== "POST") {
-          return jsonResponse({ error: "Method not allowed" }, 405, origin);
-        }
-
-        const body = await request.json().catch(() => ({}));
-        const { file, path, payload } = await getAdvisoryFile(env);
-        const incoming = Array.isArray(body.snapshots) ? body.snapshots : [];
-        const newSnapshots = getNewAdvisorySnapshots(payload.snapshots, incoming);
-
-        if (!newSnapshots.length) {
-          return jsonResponse({
-            commit: null,
-            skipped: true,
-            reason: "No new advisory snapshots",
-            merged: Array.isArray(payload.snapshots) ? payload.snapshots.length : 0,
-            snapshots: Array.isArray(payload.snapshots) ? payload.snapshots : []
-          }, 200, origin);
-        }
-
-        const updatedPayload = {
-          generatedAt: new Date().toISOString(),
-          source: "cloudflare-github-advisory-snapshots",
-          snapshots: mergeAdvisorySnapshots(payload.snapshots, newSnapshots)
-        };
-        const result = await saveAdvisoryFile(env, file, path, updatedPayload);
-
-        return jsonResponse({
-          commit: result.commit?.sha,
-          added: newSnapshots.length,
-          merged: updatedPayload.snapshots.length,
-          snapshots: updatedPayload.snapshots
-        }, 200, origin);
+        return handleAdvisoriesRoute(env, request, origin);
       }
 
-      if (request.method === "GET") {
-        const { payload } = await getMasterFile(env);
-        return jsonResponse(payload, 200, origin);
+      if (url.pathname === "/actual-trades") {
+        return handleActualTradesRoute(env, request, origin);
       }
 
-      if (request.method !== "POST") {
-        return jsonResponse({ error: "Method not allowed" }, 405, origin);
-      }
-
-      const body = await request.json().catch(() => ({}));
-      const { file, payload } = await getMasterFile(env);
-      const cleanupOnly = body.mode === "cleanup";
-      const incoming = cleanupOnly ? [] : Array.isArray(body.transactions) ? body.transactions : [];
-      const mergedTransactions = cleanupOnly
-        ? compactPayload(payload).transactions
-        : mergeTransactions(payload.transactions, incoming);
-
-      // Idempotency: if the merged transaction set is byte-identical (by
-      // sharedKey set) to the current master, skip the GitHub commit. This
-      // prevents the per-frontend auto-sync loop from rewriting the same
-      // file every few seconds and DoS-ing the Pages build pipeline.
-      const existingKeys = new Set((payload.transactions || []).map((t) => t?.sharedKey || JSON.stringify(t)));
-      const mergedKeys = new Set(mergedTransactions.map((t) => t?.sharedKey || JSON.stringify(t)));
-      const sameSize = existingKeys.size === mergedKeys.size;
-      const sameMembers = sameSize && [...existingKeys].every((k) => mergedKeys.has(k));
-      if (!cleanupOnly && sameMembers) {
-        return jsonResponse({
-          commit: null,
-          backup: null,
-          unchanged: true,
-          cleaned: false,
-          removed: 0,
-          merged: mergedTransactions.length,
-          transactions: payload.transactions
-        }, 200, origin);
-      }
-
-      const updatedPayload = cleanupOnly
-        ? compactPayload(payload)
-        : {
-            generatedAt: new Date().toISOString(),
-            source: "cloudflare-github-master-paper-trading-ledger",
-            transactions: mergedTransactions
-          };
-      const result = await saveMasterFile(env, file, updatedPayload);
-      const backup = await saveDailyBackup(env, updatedPayload);
-
-      return jsonResponse({
-        commit: result.commit?.sha,
-        backup,
-        cleaned: cleanupOnly,
-        removed: updatedPayload.removed || 0,
-        merged: updatedPayload.transactions.length,
-        transactions: updatedPayload.transactions
-      }, 200, origin);
+      return handlePaperLedgerRoute(env, request, origin);
     } catch (error) {
       return jsonResponse({ error: error.message }, 500, origin);
     }

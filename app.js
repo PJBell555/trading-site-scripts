@@ -175,15 +175,10 @@ const inputs = {
   dollar: document.querySelector("#dollar"),
   geopolitics: document.querySelector("#geopolitics"),
   curve: document.querySelector("#curve"),
-  horizon: document.querySelector("#horizon"),
   manualConviction: document.querySelector("#manual-conviction")
 };
 
-const horizonWeight = {
-  intraday: 0.8,
-  swing: 1,
-  position: 1.15
-};
+const ADVISORY_SIGNAL_WEIGHT = 1;
 
 const riskNotes = {
   oil: "A surprise inventory build, stronger dollar, or easing supply headlines can flip this view quickly.",
@@ -3345,7 +3340,7 @@ function readBaseSignals() {
     dollar: Number(inputs.dollar.value) * 1.6,
     geopolitics: Number(inputs.geopolitics.value) * 1.7,
     curve: Number(inputs.curve.value) * 2.4,
-    horizon: horizonWeight[inputs.horizon.value]
+    horizon: ADVISORY_SIGNAL_WEIGHT
   };
 }
 
@@ -5387,7 +5382,7 @@ function getLatestLLMConvictionForCommodity(commodity) {
 }
 
 function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSource) {
-  const signals = { ...baseSignals, horizon: horizonWeight[horizon] };
+  const signals = { ...baseSignals, horizon: ADVISORY_SIGNAL_WEIGHT };
   const signal = scoreCommodity(commodity, signals);
   const time = new Date();
   const llm = getLatestLLMConvictionForCommodity(commodity);
@@ -5589,11 +5584,17 @@ function getCorrectnessThreshold(price) {
   return Math.max(0.05, Math.abs(Number(price) || 0) * 0.0005);
 }
 
+function isActionableAdvisoryTone(tone) {
+  return tone === "long" || tone === "short";
+}
+
 function evaluateAdvisorySamples(samples) {
   const sorted = [...samples].sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
   const evaluationWindow = getAdvisoryEvaluationWindow();
 
   return sorted.map((entry, index) => {
+    if (!isActionableAdvisoryTone(entry.tone)) return null;
+
     const entryTime = new Date(entry.time || 0).getTime();
     const future = sorted.find((candidate, candidateIndex) => (
       candidateIndex > index
@@ -5611,8 +5612,7 @@ function evaluateAdvisorySamples(samples) {
     let correct = false;
 
     if (entry.tone === "long") correct = move > threshold;
-    else if (entry.tone === "short") correct = move < -threshold;
-    else correct = Math.abs(move) <= threshold;
+    if (entry.tone === "short") correct = move < -threshold;
 
     return {
       entry,
@@ -5644,7 +5644,6 @@ function summarizeEvaluations(evaluations, predicate = () => true) {
 function renderAccuracyBars(evaluations) {
   const tones = [
     { id: "long", label: "Long" },
-    { id: "wait", label: "Wait" },
     { id: "short", label: "Short" }
   ];
 
@@ -5710,7 +5709,9 @@ function renderAdvisoryAccuracy(samples) {
   const evaluations = [
     ...evaluateAdvisorySamples(samples),
     ...getPaperTradeAdvisoryEvaluations()
-  ].sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
+  ]
+    .filter((item) => isActionableAdvisoryTone(item?.entry?.tone))
+    .sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
   const allSummary = summarizeEvaluations(evaluations);
   const qualifiedSummary = summarizeEvaluations(evaluations, (item) => item.qualified);
   const averageAbsMove = evaluations.length
@@ -5792,7 +5793,7 @@ function renderAdvisoryChart() {
   const signalYFor = (tone) => {
     if (tone === "long") return laneTop + laneHeight * 0.15;
     if (tone === "short") return laneTop + laneHeight * 0.85;
-    return laneTop + laneHeight * 0.5;
+    return null;
   };
   const signalValues = samples.map((entry) => signalYFor(entry.tone));
 
@@ -5820,11 +5821,20 @@ function renderAdvisoryChart() {
     context.strokeStyle = color;
     context.lineWidth = 3 * scale;
     context.setLineDash(dash.map((value) => value * scale));
+    let started = false;
     values.forEach((value, index) => {
       const x = xFor(times[index]);
       const y = yFor(value, index);
-      if (index === 0) context.moveTo(x, y);
-      else context.lineTo(x, y);
+      if (!Number.isFinite(y)) {
+        started = false;
+        return;
+      }
+      if (!started) {
+        context.moveTo(x, y);
+        started = true;
+      } else {
+        context.lineTo(x, y);
+      }
     });
     context.stroke();
     context.setLineDash([]);
@@ -5842,7 +5852,6 @@ function renderAdvisoryChart() {
 
   const signalRows = [
     ["Long", "long", "#22d3a6"],
-    ["Wait", "wait", "#f4c152"],
     ["Short", "short", "#fb7185"]
   ];
   context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
@@ -5875,6 +5884,7 @@ function renderAdvisoryChart() {
     if (index % Math.max(1, Math.floor(samples.length / 80)) !== 0) return;
     const x = xFor(times[index]);
     const signalY = signalValues[index];
+    if (!Number.isFinite(signalY)) return;
     const color = entry.tone === "short" ? "#fb7185" : entry.tone === "long" ? "#22d3a6" : "#f4c152";
 
     context.beginPath();
@@ -5883,14 +5893,24 @@ function renderAdvisoryChart() {
     context.fill();
   });
 
-  const latest = samples[samples.length - 1];
-  const latestX = xFor(times[samples.length - 1]);
-  const latestY = signalValues[samples.length - 1];
-  const latestText = latest.tone === "short" ? "Short advisory" : latest.tone === "long" ? "Long advisory" : "Wait advisory";
-  context.textAlign = latestX > width * 0.72 ? "right" : "left";
-  context.fillStyle = latest.tone === "short" ? "#fb7185" : latest.tone === "long" ? "#22d3a6" : "#f4c152";
-  context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
-  context.fillText(latestText, latestX + (latestX > width * 0.72 ? -10 : 10) * scale, latestY - 10 * scale);
+  let latestActionableIndex = -1;
+  for (let index = samples.length - 1; index >= 0; index -= 1) {
+    if (isActionableAdvisoryTone(samples[index].tone)) {
+      latestActionableIndex = index;
+      break;
+    }
+  }
+
+  if (latestActionableIndex >= 0) {
+    const latest = samples[latestActionableIndex];
+    const latestX = xFor(times[latestActionableIndex]);
+    const latestY = signalValues[latestActionableIndex];
+    const latestText = latest.tone === "short" ? "Short advisory" : "Long advisory";
+    context.textAlign = latestX > width * 0.72 ? "right" : "left";
+    context.fillStyle = latest.tone === "short" ? "#fb7185" : "#22d3a6";
+    context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.fillText(latestText, latestX + (latestX > width * 0.72 ? -10 : 10) * scale, latestY - 10 * scale);
+  }
 }
 
 async function fetchWithTimeout(url, options = {}, timeoutMs = BACKEND_REQUEST_TIMEOUT_MS) {
@@ -7410,8 +7430,7 @@ function calculateSignal() {
   inputs.inventory,
   inputs.dollar,
   inputs.geopolitics,
-  inputs.curve,
-  inputs.horizon
+  inputs.curve
 ].forEach((element) => {
   element.addEventListener("input", calculateSignal);
   element.addEventListener("change", calculateSignal);
@@ -7812,8 +7831,7 @@ function maybeAutoTriggerLLM(force) {
   inputs.inventory,
   inputs.dollar,
   inputs.geopolitics,
-  inputs.curve,
-  inputs.horizon
+  inputs.curve
 ].forEach((el) => {
   if (el && el.addEventListener) {
     el.addEventListener("change", () => { lastVerifiedLLMRun = null; });

@@ -677,14 +677,6 @@
             </select>
           </label>
 
-          <label>
-            Trade horizon
-            <select id="horizon">
-              <option value="intraday">Intraday</option>
-              <option value="swing" selected>Swing</option>
-              <option value="position">Position</option>
-            </select>
-          </label>
         </div>
 
         <div class="panel verdict">
@@ -1316,9 +1308,9 @@
           <canvas id="advisory-chart" width="1200" height="520" aria-label="Price and advisory trajectory chart"></canvas>
         </div>
         <div class="chart-legend" aria-label="Chart legend">
-          <span><i class="price-line"></i>Actual price</span>
+          <span><i class="price-line"></i>Actual price of oil</span>
           <span><i class="advisory-line"></i>Advisory lane</span>
-          <span>Use the scorecard for the 60% question; use the chart to inspect timing.</span>
+          <span>Correct means long rose or short fell after the evaluation window, beyond the noise filter. Wait calls are excluded.</span>
         </div>
         <div class="accuracy-breakdown" aria-label="Recent advisory outcomes">
           <div class="accuracy-bars" id="accuracy-bars"></div>
