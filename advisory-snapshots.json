@@ -1,7 +1,21 @@
 {
-  "generatedAt": "2026-05-07T03:52:01.531Z",
+  "generatedAt": "2026-05-07T03:54:00.723Z",
   "source": "cloudflare-github-advisory-snapshots",
   "snapshots": [
+    {
+      "snapshotKey": "oil|intraday|14817717",
+      "time": "2026-05-07T03:54:00.167Z",
+      "commodity": "oil",
+      "commodityName": "Oil",
+      "horizon": "intraday",
+      "price": 95.78,
+      "priceSource": "Coinbase WebSocket / 8:54:00 PM",
+      "bounded": 19,
+      "conviction": 51,
+      "tone": "long",
+      "label": "Moderate Long",
+      "action": "Lean long small"
+    },
     {
       "snapshotKey": "oil|intraday|14817716",
       "time": "2026-05-07T03:52:00.757Z",
