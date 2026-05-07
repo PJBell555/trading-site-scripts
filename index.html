@@ -1388,6 +1388,38 @@
             <p id="accuracy-all-count">0 closed trades</p>
           </div>
         </div>
+        <div class="edge-dashboard" aria-label="Trade edge and expectancy dashboard">
+          <div class="section-heading edge-dashboard-heading">
+            <div>
+              <p class="eyebrow">Profitability test</p>
+              <h3>Edge dashboard</h3>
+            </div>
+            <span class="shared-status" id="edge-dashboard-status">Waiting for closed trades</span>
+          </div>
+          <div class="accuracy-dashboard edge-summary-grid">
+            <div class="accuracy-card">
+              <span class="stat-label">Long expectancy</span>
+              <strong id="edge-long-expectancy">-</strong>
+              <p id="edge-long-detail">No closed long trades in this window.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Short expectancy</span>
+              <strong id="edge-short-expectancy">-</strong>
+              <p id="edge-short-detail">No closed short trades in this window.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Overall expectancy</span>
+              <strong id="edge-overall-expectancy">-</strong>
+              <p id="edge-overall-detail">Expectancy appears after paper trades close.</p>
+            </div>
+            <div class="accuracy-card">
+              <span class="stat-label">Average fee drag</span>
+              <strong id="edge-fee-drag">-</strong>
+              <p id="edge-fee-detail">Fees are included when stored on trade rows.</p>
+            </div>
+          </div>
+          <div class="edge-breakdown" id="edge-breakdown" aria-label="Expectancy formula by side"></div>
+        </div>
         <div class="micro-learning-panel" aria-label="Micro predictor learning loop">
           <div class="section-heading micro-learning-heading">
             <div>

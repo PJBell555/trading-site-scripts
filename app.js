@@ -171,6 +171,16 @@ const accuracyAverageMoveEl = document.querySelector("#accuracy-average-move");
 const accuracyEvaluationWindowEl = document.querySelector("#accuracy-evaluation-window");
 const accuracyBarsEl = document.querySelector("#accuracy-bars");
 const accuracyOutcomesEl = document.querySelector("#accuracy-outcomes");
+const edgeDashboardStatusEl = document.querySelector("#edge-dashboard-status");
+const edgeLongExpectancyEl = document.querySelector("#edge-long-expectancy");
+const edgeLongDetailEl = document.querySelector("#edge-long-detail");
+const edgeShortExpectancyEl = document.querySelector("#edge-short-expectancy");
+const edgeShortDetailEl = document.querySelector("#edge-short-detail");
+const edgeOverallExpectancyEl = document.querySelector("#edge-overall-expectancy");
+const edgeOverallDetailEl = document.querySelector("#edge-overall-detail");
+const edgeFeeDragEl = document.querySelector("#edge-fee-drag");
+const edgeFeeDetailEl = document.querySelector("#edge-fee-detail");
+const edgeBreakdownEl = document.querySelector("#edge-breakdown");
 const advisoryChartEl = document.querySelector("#advisory-chart");
 const microLearningStatusEl = document.querySelector("#micro-learning-status");
 const microLearningLongEl = document.querySelector("#micro-learning-long");
@@ -5990,7 +6000,11 @@ function getPaperTradeAdvisoryEvaluations() {
         qualified: getAdvisoryLocalConviction({ localConviction: conviction }) >= advisoryScoreThreshold,
         metric: "trade",
         source: "paper-trade",
-        pnl: netPnl
+        pnl: netPnl,
+        grossPnl: detail.grossPnl,
+        totalFees: detail.totalFees,
+        capital: detail.capital,
+        contracts: detail.contracts
       };
     })
     .filter(Boolean);
@@ -6170,6 +6184,118 @@ function renderAccuracyOutcomes(forecastEvaluations, tradeEvaluations) {
   });
 }
 
+function summarizeTradeEdge(tradeEvaluations, side = null) {
+  const trades = tradeEvaluations.filter((item) => (
+    (!side || item.entry.tone === side) && Number.isFinite(Number(item.pnl))
+  ));
+  const wins = trades.filter((item) => Number(item.pnl) > 0);
+  const losses = trades.filter((item) => Number(item.pnl) <= 0);
+  const sum = (rows, getter) => rows.reduce((total, row) => total + (Number(getter(row)) || 0), 0);
+  const winRate = trades.length ? (wins.length / trades.length) * 100 : NaN;
+  const averageWin = wins.length ? sum(wins, (item) => item.pnl) / wins.length : 0;
+  const averageLoss = losses.length ? Math.abs(sum(losses, (item) => item.pnl) / losses.length) : 0;
+  const averageFees = trades.length ? sum(trades, (item) => item.totalFees) / trades.length : 0;
+  const grossExpectancy = trades.length ? sum(trades, (item) => item.grossPnl) / trades.length : NaN;
+  const expectancy = trades.length
+    ? ((wins.length / trades.length) * averageWin) - ((losses.length / trades.length) * averageLoss)
+    : NaN;
+  const totalPnl = sum(trades, (item) => item.pnl);
+  const totalFees = sum(trades, (item) => item.totalFees);
+
+  return {
+    side: side || "overall",
+    trades: trades.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate,
+    averageWin,
+    averageLoss,
+    averageFees,
+    grossExpectancy,
+    expectancy,
+    totalPnl,
+    totalFees
+  };
+}
+
+function formatExpectancy(value) {
+  if (!Number.isFinite(value)) return "-";
+  return formatSignedMoney(value);
+}
+
+function getEdgeDetailText(summary) {
+  if (!summary.trades) return "No closed trades in this window.";
+  return `${summary.wins}/${summary.trades} wins, ${formatPercent(summary.winRate)} win rate, avg win ${formatMoney(summary.averageWin)}, avg loss ${formatMoney(summary.averageLoss)}`;
+}
+
+function renderEdgeBreakdownRow(summary, label) {
+  const row = document.createElement("div");
+  row.className = "edge-breakdown-row";
+  row.dataset.edge = Number.isFinite(summary.expectancy) && summary.expectancy > 0 ? "positive" : "negative";
+  [
+    label,
+    String(summary.trades),
+    Number.isFinite(summary.winRate) ? formatPercent(summary.winRate) : "-",
+    formatMoney(summary.averageWin),
+    formatMoney(summary.averageLoss),
+    formatMoney(summary.averageFees),
+    formatExpectancy(summary.expectancy)
+  ].forEach((value) => {
+    const cell = document.createElement("span");
+    cell.textContent = value;
+    row.append(cell);
+  });
+  return row;
+}
+
+function renderEdgeDashboard(tradeEvaluations) {
+  const longSummary = summarizeTradeEdge(tradeEvaluations, "long");
+  const shortSummary = summarizeTradeEdge(tradeEvaluations, "short");
+  const overallSummary = summarizeTradeEdge(tradeEvaluations);
+  const isPositive = Number.isFinite(overallSummary.expectancy) && overallSummary.expectancy > 0;
+
+  if (edgeDashboardStatusEl) {
+    edgeDashboardStatusEl.textContent = overallSummary.trades
+      ? `${overallSummary.trades} closed paper trade${overallSummary.trades === 1 ? "" : "s"} in this window`
+      : "Waiting for closed trades";
+  }
+  if (edgeLongExpectancyEl) edgeLongExpectancyEl.textContent = formatExpectancy(longSummary.expectancy);
+  if (edgeLongDetailEl) edgeLongDetailEl.textContent = getEdgeDetailText(longSummary);
+  if (edgeShortExpectancyEl) edgeShortExpectancyEl.textContent = formatExpectancy(shortSummary.expectancy);
+  if (edgeShortDetailEl) edgeShortDetailEl.textContent = getEdgeDetailText(shortSummary);
+  if (edgeOverallExpectancyEl) {
+    edgeOverallExpectancyEl.textContent = formatExpectancy(overallSummary.expectancy);
+    edgeOverallExpectancyEl.dataset.edge = isPositive ? "positive" : "negative";
+  }
+  if (edgeOverallDetailEl) {
+    edgeOverallDetailEl.textContent = overallSummary.trades
+      ? `${formatSignedMoney(overallSummary.totalPnl)} net P/L across ${overallSummary.trades} closed trades.`
+      : "Expectancy appears after paper trades close.";
+  }
+  if (edgeFeeDragEl) edgeFeeDragEl.textContent = overallSummary.trades ? formatMoney(overallSummary.averageFees) : "-";
+  if (edgeFeeDetailEl) {
+    edgeFeeDetailEl.textContent = overallSummary.trades
+      ? `${formatMoney(overallSummary.totalFees)} total fees recorded or estimated.`
+      : "Fees are included when stored on trade rows.";
+  }
+  if (edgeBreakdownEl) {
+    edgeBreakdownEl.innerHTML = "";
+    const header = document.createElement("div");
+    header.className = "edge-breakdown-row edge-breakdown-head";
+    ["Side", "Trades", "Win rate", "Avg win", "Avg loss", "Avg fees", "Expectancy"].forEach((value) => {
+      const cell = document.createElement("span");
+      cell.textContent = value;
+      header.append(cell);
+    });
+    edgeBreakdownEl.append(
+      header,
+      renderEdgeBreakdownRow(longSummary, "Long"),
+      renderEdgeBreakdownRow(shortSummary, "Short"),
+      renderEdgeBreakdownRow(overallSummary, "Overall")
+    );
+  }
+}
+
 function renderAdvisoryAccuracy(samples) {
   const forecastEvaluations = evaluateAdvisorySamples(samples)
     .filter((item) => isActionableAdvisoryTone(item?.entry?.tone))
@@ -6211,6 +6337,7 @@ function renderAdvisoryAccuracy(samples) {
   }
   renderAccuracyBars(forecastEvaluations, tradeEvaluations);
   renderAccuracyOutcomes(forecastEvaluations, tradeEvaluations);
+  renderEdgeDashboard(tradeEvaluations);
 }
 
 function drawChartMessage(context, canvas, message) {
