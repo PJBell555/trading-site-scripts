@@ -43,6 +43,7 @@
           <button class="menu-button" type="button" data-section-target="advisories" data-active="true">Advisories</button>
           <button class="menu-button" type="button" data-section-target="second-opinion">Second Opinion</button>
           <button class="menu-button" type="button" data-section-target="trading">Paper Trades</button>
+          <button class="menu-button" type="button" data-section-target="leaderboard">Leader Board</button>
           <button class="menu-button" type="button" data-section-target="actual-trades">Actual Trades</button>
         </div>
         <span class="menu-group">Intelligence</span>
@@ -87,6 +88,72 @@
           Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
         </span>
       </section>
+
+    <section class="band leaderboard-page" data-app-section="leaderboard" aria-label="ComHedge leader board">
+      <div class="leaderboard-head">
+        <div>
+          <p class="eyebrow">Paper trading performance</p>
+          <h2>Leader Board</h2>
+          <p>Compare separate user accounts by realized P/L, open P/L, total P/L, win rate, and trade count.</p>
+        </div>
+        <button class="filter-button" type="button" id="leaderboard-refresh">Refresh</button>
+      </div>
+
+      <div class="leaderboard-stats" aria-label="Leader board summary">
+        <article class="leaderboard-stat">
+          <span class="stat-label">Team total P/L</span>
+          <strong id="leaderboard-team-pnl">$0.00</strong>
+          <p>Closed plus live open P/L where fresh prices exist.</p>
+        </article>
+        <article class="leaderboard-stat">
+          <span class="stat-label">Top trader P/L</span>
+          <strong id="leaderboard-top-pnl">$0.00</strong>
+          <p id="leaderboard-top-name">Waiting for trades</p>
+        </article>
+        <article class="leaderboard-stat">
+          <span class="stat-label">Active traders</span>
+          <strong id="leaderboard-active-count">0</strong>
+          <p>Accounts with at least one paper trade.</p>
+        </article>
+        <article class="leaderboard-stat">
+          <span class="stat-label">Average win rate</span>
+          <strong id="leaderboard-win-rate">-</strong>
+          <p>Closed trades only.</p>
+        </article>
+      </div>
+
+      <section class="leaderboard-panel" aria-label="Investor performance">
+        <div class="leaderboard-panel-head">
+          <h3>Investor Performance</h3>
+          <span id="leaderboard-updated">Waiting for ledger</span>
+        </div>
+        <canvas id="leaderboard-chart" width="1200" height="360" aria-label="Cumulative user P/L chart"></canvas>
+      </section>
+
+      <section class="leaderboard-panel" aria-label="User rankings">
+        <div class="leaderboard-panel-head">
+          <h3>By Person</h3>
+          <span>Separate accounts remain separate</span>
+        </div>
+        <div class="history-wrap">
+          <table class="history-table leaderboard-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>User Account</th>
+                <th>Total P/L</th>
+                <th>Closed P/L</th>
+                <th>Open P/L</th>
+                <th>Win Rate</th>
+                <th>Trades</th>
+                <th>Last Trade</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-body"></tbody>
+          </table>
+        </div>
+      </section>
+    </section>
 
     <section class="band token-costs" data-app-section="token-costs" aria-label="Token usage and costs">
       <div class="token-cost-header">

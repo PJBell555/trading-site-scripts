@@ -36,6 +36,15 @@ const userInlineDetailTitleEl = document.querySelector("#user-inline-detail-titl
 const userInlineDetailBodyEl = document.querySelector("#user-inline-detail-body");
 const userInlineDetailCloseEl = document.querySelector("#user-inline-detail-close");
 const userStatCards = Array.from(document.querySelectorAll("[data-user-list-filter]"));
+const leaderboardRefreshEl = document.querySelector("#leaderboard-refresh");
+const leaderboardTeamPnlEl = document.querySelector("#leaderboard-team-pnl");
+const leaderboardTopPnlEl = document.querySelector("#leaderboard-top-pnl");
+const leaderboardTopNameEl = document.querySelector("#leaderboard-top-name");
+const leaderboardActiveCountEl = document.querySelector("#leaderboard-active-count");
+const leaderboardWinRateEl = document.querySelector("#leaderboard-win-rate");
+const leaderboardUpdatedEl = document.querySelector("#leaderboard-updated");
+const leaderboardChartEl = document.querySelector("#leaderboard-chart");
+const leaderboardBodyEl = document.querySelector("#leaderboard-body");
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -481,6 +490,7 @@ function setActiveSection(section) {
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
+  if (section === "leaderboard") renderLeaderBoard();
   if (section === "users") showUserManagement(true);
   if (section === "actual-trades") renderLiveTradeLedger();
   if (section === "token-costs") renderTokenCosts();
@@ -1533,6 +1543,7 @@ function saveCurrentUserPaperSettings() {
   user.paperRiskPct = paperRiskPct;
   saveUserRoster();
   renderUserManagement();
+  renderLeaderBoard();
   return true;
 }
 
@@ -1872,6 +1883,260 @@ function getUserAccountGroupNote(user) {
   ));
   if (!sameNameAccounts.length) return "";
   return `${sameNameAccounts.length + 1} accounts for this user name`;
+}
+
+function getUserClosedPaperTrades(user) {
+  return getUserPaperLedgerEntries(user).filter(isClosingTransaction);
+}
+
+function getUserWinRate(user) {
+  const closedTrades = getUserClosedPaperTrades(user);
+  if (!closedTrades.length) return NaN;
+  const wins = closedTrades.filter((entry) => getDisplayPnl(entry) > 0).length;
+  return (wins / closedTrades.length) * 100;
+}
+
+function getLeaderBoardRows() {
+  return userRoster.map((user) => {
+    const closedPnl = getUserCurrentPnl(user);
+    const openPnl = getUserOpenPnl(user);
+    const totalPnl = closedPnl + openPnl;
+    const entries = getUserPaperLedgerEntries(user);
+    const tradeCount = entries.filter(isOpeningTransaction).length;
+    const closedCount = entries.filter(isClosingTransaction).length;
+    const winRate = getUserWinRate(user);
+    const lastTradeTime = getUserLastTradeTime(user);
+    const groupNote = getUserAccountGroupNote(user);
+
+    return {
+      user,
+      name: user.name || "Unnamed user",
+      email: user.email || "-",
+      closedPnl,
+      openPnl,
+      totalPnl,
+      tradeCount,
+      closedCount,
+      winRate,
+      lastTradeTime,
+      groupNote
+    };
+  }).sort((left, right) => {
+    const nameDelta = String(left.name).toLowerCase().localeCompare(String(right.name).toLowerCase());
+    if (nameDelta) return nameDelta;
+    const pnlDelta = right.totalPnl - left.totalPnl;
+    if (pnlDelta) return pnlDelta;
+    return normalizeEmail(left.email).localeCompare(normalizeEmail(right.email));
+  });
+}
+
+function getRankedLeaderBoardRows() {
+  return getLeaderBoardRows().sort((left, right) => {
+    const pnlDelta = right.totalPnl - left.totalPnl;
+    if (pnlDelta) return pnlDelta;
+    return String(left.name).localeCompare(String(right.name));
+  });
+}
+
+function getCumulativePnlSeries(user) {
+  let total = 0;
+  return getUserClosedPaperTrades(user)
+    .slice()
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
+    .map((entry) => {
+      total += getDisplayPnl(entry);
+      return {
+        time: getTransactionDate(entry.time).getTime(),
+        value: total
+      };
+    })
+    .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+}
+
+function drawLeaderBoardChart(rows) {
+  if (!leaderboardChartEl) return;
+  const rect = leaderboardChartEl.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const width = Math.max(640, Math.round((rect.width || 900) * scale));
+  const height = Math.max(260, Math.round((rect.height || 320) * scale));
+  leaderboardChartEl.width = width;
+  leaderboardChartEl.height = height;
+  const context = leaderboardChartEl.getContext("2d");
+  const pad = 42 * scale;
+  const chartWidth = width - (pad * 2);
+  const chartHeight = height - (pad * 1.7);
+  const topRows = getRankedLeaderBoardRows().filter((row) => row.tradeCount > 0).slice(0, 5);
+  const series = topRows.map((row) => ({
+    row,
+    points: getCumulativePnlSeries(row.user)
+  })).filter((entry) => entry.points.length);
+  const allPoints = series.flatMap((entry) => entry.points);
+
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#020617";
+  context.fillRect(0, 0, width, height);
+
+  if (!allPoints.length) {
+    context.fillStyle = "#dbeafe";
+    context.font = `700 ${18 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.textAlign = "center";
+    context.fillText("No closed trades to chart yet", width / 2, height / 2);
+    return;
+  }
+
+  const minTime = Math.min(...allPoints.map((point) => point.time));
+  const maxTime = Math.max(...allPoints.map((point) => point.time));
+  const minValue = Math.min(0, ...allPoints.map((point) => point.value));
+  const maxValue = Math.max(0, ...allPoints.map((point) => point.value));
+  const valueRange = Math.max(1, maxValue - minValue);
+  const timeRange = Math.max(1, maxTime - minTime);
+  const xFor = (time) => pad + (((time - minTime) / timeRange) * chartWidth);
+  const yFor = (value) => pad + (((maxValue - value) / valueRange) * chartHeight);
+  const zeroY = yFor(0);
+  const colors = ["#a855f7", "#f59e0b", "#06b6d4", "#22d3a6", "#60a5fa"];
+
+  context.strokeStyle = "rgba(148, 163, 184, 0.18)";
+  context.lineWidth = 1 * scale;
+  for (let i = 0; i <= 4; i += 1) {
+    const y = pad + ((chartHeight / 4) * i);
+    context.beginPath();
+    context.moveTo(pad, y);
+    context.lineTo(width - pad, y);
+    context.stroke();
+  }
+  context.strokeStyle = "rgba(148, 163, 184, 0.38)";
+  context.setLineDash([4 * scale, 5 * scale]);
+  context.beginPath();
+  context.moveTo(pad, zeroY);
+  context.lineTo(width - pad, zeroY);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.fillStyle = "#8aa2c5";
+  context.font = `700 ${11 * scale}px Aptos, Segoe UI, sans-serif`;
+  context.textAlign = "right";
+  [maxValue, (maxValue + minValue) / 2, minValue].forEach((value) => {
+    context.fillText(formatSignedMoney(value), pad - (8 * scale), yFor(value) + (4 * scale));
+  });
+
+  series.forEach(({ row, points }, index) => {
+    context.strokeStyle = colors[index % colors.length];
+    context.lineWidth = 2.5 * scale;
+    context.beginPath();
+    points.forEach((point, pointIndex) => {
+      const x = xFor(point.time);
+      const y = yFor(point.value);
+      if (pointIndex === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.stroke();
+    const last = points[points.length - 1];
+    context.fillStyle = colors[index % colors.length];
+    context.beginPath();
+    context.arc(xFor(last.time), yFor(last.value), 4 * scale, 0, Math.PI * 2);
+    context.fill();
+    context.font = `800 ${11 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.textAlign = "left";
+    context.fillText(row.name.split(" ")[0] || row.email, xFor(last.time) + (7 * scale), yFor(last.value) - (5 * scale));
+  });
+
+  context.textAlign = "left";
+  series.forEach(({ row }, index) => {
+    const x = pad + (index * 145 * scale);
+    const y = height - (18 * scale);
+    context.fillStyle = colors[index % colors.length];
+    context.fillRect(x, y - (9 * scale), 9 * scale, 9 * scale);
+    context.fillStyle = "#cfe4ff";
+    context.font = `800 ${11 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.fillText(`${row.name.split(" ")[0] || row.email} ${formatSignedMoney(row.totalPnl)}`, x + (15 * scale), y);
+  });
+}
+
+function renderLeaderBoard() {
+  if (!leaderboardBodyEl) return;
+  if (!userRoster.length) loadUserRoster();
+  const groupedRows = getLeaderBoardRows();
+  const rankedRows = getRankedLeaderBoardRows();
+  const rankByEmail = new Map(rankedRows.map((row, index) => [normalizeEmail(row.email), index + 1]));
+  const activeRows = rankedRows.filter((row) => row.tradeCount > 0);
+  const teamTotal = rankedRows.reduce((total, row) => total + row.totalPnl, 0);
+  const topRow = rankedRows[0] || null;
+  const winRates = activeRows.map((row) => row.winRate).filter(Number.isFinite);
+  const averageWinRate = winRates.length
+    ? winRates.reduce((total, value) => total + value, 0) / winRates.length
+    : NaN;
+
+  if (leaderboardTeamPnlEl) {
+    leaderboardTeamPnlEl.textContent = formatSignedMoney(teamTotal);
+    leaderboardTeamPnlEl.className = teamTotal >= 0 ? "gain" : "loss";
+  }
+  if (leaderboardTopPnlEl) {
+    leaderboardTopPnlEl.textContent = topRow ? formatSignedMoney(topRow.totalPnl) : "$0.00";
+    leaderboardTopPnlEl.className = topRow && topRow.totalPnl < 0 ? "loss" : "gain";
+  }
+  if (leaderboardTopNameEl) leaderboardTopNameEl.textContent = topRow ? `${topRow.name} / ${topRow.email}` : "Waiting for trades";
+  if (leaderboardActiveCountEl) leaderboardActiveCountEl.textContent = String(activeRows.length);
+  if (leaderboardWinRateEl) leaderboardWinRateEl.textContent = Number.isFinite(averageWinRate) ? formatPercent(averageWinRate) : "-";
+  if (leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+
+  leaderboardBodyEl.innerHTML = "";
+  if (!groupedRows.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 8;
+    cell.textContent = "No users available.";
+    row.append(cell);
+    leaderboardBodyEl.append(row);
+    drawLeaderBoardChart(rankedRows);
+    return;
+  }
+
+  groupedRows.forEach((entry) => {
+    const row = document.createElement("tr");
+    const rankCell = document.createElement("td");
+    const rank = document.createElement("span");
+    const userCell = document.createElement("td");
+    const profile = document.createElement("div");
+    const name = document.createElement("strong");
+    const email = document.createElement("span");
+
+    rank.className = "rank-badge";
+    rank.textContent = String(rankByEmail.get(normalizeEmail(entry.email)) || "-");
+    rankCell.append(rank);
+    profile.className = "user-profile";
+    name.textContent = entry.name;
+    email.textContent = entry.email;
+    profile.append(createUserAvatar(entry.user), name, email);
+    if (entry.groupNote) {
+      const note = document.createElement("small");
+      note.className = "user-account-note";
+      note.textContent = entry.groupNote;
+      profile.append(note);
+    }
+    userCell.append(profile);
+
+    [
+      rankCell,
+      userCell,
+      { value: formatSignedMoney(entry.totalPnl), className: entry.totalPnl >= 0 ? "gain" : "loss" },
+      { value: formatSignedMoney(entry.closedPnl), className: entry.closedPnl >= 0 ? "gain" : "loss" },
+      { value: formatSignedMoney(entry.openPnl), className: entry.openPnl >= 0 ? "gain" : "loss" },
+      { value: Number.isFinite(entry.winRate) ? formatPercent(entry.winRate) : "-" },
+      { value: `${entry.tradeCount} opened / ${entry.closedCount} closed` },
+      { value: entry.lastTradeTime ? formatRelativeDate(entry.lastTradeTime) : "No trades" }
+    ].forEach((item) => {
+      if (item instanceof HTMLElement) {
+        row.append(item);
+        return;
+      }
+      const cell = document.createElement("td");
+      if (item.className) cell.className = item.className;
+      cell.textContent = item.value;
+      row.append(cell);
+    });
+    leaderboardBodyEl.append(row);
+  });
+  drawLeaderBoardChart(rankedRows);
 }
 
 function getCurrentProfileStartCapital() {
@@ -8600,6 +8865,10 @@ syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(
 advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
+leaderboardRefreshEl?.addEventListener("click", () => {
+  renderLeaderBoard();
+  loadSharedTransactionHistory(true);
+});
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 paperEquityInputEl.readOnly = true;
 paperEquityInputEl.setAttribute("aria-readonly", "true");
@@ -8702,6 +8971,7 @@ featureTypeFiltersEl.addEventListener("click", (event) => {
   if (!button) return;
   featureTypeFilter = button.dataset.featureType;
   renderFeatureRequests();
+  renderLeaderBoard();
 });
 featureNewButtonEl.addEventListener("click", () => {
   featureFormEl.hidden = !featureFormEl.hidden;
@@ -8773,7 +9043,10 @@ function initializeApp() {
   window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
-  window.addEventListener("resize", renderAdvisoryChart);
+  window.addEventListener("resize", () => {
+    renderAdvisoryChart();
+    renderLeaderBoard();
+  });
 }
 
 if (hasValidAccessSession()) {

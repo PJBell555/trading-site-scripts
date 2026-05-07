@@ -127,6 +127,7 @@ body {
 .app-shell[data-active-section="advisories"] [data-app-section="advisories"],
 .app-shell[data-active-section="second-opinion"] [data-app-section="second-opinion"],
 .app-shell[data-active-section="trading"] [data-app-section="trading"],
+.app-shell[data-active-section="leaderboard"] [data-app-section="leaderboard"],
 .app-shell[data-active-section="actual-trades"] [data-app-section="actual-trades"],
 .app-shell[data-active-section="strategies"] [data-app-section="strategies"],
 .app-shell[data-active-section="skills"] [data-app-section="skills"],
@@ -145,6 +146,91 @@ body {
 .token-costs {
   gap: 28px;
   padding: 26px;
+}
+
+.leaderboard-page {
+  gap: 20px;
+  padding: 26px;
+}
+
+.leaderboard-head,
+.leaderboard-panel-head {
+  align-items: center;
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+}
+
+.leaderboard-head h2,
+.leaderboard-panel-head h3 {
+  margin: 0;
+}
+
+.leaderboard-head p {
+  color: var(--muted);
+  margin: 6px 0 0;
+}
+
+.leaderboard-stats {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.leaderboard-stat,
+.leaderboard-panel {
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.leaderboard-stat {
+  display: grid;
+  gap: 6px;
+  padding: 16px 18px;
+}
+
+.leaderboard-stat strong {
+  color: #f8fafc;
+  font-size: 1.45rem;
+}
+
+.leaderboard-stat p,
+.leaderboard-panel-head span {
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+  margin: 0;
+}
+
+.leaderboard-panel {
+  display: grid;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.leaderboard-panel canvas {
+  display: block;
+  height: min(34vh, 360px);
+  min-height: 260px;
+  width: 100%;
+}
+
+.leaderboard-table {
+  min-width: 980px;
+}
+
+.rank-badge {
+  align-items: center;
+  background: rgba(59, 130, 246, 0.16);
+  border: 1px solid rgba(96, 165, 250, 0.28);
+  border-radius: 999px;
+  color: #bfdbfe;
+  display: inline-grid;
+  font-weight: 900;
+  height: 30px;
+  place-items: center;
+  width: 30px;
 }
 
 .token-cost-header {
@@ -3652,6 +3738,7 @@ textarea::placeholder {
 
   .ledger-toolbar,
   .ledger-totals,
+  .leaderboard-stats,
   .second-opinion-actions,
   .open-brain-grid,
   .open-brain-pipeline,
