@@ -12,7 +12,7 @@
 
 set -u
 
-WORKER_URL="https://trading-site-scripts.peter-bell54.workers.dev/models/openrouter/advisory"
+WORKER_URL="https://trading-site-runtime.peter-bell54.workers.dev/models/openrouter/advisory"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ADVISORIES_LOG="$REPO_DIR/overnight-advisories.jsonl"
 COST_FILE="$REPO_DIR/.overnight-cost-cents"
