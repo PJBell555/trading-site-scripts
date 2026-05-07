@@ -12,12 +12,9 @@ ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
 OPENROUTER_APP_NAME = "ComHedge 2"
-# Set to "true" temporarily (and re-deploy) to halt all worker writes to
-# GitHub while a GH Pages deploy needs an undisturbed build window. The
-# saveJsonFile gate in workers/transactions.js short-circuits when this is
-# truthy. Auto-deploy from CF Workers Builds picks the value up from this
-# file, so the pause survives auto-redeploys until reverted here.
-# PAUSE_GIT_WRITES = "true"
+# Safety guard: D1 is the runtime store. If a deployment ever loses the DB
+# binding and falls back to GitHub storage, this prevents generated data commits.
+PAUSE_GIT_WRITES = "true"
 
 # Runtime storage for paper trades, actual trades, advisory snapshots,
 # shared settings, and token usage telemetry.

@@ -7,3 +7,4 @@ overnight-loop.log
 # Per-user Claude Code / agent tooling artifacts
 .claude/
 .playwright-mcp/
+.wrangler/
