@@ -1807,6 +1807,73 @@ function getUserCurrentPnl(user) {
   return getUserCommodityPnl(user);
 }
 
+function getUserPaperLedgerEntries(user) {
+  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  return getDedupedPaperCloseEntries(source).filter((entry) => entryBelongsToUser(entry, user));
+}
+
+function getUserOpenPaperTrades(user) {
+  const active = new Map();
+  getUserPaperLedgerEntries(user)
+    .slice()
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
+    .forEach((entry) => {
+      const identityKey = getTradeIdentityKey(entry);
+      const lifecycleKey = getTradeLifecycleKey(entry);
+      const key = identityKey || lifecycleKey;
+      if (isOpeningTransaction(entry)) active.set(key, entry);
+      if (isClosingTransaction(entry)) {
+        if (identityKey) active.delete(identityKey);
+        active.delete(lifecycleKey);
+      }
+    });
+  return Array.from(active.values());
+}
+
+function getUserOpenPnl(user) {
+  return getUserOpenPaperTrades(user).reduce((total, entry) => {
+    const commodity = entry.commodity || "oil";
+    const livePrice = getUsableMarketPrice(commodity);
+    if (!Number.isFinite(livePrice)) return total;
+    const pnl = getTradeNetPnl({
+      ...entry,
+      id: entry.tradeId || entry.id,
+      side: entry.side,
+      entryPrice: Number(entry.entryPrice ?? entry.price),
+      contractMultiplier: Number(entry.contractMultiplier),
+      contracts: Number(entry.contracts),
+      quantity: Number(entry.quantity),
+      openFee: Number(entry.openFee),
+      estimatedExitFee: Number(entry.estimatedExitFee)
+    }, livePrice);
+    return Number.isFinite(pnl) ? total + pnl : total;
+  }, 0);
+}
+
+function getUserLastTradeTime(user) {
+  const times = getUserPaperLedgerEntries(user)
+    .map((entry) => getTransactionDate(entry.time).getTime())
+    .filter(Number.isFinite);
+  if (!times.length) return null;
+  return new Date(Math.max(...times));
+}
+
+function getUserTradeCount(user) {
+  return getUserPaperLedgerEntries(user).filter((entry) => isOpeningTransaction(entry)).length;
+}
+
+function getUserAccountGroupNote(user) {
+  const normalizedName = String(user?.name || "").trim().toLowerCase();
+  if (!normalizedName) return "";
+  const sameNameAccounts = userRoster.filter((candidate) => (
+    candidate !== user
+    && String(candidate.name || "").trim().toLowerCase() === normalizedName
+    && normalizeEmail(candidate.email) !== normalizeEmail(user.email)
+  ));
+  if (!sameNameAccounts.length) return "";
+  return `${sameNameAccounts.length + 1} accounts for this user name`;
+}
+
 function getCurrentProfileStartCapital() {
   const user = getProfileForCapital();
   if (!user) return Number(paperBaseEquity) || PAPER_START_EQUITY;
@@ -2538,9 +2605,13 @@ function getFilteredUsers() {
   return matchedUsers
     .slice()
     .sort((left, right) => {
-      const pnlDelta = getUserCurrentPnl(right) - getUserCurrentPnl(left);
+      const leftName = String(left.name || left.email || "").toLowerCase();
+      const rightName = String(right.name || right.email || "").toLowerCase();
+      const nameDelta = leftName.localeCompare(rightName);
+      if (nameDelta) return nameDelta;
+      const pnlDelta = (getUserCurrentPnl(right) + getUserOpenPnl(right)) - (getUserCurrentPnl(left) + getUserOpenPnl(left));
       if (pnlDelta) return pnlDelta;
-      return String(left.name || left.email || "").localeCompare(String(right.name || right.email || ""));
+      return normalizeEmail(left.email).localeCompare(normalizeEmail(right.email));
     });
 }
 
@@ -2838,7 +2909,7 @@ function renderUserManagement() {
   if (!filteredUsers.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 8;
+    cell.colSpan = 11;
     cell.textContent = "No users match the current search.";
     row.append(cell);
     userTableBodyEl.append(row);
@@ -2857,8 +2928,15 @@ function renderUserManagement() {
     const actionCell = document.createElement("td");
     const actions = document.createElement("div");
     const action = document.createElement("button");
+    const accountGroupNote = getUserAccountGroupNote(user);
+    const closedPnl = getUserCurrentPnl(user);
+    const openPnl = getUserOpenPnl(user);
+    const totalPnl = closedPnl + openPnl;
+    const lastTradeTime = getUserLastTradeTime(user);
+    const tradeCount = getUserTradeCount(user);
 
     row.className = "user-summary-row";
+    if (accountGroupNote) row.dataset.accountGroup = "true";
     row.dataset.expanded = String(expandedUserEmail === normalizeEmail(user.email));
     row.tabIndex = 0;
     row.addEventListener("click", (event) => {
@@ -2881,7 +2959,14 @@ function renderUserManagement() {
     });
     name.textContent = user.name || "Unnamed user";
     email.textContent = user.email || "-";
-    profileText.append(name, email);
+    if (accountGroupNote) {
+      const accountNote = document.createElement("small");
+      accountNote.className = "user-account-note";
+      accountNote.textContent = accountGroupNote;
+      profileText.append(name, email, accountNote);
+    } else {
+      profileText.append(name, email);
+    }
     profile.append(createUserAvatar(user), profileText);
     profileCell.append(profile);
 
@@ -2907,9 +2992,18 @@ function renderUserManagement() {
       { value: String(Number(user.sessions) || 0) },
       { value: formatMoney(user.paperBaseEquity ?? PAPER_START_EQUITY) },
       {
-        value: formatSignedMoney(getUserCurrentPnl(user)),
-        className: getUserCurrentPnl(user) >= 0 ? "gain" : "loss"
+        value: formatSignedMoney(closedPnl),
+        className: closedPnl >= 0 ? "gain" : "loss"
       },
+      {
+        value: formatSignedMoney(openPnl),
+        className: openPnl >= 0 ? "gain" : "loss"
+      },
+      {
+        value: formatSignedMoney(totalPnl),
+        className: totalPnl >= 0 ? "gain" : "loss"
+      },
+      { value: lastTradeTime ? `${formatRelativeDate(lastTradeTime)} / ${tradeCount} trade${tradeCount === 1 ? "" : "s"}` : "No trades" },
       { value: status },
       { value: actionCell }
     ].forEach(({ value, className }) => {

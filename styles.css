@@ -761,6 +761,18 @@ body {
   display: block;
 }
 
+.user-account-note {
+  color: #93c5fd;
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin-top: 3px;
+}
+
+.user-summary-row[data-account-group="true"] td:first-child {
+  border-left: 3px solid rgba(96, 165, 250, 0.72);
+}
+
 .user-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3170,6 +3182,10 @@ select {
   border: 1px solid rgba(17, 32, 43, 0.08);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.user-table {
+  min-width: 1180px;
 }
 
 .history-table th,
