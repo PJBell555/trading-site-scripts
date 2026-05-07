@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-paper-scheduler-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-skills-detail-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -527,27 +527,27 @@
       </div>
       <div class="skills-workspace">
         <aside class="skills-sidebar" aria-label="Skill categories">
-          <div class="skills-category is-active">
+          <div class="skills-category is-active" data-skill-system="micro-predictor" role="button" tabindex="0">
             <span>Micro</span>
             <strong>Short-Term Predictor</strong>
           </div>
-          <div class="skills-category">
+          <div class="skills-category" data-skill-system="d1-learning" role="button" tabindex="0">
             <span>D1</span>
             <strong>Learning Store</strong>
           </div>
-          <div class="skills-category">
+          <div class="skills-category" data-skill-system="advisory-evaluator" role="button" tabindex="0">
             <span>Score</span>
             <strong>Advisory Evaluator</strong>
           </div>
-          <div class="skills-category">
+          <div class="skills-category" data-skill-system="paper-execution" role="button" tabindex="0">
             <span>Paper</span>
             <strong>Paper Execution</strong>
           </div>
-          <div class="skills-category">
+          <div class="skills-category" data-skill-system="karpathy-coach" role="button" tabindex="0">
             <span>Loop</span>
             <strong>Karpathy Coach</strong>
           </div>
-          <div class="skills-category">
+          <div class="skills-category" data-skill-system="scheduled-advisor" role="button" tabindex="0">
             <span>LLM</span>
             <strong>Scheduled Advisor</strong>
           </div>
@@ -559,32 +559,32 @@
             <button class="filter-button" type="button">Inspect</button>
           </div>
           <div class="system-skill-list" aria-label="Built trading systems">
-            <article class="system-skill-card" data-system-tone="active">
+            <article class="system-skill-card" data-system-tone="active" data-skill-system="micro-predictor" role="button" tabindex="0">
               <span>Live</span>
               <strong>Microstructure Predictor</strong>
               <p>Reads Coinbase tick history, 10s/30s/60s returns, acceleration, VWAP distance, and volatility to classify the next move as long, short, or flat.</p>
             </article>
-            <article class="system-skill-card">
+            <article class="system-skill-card" data-skill-system="d1-learning" role="button" tabindex="0">
               <span>Shared</span>
               <strong>D1 Learning Store</strong>
               <p>Stores micro predictions, future prices, move basis points, and correct or wrong outcomes in Cloudflare D1 instead of GitHub commits.</p>
             </article>
-            <article class="system-skill-card">
+            <article class="system-skill-card" data-skill-system="advisory-evaluator" role="button" tabindex="0">
               <span>Live</span>
               <strong>Advisory Accuracy Lab</strong>
               <p>Compares advisory score thresholds against evaluated outcomes so users can see when a score is conviction versus demonstrated accuracy.</p>
             </article>
-            <article class="system-skill-card">
+            <article class="system-skill-card" data-skill-system="paper-execution" role="button" tabindex="0">
               <span>Guarded</span>
               <strong>Paper Trading Engine</strong>
               <p>Acts on qualified advisories with target, stop, minimum trade value, margin, and closed-trade P/L tracking before any live execution is enabled.</p>
             </article>
-            <article class="system-skill-card">
+            <article class="system-skill-card" data-skill-system="karpathy-coach" role="button" tabindex="0">
               <span>Coach</span>
               <strong>Karpathy Feedback Loop</strong>
               <p>Turns evaluated trades and micro predictions into threshold guidance, especially when short calls underperform or long bias dominates.</p>
             </article>
-            <article class="system-skill-card">
+            <article class="system-skill-card" data-skill-system="scheduled-advisor" role="button" tabindex="0">
               <span>Scheduled</span>
               <strong>LLM Advisory Checkpoint</strong>
               <p>Runs the selected advisory model on a schedule, keeps its conviction separate from the local predictor, and displays the latest verified LLM score.</p>
@@ -592,7 +592,7 @@
           </div>
         </div>
         <div class="skills-detail">
-          <div class="skills-detail-card">
+          <div class="skills-detail-card" id="skills-detail-card">
             <span class="stat-label">Current system map</span>
             <h3>What users can examine and tune</h3>
             <div class="system-adjust-grid">
@@ -1576,6 +1576,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-paper-scheduler-1"></script>
+  <script src="./app.js?v=comhedge-skills-detail-1"></script>
 </body>
 </html>

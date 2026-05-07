@@ -71,6 +71,8 @@ const saveOpenBrainEndpointEl = document.querySelector("#save-open-brain-endpoin
 const captureOpenBrainAdvisoryEl = document.querySelector("#capture-open-brain-advisory");
 const exportOpenBrainMemoryEl = document.querySelector("#export-open-brain-memory");
 const openBrainMemoryTableEl = document.querySelector("#open-brain-memory-table");
+const skillSystemButtons = Array.from(document.querySelectorAll("[data-skill-system]"));
+const skillsDetailCardEl = document.querySelector("#skills-detail-card");
 const strategyEditorEl = document.querySelector("#strategy-editor");
 const strategyEditorCancelEl = document.querySelector("#strategy-editor-cancel");
 const strategyEditKeyEl = document.querySelector("#strategy-edit-key");
@@ -388,6 +390,80 @@ const DEFAULT_SERVER_PAPER_TRADING = {
   lastEvaluationAt: null,
   lastDecision: "Not evaluated yet"
 };
+const SKILL_SYSTEM_DETAILS = {
+  "micro-predictor": {
+    label: "Current system map",
+    title: "Microstructure Predictor",
+    subtitle: "Short-term classifier for the next oil move.",
+    sections: [
+      ["Inputs", "Coinbase ticks, latest confirmed price, 10s/30s/60s returns, acceleration, VWAP distance, volatility, and current advisory tone."],
+      ["Signals Produced", "Long probability, short probability, flat read, short trigger, long trigger, long invalidation, and move basis points after evaluation."],
+      ["Where It Stores Learning", "Predictions are written to Cloudflare D1 micro_predictions, then evaluated when a future price at the target horizon exists."],
+      ["What Users Can Tune", "Return windows, trigger basis points, flat band, minimum tick count, and whether micro evidence can veto a stale long bias."]
+    ],
+    note: "Use this panel when short calls are lagging. The safest next control is a short-trigger threshold backed by enough evaluated short samples."
+  },
+  "d1-learning": {
+    label: "Shared learning store",
+    title: "D1 Learning Store",
+    subtitle: "Runtime memory for trades, advisories, predictions, token usage, and scheduler runs.",
+    sections: [
+      ["Tables", "paper_transactions, actual_transactions, advisory_snapshots, micro_predictions, token_usage, runtime_documents, and paper_scheduler_runs."],
+      ["Why It Exists", "D1 keeps runtime records out of GitHub, removes commit races, and gives every browser the same shared truth."],
+      ["Data Quality", "Rows keep payload_json plus indexed columns, so the UI can render rich detail while queries stay efficient."],
+      ["What Users Can Tune", "Retention windows, cleanup rules, per-user scheduler settings, and what metrics are surfaced in dashboards."]
+    ],
+    note: "D1 is the operating ledger now. GitHub should hold source code and static seed snapshots, not live trading records."
+  },
+  "advisory-evaluator": {
+    label: "Score quality lab",
+    title: "Advisory Evaluator",
+    subtitle: "Separates conviction from demonstrated forecast accuracy.",
+    sections: [
+      ["Inputs", "Advisory snapshots, price at call time, future evaluated price, local score, LLM score, tone, and user threshold."],
+      ["Accuracy Rules", "Long is correct when price rises after the evaluation window. Short is correct when price falls. Wait/flat calls are measured separately."],
+      ["Dashboards", "Forecast accuracy, trade accuracy, threshold tests, side-specific expectancy, and recent outcome rows."],
+      ["What Users Can Tune", "Score threshold, evaluation window, side-specific minimum sample count, and when to allow microstructure vetoes."]
+    ],
+    note: "Raising the threshold may improve selectivity, but it can reduce sample count. The useful test is expectancy by side, not headline accuracy alone."
+  },
+  "paper-execution": {
+    label: "Execution simulator",
+    title: "Paper Trading Engine",
+    subtitle: "Turns qualified advisories into paper positions with target, stop, and P/L accounting.",
+    sections: [
+      ["Browser Engine", "The open page still manages the current user's visible paper-trade panel and local decision log."],
+      ["Server Scheduler", "Cloudflare now evaluates enabled users every five minutes and can open or close paper trades while browsers are closed."],
+      ["Risk Rules", "Per-user commodities, risk percent, max open trades, entry threshold, Martingale step, margin, multiplier, and estimated fees."],
+      ["What Users Can Tune", "Enable/disable server trading, commodities, risk %, max open trades, entry threshold, leverage, fees, and contract multiplier."]
+    ],
+    note: "This remains paper-only. Live brokerage execution should stay disabled until expectancy is positive and duplicate-order protections are audited."
+  },
+  "karpathy-coach": {
+    label: "Feedback coach",
+    title: "Karpathy Feedback Loop",
+    subtitle: "Small empirical loop that adjusts how selective the system should be.",
+    sections: [
+      ["Training Set", "Closed trades and evaluated micro predictions, with side-specific samples preferred when enough data exists."],
+      ["Adjustment Logic", "Raises thresholds after low win rate, negative average P/L, or loss streaks; lowers cautiously when win rate and average P/L improve."],
+      ["Short-Side Focus", "Tracks when the model misses oil drops and can recommend tighter long entries or stronger short triggers."],
+      ["What Users Can Tune", "Sample size, loss-streak penalty, side-specific thresholds, minimum samples, and whether recommendations become automatic."]
+    ],
+    note: "The coach should recommend before it acts. Automatic threshold changes need guardrails because short-term samples can be noisy."
+  },
+  "scheduled-advisor": {
+    label: "Scheduled model checkpoint",
+    title: "LLM Advisory Checkpoint",
+    subtitle: "Periodic model review that stays separate from the local micro predictor.",
+    sections: [
+      ["Inputs", "Commodity context, current price, macro inputs, local score, recent micro reads, and existing advisory state."],
+      ["Cadence", "Runs on configured slots and stores the latest verified model conviction so the UI can show local plus scheduled LLM views."],
+      ["Model Roles", "Primary model produces the advisory. Optional critic challenges the call before consolidation."],
+      ["What Users Can Tune", "Primary model, critic model, refresh interval, prompt style, and whether the LLM can change local conviction."]
+    ],
+    note: "The LLM is a slower checkpoint, not the tick engine. Keep second-by-second prediction in microstructure logic and use LLMs for context review."
+  }
+};
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -423,6 +499,7 @@ let expandedUserEmail = "";
 let editingUserEmail = "";
 let activeSection = "home";
 let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
+let activeSkillSystem = "micro-predictor";
 let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
 let secondaryModelId = "gpt-5-mini";
@@ -577,6 +654,54 @@ function renderOpenBrainMemory() {
     });
     openBrainMemoryTableEl.append(row);
   });
+}
+
+function renderSkillSystemDetail() {
+  if (!skillsDetailCardEl) return;
+  const detail = SKILL_SYSTEM_DETAILS[activeSkillSystem] || SKILL_SYSTEM_DETAILS["micro-predictor"];
+
+  skillSystemButtons.forEach((button) => {
+    const isActive = button.dataset.skillSystem === activeSkillSystem;
+    if (button.classList.contains("skills-category")) {
+      button.classList.toggle("is-active", isActive);
+    }
+    if (button.classList.contains("system-skill-card")) {
+      button.dataset.systemTone = isActive ? "active" : "";
+    }
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  const label = document.createElement("span");
+  const title = document.createElement("h3");
+  const subtitle = document.createElement("p");
+  const grid = document.createElement("div");
+  const note = document.createElement("div");
+
+  label.className = "stat-label";
+  label.textContent = detail.label;
+  title.textContent = detail.title;
+  subtitle.className = "skills-detail-subtitle";
+  subtitle.textContent = detail.subtitle;
+  grid.className = "system-adjust-grid";
+  detail.sections.forEach(([sectionTitle, sectionCopy]) => {
+    const item = document.createElement("div");
+    const strong = document.createElement("strong");
+    const span = document.createElement("span");
+    strong.textContent = sectionTitle;
+    span.textContent = sectionCopy;
+    item.append(strong, span);
+    grid.append(item);
+  });
+  note.className = "system-note";
+  note.textContent = detail.note;
+
+  skillsDetailCardEl.replaceChildren(label, title, subtitle, grid, note);
+}
+
+function selectSkillSystem(systemId) {
+  if (!SKILL_SYSTEM_DETAILS[systemId]) return;
+  activeSkillSystem = systemId;
+  renderSkillSystemDetail();
 }
 
 function captureCurrentAdvisoryMemory(source = "manual") {
@@ -9139,6 +9264,14 @@ captureOpenBrainAdvisoryEl.addEventListener("click", () => {
   openBrainStatusEl.textContent = event ? "Advisory captured" : "No advisory to capture";
 });
 exportOpenBrainMemoryEl.addEventListener("click", downloadOpenBrainMemory);
+skillSystemButtons.forEach((button) => {
+  button.addEventListener("click", () => selectSkillSystem(button.dataset.skillSystem));
+  button.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    selectSkillSystem(button.dataset.skillSystem);
+  });
+});
 strategyEditorEl?.addEventListener("submit", saveStrategyEditor);
 strategyEditorCancelEl?.addEventListener("click", closeStrategyEditor);
 document.querySelectorAll("[data-strategy-edit]").forEach((button) => {
@@ -9227,6 +9360,7 @@ function initializeApp() {
   renderSecondOpinionControls();
   renderTokenCosts();
   renderOpenBrainMemory();
+  renderSkillSystemDetail();
   renderCurrentUserStrategy();
   showUserManagement();
   renderFeatureRequests();
