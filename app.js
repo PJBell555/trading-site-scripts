@@ -238,7 +238,7 @@ const commodityTweaks = {
 const marketConfig = {
   oil: {
     ticker: "NOLK6",
-    productId: "NOLK6",
+    productId: "NOL-18MAY26-CDE",
     contractMonth: "May 2026",
     productType: "Coinbase futures contract",
     contractExpiresAt: "2026-05-18T17:00",

@@ -32,7 +32,7 @@ const SERVER_COMMODITIES = {
     id: "oil",
     name: "Oil",
     ticker: "NOLK6",
-    productId: "NOLK6",
+    productId: "NOL-18MAY26-CDE",
     productType: "Coinbase futures contract",
     contractMonth: "May 2026",
     contractExpiresAt: "2026-05-18T17:00",
