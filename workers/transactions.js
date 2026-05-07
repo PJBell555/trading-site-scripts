@@ -15,13 +15,28 @@ const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
 const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 100000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
+const DEFAULT_MARKET_CALENDAR = {
+  overnightRiskMode: "accept",
+  marketTimeZone: "America/New_York",
+  weeklyOpenDay: 0,
+  weeklyOpenTime: "18:00",
+  weeklyCloseDay: 5,
+  weeklyCloseTime: "17:00",
+  dailyCloseTime: "17:00",
+  dailyReopenTime: "18:00",
+  closeBeforeMinutes: 30,
+  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays."
+};
 const SERVER_COMMODITIES = {
   oil: {
     id: "oil",
     name: "Oil",
-    ticker: "NOL-18MAY26-CDE",
-    productId: "NOL-18MAY26-CDE",
+    ticker: "NOLK6",
+    productId: "NOLK6",
     productType: "Coinbase futures contract",
+    contractMonth: "May 2026",
+    contractExpiresAt: "2026-05-18T17:00",
+    rollBeforeDays: 3,
     contractMultiplier: 10,
     marginRateLong: 1 / 7.2,
     marginRateShort: 1 / 6.2,
@@ -96,7 +111,7 @@ function getTransactionKey(entry) {
 }
 
 function isClosingTransaction(entry) {
-  return Number(entry.pnl) !== 0 || ["TARGET", "STOP"].some((word) => entry.action?.includes(word));
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => entry.action?.includes(word));
 }
 
 function isOpeningTransaction(entry) {
@@ -1537,6 +1552,26 @@ function normalizeCommodityIds(ids = ["oil"]) {
   return normalized.length ? [...new Set(normalized)] : ["oil"];
 }
 
+function normalizeMarketTime(value, fallback) {
+  const raw = String(value || "").trim();
+  return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback;
+}
+
+function normalizeMarketCalendarSettings(explicit = {}) {
+  return {
+    overnightRiskMode: explicit.overnightRiskMode === "flatten-before-close" ? "flatten-before-close" : "accept",
+    marketTimeZone: String(explicit.marketTimeZone || DEFAULT_MARKET_CALENDAR.marketTimeZone).trim(),
+    weeklyOpenDay: clamp(Math.round(Number(explicit.weeklyOpenDay ?? DEFAULT_MARKET_CALENDAR.weeklyOpenDay)), 0, 6),
+    weeklyOpenTime: normalizeMarketTime(explicit.weeklyOpenTime, DEFAULT_MARKET_CALENDAR.weeklyOpenTime),
+    weeklyCloseDay: clamp(Math.round(Number(explicit.weeklyCloseDay ?? DEFAULT_MARKET_CALENDAR.weeklyCloseDay)), 0, 6),
+    weeklyCloseTime: normalizeMarketTime(explicit.weeklyCloseTime, DEFAULT_MARKET_CALENDAR.weeklyCloseTime),
+    dailyCloseTime: normalizeMarketTime(explicit.dailyCloseTime, DEFAULT_MARKET_CALENDAR.dailyCloseTime),
+    dailyReopenTime: normalizeMarketTime(explicit.dailyReopenTime, DEFAULT_MARKET_CALENDAR.dailyReopenTime),
+    closeBeforeMinutes: clamp(Math.round(Number(explicit.closeBeforeMinutes) || DEFAULT_MARKET_CALENDAR.closeBeforeMinutes), 1, 240),
+    marketCalendarNotes: String(explicit.marketCalendarNotes || DEFAULT_MARKET_CALENDAR.marketCalendarNotes).trim()
+  };
+}
+
 function getUserPaperSchedulerSettings(user = {}, env) {
   const email = normalizeEmail(user.email);
   const explicit = user.paperTrading && typeof user.paperTrading === "object"
@@ -1554,6 +1589,7 @@ function getUserPaperSchedulerSettings(user = {}, env) {
     maxOpenTrades: clamp(Math.round(Number(explicit.maxOpenTrades ?? PAPER_SCHEDULER_DEFAULT_MAX_OPEN) || PAPER_SCHEDULER_DEFAULT_MAX_OPEN), 1, 10),
     entryThreshold: clamp(Math.round(Number(explicit.entryThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD) || PAPER_SCHEDULER_DEFAULT_THRESHOLD), 1, 100),
     minEvaluationMs: Math.max(60000, Number(explicit.minEvaluationMs) || PAPER_SCHEDULER_MIN_EVALUATION_MS),
+    ...normalizeMarketCalendarSettings(explicit),
     lastEvaluationAt: explicit.lastEvaluationAt || null,
     lastDecision: explicit.lastDecision || "Not evaluated yet"
   };
@@ -1636,7 +1672,12 @@ function getServerCommodityConfig(user = {}, commodity = "oil") {
     id: commodity,
     name: base.name,
     ticker: terms.ticker || base.ticker,
-    productId: terms.productId || base.productId
+    productId: terms.productId || terms.ticker || base.productId,
+    contractMonth: terms.contractMonth || base.contractMonth || "Front month",
+    contractExpiresAt: terms.contractExpiresAt || base.contractExpiresAt || "",
+    rollBeforeDays: Number.isFinite(Number(terms.rollBeforeDays ?? base.rollBeforeDays))
+      ? clamp(Math.round(Number(terms.rollBeforeDays ?? base.rollBeforeDays)), 0, 30)
+      : 3
   };
 }
 
@@ -1756,6 +1797,109 @@ function getServerExitTrigger(trade, price) {
   return null;
 }
 
+function parseMarketMinutes(value, fallback) {
+  const [hours, minutes] = normalizeMarketTime(value, fallback).split(":").map(Number);
+  return (hours * 60) + minutes;
+}
+
+function getMarketLocalParts(value = new Date(), timeZone = DEFAULT_MARKET_CALENDAR.marketTimeZone) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(value).reduce((acc, part) => {
+    acc[part.type] = part.value;
+    return acc;
+  }, {});
+  const dayMap = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const hour = Number(parts.hour) === 24 ? 0 : Number(parts.hour);
+  return {
+    day: dayMap[parts.weekday] ?? 0,
+    minutes: (hour * 60) + Number(parts.minute || 0)
+  };
+}
+
+function isWeekMinuteInRange(current, open, close) {
+  return open <= close
+    ? current >= open && current < close
+    : current >= open || current < close;
+}
+
+function getMinutesUntilWeekMinute(current, target) {
+  const weekMinutes = 7 * 24 * 60;
+  return (target - current + weekMinutes) % weekMinutes;
+}
+
+function getUserMarketScheduleStatus(settings, value = new Date()) {
+  const schedule = normalizeMarketCalendarSettings(settings);
+  const { day, minutes } = getMarketLocalParts(value, schedule.marketTimeZone);
+  const currentWeekMinute = (day * 24 * 60) + minutes;
+  const weeklyOpenMinute = (schedule.weeklyOpenDay * 24 * 60) + parseMarketMinutes(schedule.weeklyOpenTime, DEFAULT_MARKET_CALENDAR.weeklyOpenTime);
+  const weeklyCloseMinute = (schedule.weeklyCloseDay * 24 * 60) + parseMarketMinutes(schedule.weeklyCloseTime, DEFAULT_MARKET_CALENDAR.weeklyCloseTime);
+  const dailyCloseMinute = parseMarketMinutes(schedule.dailyCloseTime, DEFAULT_MARKET_CALENDAR.dailyCloseTime);
+  const dailyReopenMinute = parseMarketMinutes(schedule.dailyReopenTime, DEFAULT_MARKET_CALENDAR.dailyReopenTime);
+  const insideWeeklySession = isWeekMinuteInRange(currentWeekMinute, weeklyOpenMinute, weeklyCloseMinute);
+  const dailyMaintenanceClosed = day >= 1
+    && day <= 4
+    && minutes >= dailyCloseMinute
+    && minutes < dailyReopenMinute;
+  const isOpen = insideWeeklySession && !dailyMaintenanceClosed;
+
+  const closeCandidates = [getMinutesUntilWeekMinute(currentWeekMinute, weeklyCloseMinute)]
+    .filter((delta) => delta > 0);
+  for (let offset = 0; offset < 7; offset += 1) {
+    const candidateDay = (day + offset) % 7;
+    if (candidateDay < 1 || candidateDay > 4) continue;
+    const candidateWeekMinute = (candidateDay * 24 * 60) + dailyCloseMinute;
+    const delta = getMinutesUntilWeekMinute(currentWeekMinute, candidateWeekMinute);
+    if (delta > 0) closeCandidates.push(delta);
+  }
+
+  const minutesUntilClose = isOpen && closeCandidates.length ? Math.min(...closeCandidates) : null;
+  const flattenWindow = isOpen
+    && schedule.overnightRiskMode === "flatten-before-close"
+    && Number.isFinite(minutesUntilClose)
+    && minutesUntilClose <= schedule.closeBeforeMinutes;
+
+  return {
+    isOpen,
+    flattenWindow,
+    minutesUntilClose,
+    shortLabel: isOpen ? "Market open" : "Market closed",
+    detail: isOpen
+      ? `${Math.round(minutesUntilClose || 0)} minute(s) until configured close.`
+      : "Configured calendar says this market is closed."
+  };
+}
+
+function getServerContractRollStatus(config, value = new Date()) {
+  const expiration = config?.contractExpiresAt ? new Date(config.contractExpiresAt) : null;
+  if (!expiration || Number.isNaN(expiration.getTime())) {
+    return { shouldOpen: true, shouldFlatten: false, detail: "No contract expiration configured." };
+  }
+
+  const rollBeforeMs = Math.max(0, Number(config.rollBeforeDays) || 0) * 24 * 60 * 60 * 1000;
+  const now = value.getTime();
+  const rollAt = expiration.getTime() - rollBeforeMs;
+  if (now >= expiration.getTime()) {
+    return {
+      shouldOpen: false,
+      shouldFlatten: true,
+      detail: `${config.ticker || "Contract"} is past configured expiration.`
+    };
+  }
+  if (now >= rollAt) {
+    return {
+      shouldOpen: false,
+      shouldFlatten: true,
+      detail: `${config.ticker || "Contract"} is inside the ${Number(config.rollBeforeDays) || 0}-day roll window.`
+    };
+  }
+  return { shouldOpen: true, shouldFlatten: false, detail: "Contract is outside the roll window." };
+}
+
 function makeServerTransaction(entry = {}) {
   return {
     id: entry.id || `srv-${Date.now()}`,
@@ -1763,6 +1907,46 @@ function makeServerTransaction(entry = {}) {
     source: "cloudflare-paper-scheduler",
     ...entry
   };
+}
+
+function makeServerCloseTransaction({ user, email, commodity, config, openTrade, price, action, note }) {
+  const grossPnl = getServerTradeGrossPnl(openTrade, price.price);
+  const closeFee = Number(openTrade.estimatedExitFee) || Number(openTrade.feePerContractSide || 0) * (Number(openTrade.contracts) || 1);
+  const totalFees = (Number(openTrade.openFee) || 0) + closeFee;
+  const pnl = grossPnl - totalFees;
+
+  return makeServerTransaction({
+    id: `srv-close-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    tradeId: openTrade.tradeId || openTrade.id,
+    userEmail: email,
+    userName: user.name || "",
+    commodity,
+    commodityName: config.name,
+    action,
+    side: openTrade.side,
+    step: Number(openTrade.step) || 1,
+    contract: openTrade.contract || config.ticker,
+    price: price.price,
+    entryPrice: Number(openTrade.entryPrice ?? openTrade.price),
+    targetPrice: Number(openTrade.targetPrice),
+    stopPrice: Number(openTrade.stopPrice),
+    exitPrice: price.price,
+    contractMultiplier: Number(openTrade.contractMultiplier) || config.contractMultiplier,
+    contracts: Number(openTrade.contracts) || 1,
+    marginRequirement: Number(openTrade.marginRequirement) || null,
+    notionalValue: Number(openTrade.notionalValue) || null,
+    openFee: Number(openTrade.openFee) || 0,
+    closeFee,
+    estimatedExitFee: Number(openTrade.estimatedExitFee) || closeFee,
+    totalEstimatedFees: totalFees,
+    grossPnl,
+    netPnl: pnl,
+    pnl,
+    capital: Number(openTrade.capital) || null,
+    openedAt: openTrade.openedAt || openTrade.time,
+    closedAt: new Date().toISOString(),
+    note
+  });
 }
 
 async function recordPaperSchedulerRun(env, run) {
@@ -1839,9 +2023,11 @@ async function runPaperTradingScheduler(env, options = {}) {
       const openTrades = getOpenPaperTradesForUser(transactions, email);
       let activeOpenCount = openTrades.length;
       let lastDecision = "No eligible commodities evaluated";
+      const marketSchedule = getUserMarketScheduleStatus(schedulerSettings);
 
       for (const commodity of schedulerSettings.commodities) {
         const config = getServerCommodityConfig(user, commodity);
+        const contractRoll = getServerContractRollStatus(config);
         const advisory = await getLatestAdvisoryByCommodity(env, commodity);
         const price = await getServerMarketPrice(env, user, commodity, advisory);
         if (!price) {
@@ -1852,48 +2038,51 @@ async function runPaperTradingScheduler(env, options = {}) {
 
         const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
         for (const openTrade of commodityOpenTrades) {
-          const closeAction = getServerExitTrigger(openTrade, price.price);
+          let closeAction = null;
+          let closeReason = "";
+          if (marketSchedule.isOpen && contractRoll.shouldFlatten) {
+            closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
+            closeReason = contractRoll.detail;
+          } else if (marketSchedule.flattenWindow) {
+            closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
+            closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
+          } else if (marketSchedule.isOpen) {
+            closeAction = getServerExitTrigger(openTrade, price.price);
+            closeReason = `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`;
+          }
           if (!closeAction) continue;
-          const grossPnl = getServerTradeGrossPnl(openTrade, price.price);
-          const closeFee = Number(openTrade.estimatedExitFee) || Number(openTrade.feePerContractSide || 0) * (Number(openTrade.contracts) || 1);
-          const totalFees = (Number(openTrade.openFee) || 0) + closeFee;
-          const pnl = grossPnl - totalFees;
-          const close = makeServerTransaction({
-            id: `srv-close-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-            tradeId: openTrade.tradeId || openTrade.id,
-            userEmail: email,
-            userName: user.name || "",
+          const close = makeServerCloseTransaction({
+            user,
+            email,
             commodity,
-            commodityName: config.name,
+            config,
+            openTrade,
+            price,
             action: closeAction,
-            side: openTrade.side,
-            step: Number(openTrade.step) || 1,
-            contract: openTrade.contract || config.ticker,
-            price: price.price,
-            entryPrice: Number(openTrade.entryPrice ?? openTrade.price),
-            targetPrice: Number(openTrade.targetPrice),
-            stopPrice: Number(openTrade.stopPrice),
-            exitPrice: price.price,
-            contractMultiplier: Number(openTrade.contractMultiplier) || config.contractMultiplier,
-            contracts: Number(openTrade.contracts) || 1,
-            marginRequirement: Number(openTrade.marginRequirement) || null,
-            notionalValue: Number(openTrade.notionalValue) || null,
-            openFee: Number(openTrade.openFee) || 0,
-            closeFee,
-            estimatedExitFee: Number(openTrade.estimatedExitFee) || closeFee,
-            totalEstimatedFees: totalFees,
-            grossPnl,
-            netPnl: pnl,
-            pnl,
-            capital: Number(openTrade.capital) || null,
-            openedAt: openTrade.openedAt || openTrade.time,
-            closedAt: new Date().toISOString(),
-            note: `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`
+            note: closeReason
           });
           transactions.push(close);
           run.closedTrades += 1;
           activeOpenCount = Math.max(0, activeOpenCount - 1);
           lastDecision = `${commodity}: closed ${openTrade.side} at ${price.price}`;
+        }
+
+        if (!marketSchedule.isOpen) {
+          lastDecision = `${commodity}: market closed by user calendar`;
+          run.skippedTrades += 1;
+          continue;
+        }
+
+        if (marketSchedule.flattenWindow) {
+          lastDecision = `${commodity}: pre-close flatten window, no new trades`;
+          run.skippedTrades += 1;
+          continue;
+        }
+
+        if (!contractRoll.shouldOpen) {
+          lastDecision = `${commodity}: ${contractRoll.detail}`;
+          run.skippedTrades += 1;
+          continue;
         }
 
         if (activeOpenCount >= schedulerSettings.maxOpenTrades) {
@@ -1924,6 +2113,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           side: signal.side,
           step,
           contract: config.ticker,
+          contractMonth: config.contractMonth,
+          contractExpiresAt: config.contractExpiresAt || "",
           price: price.price,
           entryPrice: price.price,
           targetEntryPrice: price.price,
@@ -1996,6 +2187,16 @@ async function handlePaperSchedulerRoute(env, request, origin) {
         riskPct: scheduler.riskPct,
         maxOpenTrades: scheduler.maxOpenTrades,
         entryThreshold: scheduler.entryThreshold,
+        overnightRiskMode: scheduler.overnightRiskMode,
+        marketTimeZone: scheduler.marketTimeZone,
+        weeklyOpenDay: scheduler.weeklyOpenDay,
+        weeklyOpenTime: scheduler.weeklyOpenTime,
+        weeklyCloseDay: scheduler.weeklyCloseDay,
+        weeklyCloseTime: scheduler.weeklyCloseTime,
+        dailyCloseTime: scheduler.dailyCloseTime,
+        dailyReopenTime: scheduler.dailyReopenTime,
+        closeBeforeMinutes: scheduler.closeBeforeMinutes,
+        marketCalendarNotes: scheduler.marketCalendarNotes,
         lastEvaluationAt: scheduler.lastEvaluationAt,
         lastDecision: scheduler.lastDecision
       };

@@ -235,10 +235,12 @@ const commodityTweaks = {
 
 const marketConfig = {
   oil: {
-    ticker: "NOL-18MAY26-CDE",
-    productId: "NOL-18MAY26-CDE",
+    ticker: "NOLK6",
+    productId: "NOLK6",
     contractMonth: "May 2026",
     productType: "Coinbase futures contract",
+    contractExpiresAt: "2026-05-18T17:00",
+    rollBeforeDays: 3,
     referencePrice: null,
     contractMultiplier: 10,
     marginRateLong: 1 / 7.2,
@@ -387,6 +389,16 @@ const DEFAULT_SERVER_PAPER_TRADING = {
   riskPct: PAPER_DEFAULT_RISK_PCT,
   maxOpenTrades: 1,
   entryThreshold: PAPER_MIN_CONVICTION,
+  overnightRiskMode: "accept",
+  marketTimeZone: "America/New_York",
+  weeklyOpenDay: 0,
+  weeklyOpenTime: "18:00",
+  weeklyCloseDay: 5,
+  weeklyCloseTime: "17:00",
+  dailyCloseTime: "17:00",
+  dailyReopenTime: "18:00",
+  closeBeforeMinutes: 30,
+  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays.",
   lastEvaluationAt: null,
   lastDecision: "Not evaluated yet"
 };
@@ -1406,8 +1418,18 @@ function normalizeCommodityTradeTerms(terms = {}, commodityId) {
   const marginRateShort = normalizeStoredMarginRate(source.marginRateShort ?? config.marginRateShort, commodityId, "short");
   const feePerContractSide = Number(source.feePerContractSide ?? config.feePerContractSide);
   const feeLabel = String(source.feeLabel || config.feeLabel || "Estimated fee").trim();
+  const ticker = String(source.ticker || config.ticker || "").trim();
+  const productId = String(source.productId || config.productId || ticker).trim();
+  const contractMonth = String(source.contractMonth || config.contractMonth || "Front month").trim();
+  const contractExpiresAt = String(source.contractExpiresAt || config.contractExpiresAt || "").trim();
+  const rollBeforeDays = Number(source.rollBeforeDays ?? config.rollBeforeDays ?? 3);
 
   return {
+    ticker,
+    productId: productId || ticker,
+    contractMonth,
+    contractExpiresAt,
+    rollBeforeDays: Number.isFinite(rollBeforeDays) ? clamp(Math.round(rollBeforeDays), 0, 30) : 3,
     contractMultiplier: Number.isFinite(contractMultiplier) && contractMultiplier > 0 ? contractMultiplier : 1,
     marginRateLong: Number.isFinite(marginRateLong) && marginRateLong > 0 ? marginRateLong : 1,
     marginRateShort: Number.isFinite(marginRateShort) && marginRateShort > 0 ? marginRateShort : 1,
@@ -1640,6 +1662,11 @@ function normalizeBrokerAccount(account = {}) {
   };
 }
 
+function normalizeMarketTime(value, fallback) {
+  const raw = String(value || "").trim();
+  return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback;
+}
+
 function normalizeServerPaperTrading(settings = {}, fallback = {}) {
   const merged = {
     ...DEFAULT_SERVER_PAPER_TRADING,
@@ -1652,6 +1679,16 @@ function normalizeServerPaperTrading(settings = {}, fallback = {}) {
     riskPct: clamp(Number(merged.riskPct) || PAPER_DEFAULT_RISK_PCT, 0.1, 25),
     maxOpenTrades: clamp(Math.round(Number(merged.maxOpenTrades) || 1), 1, 10),
     entryThreshold: clamp(Math.round(Number(merged.entryThreshold) || PAPER_MIN_CONVICTION), 1, 100),
+    overnightRiskMode: merged.overnightRiskMode === "flatten-before-close" ? "flatten-before-close" : "accept",
+    marketTimeZone: String(merged.marketTimeZone || DEFAULT_SERVER_PAPER_TRADING.marketTimeZone).trim(),
+    weeklyOpenDay: clamp(Math.round(Number(merged.weeklyOpenDay ?? DEFAULT_SERVER_PAPER_TRADING.weeklyOpenDay)), 0, 6),
+    weeklyOpenTime: normalizeMarketTime(merged.weeklyOpenTime, DEFAULT_SERVER_PAPER_TRADING.weeklyOpenTime),
+    weeklyCloseDay: clamp(Math.round(Number(merged.weeklyCloseDay ?? DEFAULT_SERVER_PAPER_TRADING.weeklyCloseDay)), 0, 6),
+    weeklyCloseTime: normalizeMarketTime(merged.weeklyCloseTime, DEFAULT_SERVER_PAPER_TRADING.weeklyCloseTime),
+    dailyCloseTime: normalizeMarketTime(merged.dailyCloseTime, DEFAULT_SERVER_PAPER_TRADING.dailyCloseTime),
+    dailyReopenTime: normalizeMarketTime(merged.dailyReopenTime, DEFAULT_SERVER_PAPER_TRADING.dailyReopenTime),
+    closeBeforeMinutes: clamp(Math.round(Number(merged.closeBeforeMinutes) || DEFAULT_SERVER_PAPER_TRADING.closeBeforeMinutes), 1, 240),
+    marketCalendarNotes: String(merged.marketCalendarNotes || DEFAULT_SERVER_PAPER_TRADING.marketCalendarNotes).trim(),
     lastEvaluationAt: merged.lastEvaluationAt || null,
     lastDecision: String(merged.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision).trim()
   };
@@ -2579,6 +2616,11 @@ function saveUserCommoditySelection(user, container) {
       marginRateLong: parseLeverageInput(row.querySelector("[data-commodity-leverage-long]")?.value, currentTerms.marginRateLong),
       marginRateShort: parseLeverageInput(row.querySelector("[data-commodity-leverage-short]")?.value, currentTerms.marginRateShort),
       feePerContractSide: Number.isFinite(feePerContractSide) ? feePerContractSide : currentTerms.feePerContractSide,
+      ticker: row.querySelector("[data-commodity-ticker]")?.value || currentTerms.ticker,
+      productId: row.querySelector("[data-commodity-product-id]")?.value || currentTerms.productId,
+      contractMonth: row.querySelector("[data-commodity-contract-month]")?.value || currentTerms.contractMonth,
+      contractExpiresAt: row.querySelector("[data-commodity-expires-at]")?.value || currentTerms.contractExpiresAt,
+      rollBeforeDays: row.querySelector("[data-commodity-roll-days]")?.value || currentTerms.rollBeforeDays,
       feeLabel: row.querySelector("[data-commodity-fee-label]")?.value || currentTerms.feeLabel
     }, id);
   });
@@ -2646,6 +2688,16 @@ function saveUserPaperTradingSettings(user, container) {
     riskPct: container.querySelector("[data-server-paper-field='riskPct']")?.value,
     maxOpenTrades: container.querySelector("[data-server-paper-field='maxOpenTrades']")?.value,
     entryThreshold: container.querySelector("[data-server-paper-field='entryThreshold']")?.value,
+    overnightRiskMode: container.querySelector("[data-server-paper-field='overnightRiskMode']")?.value,
+    marketTimeZone: container.querySelector("[data-server-paper-field='marketTimeZone']")?.value,
+    weeklyOpenDay: container.querySelector("[data-server-paper-field='weeklyOpenDay']")?.value,
+    weeklyOpenTime: container.querySelector("[data-server-paper-field='weeklyOpenTime']")?.value,
+    weeklyCloseDay: container.querySelector("[data-server-paper-field='weeklyCloseDay']")?.value,
+    weeklyCloseTime: container.querySelector("[data-server-paper-field='weeklyCloseTime']")?.value,
+    dailyCloseTime: container.querySelector("[data-server-paper-field='dailyCloseTime']")?.value,
+    dailyReopenTime: container.querySelector("[data-server-paper-field='dailyReopenTime']")?.value,
+    closeBeforeMinutes: container.querySelector("[data-server-paper-field='closeBeforeMinutes']")?.value,
+    marketCalendarNotes: container.querySelector("[data-server-paper-field='marketCalendarNotes']")?.value,
     lastEvaluationAt: user.paperTrading?.lastEvaluationAt || null,
     lastDecision: user.paperTrading?.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision
   });
@@ -2838,6 +2890,16 @@ function createUserProfilePanel(user) {
     const feeSideInput = document.createElement("input");
     const multiplierLabel = document.createElement("label");
     const multiplierInput = document.createElement("input");
+    const tickerLabel = document.createElement("label");
+    const tickerInput = document.createElement("input");
+    const productIdLabel = document.createElement("label");
+    const productIdInput = document.createElement("input");
+    const contractMonthLabel = document.createElement("label");
+    const contractMonthInput = document.createElement("input");
+    const expiresAtLabel = document.createElement("label");
+    const expiresAtInput = document.createElement("input");
+    const rollDaysLabel = document.createElement("label");
+    const rollDaysInput = document.createElement("input");
     const feeLabelField = document.createElement("label");
     const feeLabelInput = document.createElement("input");
     const pnlCell = document.createElement("div");
@@ -2868,18 +2930,41 @@ function createUserProfilePanel(user) {
     feeLabelInput.type = "text";
     feeLabelInput.value = tradeTerms.feeLabel;
     feeLabelInput.dataset.commodityFeeLabel = "true";
+    tickerInput.type = "text";
+    tickerInput.value = tradeTerms.ticker;
+    tickerInput.dataset.commodityTicker = "true";
+    productIdInput.type = "text";
+    productIdInput.value = tradeTerms.productId;
+    productIdInput.dataset.commodityProductId = "true";
+    contractMonthInput.type = "text";
+    contractMonthInput.value = tradeTerms.contractMonth;
+    contractMonthInput.dataset.commodityContractMonth = "true";
+    expiresAtInput.type = "datetime-local";
+    expiresAtInput.value = tradeTerms.contractExpiresAt;
+    expiresAtInput.dataset.commodityExpiresAt = "true";
+    rollDaysInput.type = "number";
+    rollDaysInput.min = "0";
+    rollDaysInput.max = "30";
+    rollDaysInput.step = "1";
+    rollDaysInput.value = String(tradeTerms.rollBeforeDays);
+    rollDaysInput.dataset.commodityRollDays = "true";
 
     tradedLabel.className = "profile-commodity-name";
     tradedLabel.append(checkbox, document.createTextNode(name));
     capitalLabel.className = "profile-commodity-capital-field";
     capitalLabel.append(document.createTextNode("Start capital"), capitalInput);
-    [longLeverageLabel, shortLeverageLabel, feeSideLabel, multiplierLabel, feeLabelField].forEach((label) => {
+    [longLeverageLabel, shortLeverageLabel, feeSideLabel, multiplierLabel, tickerLabel, productIdLabel, contractMonthLabel, expiresAtLabel, rollDaysLabel, feeLabelField].forEach((label) => {
       label.className = "profile-commodity-terms-field";
     });
     longLeverageLabel.append(document.createTextNode("Long leverage"), longLeverageInput);
     shortLeverageLabel.append(document.createTextNode("Short leverage"), shortLeverageInput);
     feeSideLabel.append(document.createTextNode("Fee / side"), feeSideInput);
     multiplierLabel.append(document.createTextNode("Multiplier"), multiplierInput);
+    tickerLabel.append(document.createTextNode("Active contract"), tickerInput);
+    productIdLabel.append(document.createTextNode("Coinbase product ID"), productIdInput);
+    contractMonthLabel.append(document.createTextNode("Contract month"), contractMonthInput);
+    expiresAtLabel.append(document.createTextNode("Contract expires"), expiresAtInput);
+    rollDaysLabel.append(document.createTextNode("Roll before days"), rollDaysInput);
     feeLabelField.append(document.createTextNode("Fee label"), feeLabelInput);
     pnlCell.className = pnl >= 0 ? "profile-capital-gain" : "profile-capital-loss";
     pnlCell.innerHTML = `<span>Profit / loss</span><strong>${formatSignedMoney(pnl)}</strong>`;
@@ -2898,6 +2983,11 @@ function createUserProfilePanel(user) {
       shortLeverageLabel,
       feeSideLabel,
       multiplierLabel,
+      tickerLabel,
+      productIdLabel,
+      contractMonthLabel,
+      expiresAtLabel,
+      rollDaysLabel,
       feeLabelField,
       pnlCell,
       totalCell
@@ -3044,6 +3134,10 @@ function createUserProfilePanel(user) {
   brokerCard.append(brokerSave);
 
   const serverPaper = normalizeServerPaperTrading(user.paperTrading);
+  const marketDayOptions = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  const renderMarketDayOptions = (selectedDay) => marketDayOptions
+    .map((label, day) => `<option value="${day}"${Number(selectedDay) === day ? " selected" : ""}>${label}</option>`)
+    .join("");
   serverPaperCard.className = "user-profile-subcard profile-server-paper-card";
   serverPaperCard.innerHTML = `
     <h3>Server Paper Trader</h3>
@@ -3066,6 +3160,53 @@ function createUserProfilePanel(user) {
       <label>
         Entry threshold
         <input data-server-paper-field="entryThreshold" type="number" min="1" max="100" step="1" value="${serverPaper.entryThreshold}">
+      </label>
+      <label>
+        Overnight gap risk
+        <select data-server-paper-field="overnightRiskMode">
+          <option value="accept"${serverPaper.overnightRiskMode === "accept" ? " selected" : ""}>Accept gap risk and hold open trades</option>
+          <option value="flatten-before-close"${serverPaper.overnightRiskMode === "flatten-before-close" ? " selected" : ""}>Close open trades before market close</option>
+        </select>
+      </label>
+      <label>
+        Pre-close exit minutes
+        <input data-server-paper-field="closeBeforeMinutes" type="number" min="1" max="240" step="1" value="${serverPaper.closeBeforeMinutes}">
+      </label>
+      <label>
+        Market time zone
+        <input data-server-paper-field="marketTimeZone" type="text" value="${escapeHtml(serverPaper.marketTimeZone)}" placeholder="America/New_York">
+      </label>
+      <label>
+        Weekly market opens
+        <select data-server-paper-field="weeklyOpenDay">
+          ${renderMarketDayOptions(serverPaper.weeklyOpenDay)}
+        </select>
+      </label>
+      <label>
+        Weekly open time
+        <input data-server-paper-field="weeklyOpenTime" type="time" value="${escapeHtml(serverPaper.weeklyOpenTime)}">
+      </label>
+      <label>
+        Weekly market closes
+        <select data-server-paper-field="weeklyCloseDay">
+          ${renderMarketDayOptions(serverPaper.weeklyCloseDay)}
+        </select>
+      </label>
+      <label>
+        Weekly close time
+        <input data-server-paper-field="weeklyCloseTime" type="time" value="${escapeHtml(serverPaper.weeklyCloseTime)}">
+      </label>
+      <label>
+        Daily maintenance close
+        <input data-server-paper-field="dailyCloseTime" type="time" value="${escapeHtml(serverPaper.dailyCloseTime)}">
+      </label>
+      <label>
+        Daily maintenance reopen
+        <input data-server-paper-field="dailyReopenTime" type="time" value="${escapeHtml(serverPaper.dailyReopenTime)}">
+      </label>
+      <label class="profile-strategy-wide">
+        Market calendar notes
+        <textarea data-server-paper-field="marketCalendarNotes" rows="3">${escapeHtml(serverPaper.marketCalendarNotes)}</textarea>
       </label>
       <div class="profile-strategy-wide server-paper-commodities">
         <span class="stat-label">Scheduled commodities</span>
@@ -8028,7 +8169,7 @@ function getProfitTotal(entries) {
 }
 
 function isClosingTransaction(entry) {
-  return Number(entry.pnl) !== 0 || ["TARGET", "STOP"].some((word) => entry.action?.includes(word));
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => entry.action?.includes(word));
 }
 
 function getTransactionTargetOrExitPrice(entry) {
