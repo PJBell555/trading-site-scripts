@@ -2222,17 +2222,26 @@ function renderLeaderBoardRankControls() {
 
 function getCumulativePnlSeries(user) {
   let total = 0;
-  return getUserClosedPaperTrades(user)
+  const points = getUserPaperLedgerEntries(user)
     .slice()
     .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
     .map((entry) => {
-      total += getDisplayPnl(entry);
+      if (isClosingTransaction(entry)) total += getDisplayPnl(entry);
       return {
         time: getTransactionDate(entry.time).getTime(),
         value: total
       };
     })
     .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+
+  if (points.length) {
+    points.push({
+      time: Date.now(),
+      value: points[points.length - 1].value
+    });
+  }
+
+  return points;
 }
 
 function drawLeaderBoardChart(rows) {
