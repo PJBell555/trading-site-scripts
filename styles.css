@@ -1557,21 +1557,21 @@ body {
 .skills-sidebar {
   align-content: start;
   display: grid;
-  gap: 8px;
-  padding: 20px 16px;
+  gap: 10px;
+  padding: 18px 12px;
 }
 
 .skills-category {
-  align-items: center;
+  align-items: start;
   border: 1px solid transparent;
   border-radius: 8px;
   color: #a9bbd5;
   cursor: pointer;
   display: grid;
-  gap: 4px;
-  grid-template-columns: 46px minmax(0, 1fr);
-  min-height: 54px;
-  padding: 10px 12px;
+  gap: 10px;
+  grid-template-columns: 68px minmax(0, 1fr);
+  min-height: 58px;
+  padding: 12px 10px;
 }
 
 .skills-category:focus-visible,
@@ -1581,16 +1581,27 @@ body {
 }
 
 .skills-category span {
-  color: #7fb2ff;
+  align-self: start;
+  background: rgba(96, 165, 250, 0.1);
+  border: 1px solid rgba(96, 165, 250, 0.2);
+  border-radius: 999px;
+  color: #93c5fd;
   font-size: 0.72rem;
   font-weight: 900;
+  line-height: 1.15;
+  max-width: 68px;
+  overflow-wrap: anywhere;
+  padding: 4px 6px;
   text-align: center;
   text-transform: uppercase;
 }
 
 .skills-category strong {
   color: #cfe4ff;
-  font-size: 0.98rem;
+  font-size: 0.94rem;
+  line-height: 1.25;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .skills-category.is-active {
@@ -1667,11 +1678,13 @@ body {
   font-size: 0.72rem;
   font-weight: 900;
   letter-spacing: 0.08em;
-  padding: 8px 14px 2px;
+  padding: 10px 8px 2px;
   text-transform: uppercase;
 }
 
 .skills-category.user-skill-nav span {
+  background: rgba(34, 211, 166, 0.1);
+  border-color: rgba(34, 211, 166, 0.24);
   color: #5eead4;
 }
 

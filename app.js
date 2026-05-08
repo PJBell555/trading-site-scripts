@@ -913,14 +913,25 @@ function bindSkillSidebarButtons() {
 }
 
 function getSkillAdoptionLabel(skill) {
-  return [
-    skill.adoptAdvisory ? "Advisory" : "",
-    skill.adoptOpinion ? "Second Opinion" : ""
-  ].filter(Boolean).join(" + ") || "Not adopted";
+  if (skill.adoptAdvisory && skill.adoptOpinion) return "Adv + 2nd";
+  if (skill.adoptAdvisory) return "Advisor";
+  if (skill.adoptOpinion) return "2nd";
+  return "Not adopted";
 }
 
 function getVisibleSkillRows() {
   return customSkills.filter((skill) => skill.adoptAdvisory || skill.adoptOpinion);
+}
+
+function getSkillSystemNavLabel(systemId) {
+  return {
+    "micro-predictor": "Micro",
+    "d1-learning": "D1",
+    "advisory-evaluator": "Score",
+    "paper-execution": "Paper",
+    "karpathy-coach": "Loop",
+    "scheduled-advisor": "LLM"
+  }[systemId] || "Sys";
 }
 
 function renderSkillsSidebar() {
@@ -936,7 +947,7 @@ function renderSkillsSidebar() {
     item.dataset.skillKind = "system";
     item.setAttribute("role", "button");
     item.tabIndex = 0;
-    label.textContent = systemId.split("-")[0];
+    label.textContent = getSkillSystemNavLabel(systemId);
     title.textContent = detail.title;
     item.append(label, title);
     skillsSidebarEl.append(item);
