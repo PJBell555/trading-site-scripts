@@ -4460,9 +4460,12 @@ function scoreCommodity(commodity, baseSignals) {
   const micro = getMicroPredictor(commodity);
   const microAdjustedBounded = applyMicroPredictorToScore(automaticBounded, micro);
   const manualConviction = getManualConvictionOverride(commodity);
+  const llmTone = getLatestLLMConvictionForCommodity(commodity)?.tone;
+  const verifiedToneSign = llmTone === "short" ? -1 : llmTone === "long" ? 1 : 0;
+  const fallbackToneSign = Math.sign(microAdjustedBounded || automaticBounded || 1);
   const bounded = manualConviction === null
     ? microAdjustedBounded
-    : Math.sign(microAdjustedBounded || automaticBounded || 1) * Math.max(0, manualConviction - 40);
+    : (verifiedToneSign || fallbackToneSign) * Math.max(0, manualConviction - 40);
   const baseConviction = manualConviction === null
     ? Math.min(100, 40 + Math.abs(bounded))
     : manualConviction;
