@@ -426,7 +426,7 @@ const DEFAULT_BROKER_ACCOUNT = {
 };
 const DEFAULT_SERVER_PAPER_TRADING = {
   enabled: false,
-  commodities: ["oil"],
+  commodities: [],
   riskPct: PAPER_DEFAULT_RISK_PCT,
   maxOpenTrades: 1,
   entryThreshold: PAPER_MIN_CONVICTION,
@@ -3423,6 +3423,9 @@ function saveUserCommoditySelection(user, container) {
     .filter((row) => row.querySelector("[data-commodity-enabled]")?.checked)
     .map((row) => row.dataset.commodityRow);
   const nextCommodities = normalizeSavedCommodityIds(selected);
+  const selectedPaperCommodities = rows
+    .filter((row) => row.querySelector("[data-commodity-paper-trading]")?.checked)
+    .map((row) => row.dataset.commodityRow);
   if (!nextCommodities.length) {
     userManagementStatusEl.textContent = "Choose at least one commodity";
     return;
@@ -3458,6 +3461,10 @@ function saveUserCommoditySelection(user, container) {
   user.commodityAllocations = normalizeCommodityAllocations(nextAllocations, nextCommodities, accountStartCapital);
   user.commodityTradeTerms = normalizeCommodityTradeTermsMap(nextTradeTerms);
   user.paperBaseEquity = accountStartCapital;
+  user.paperTrading = normalizeServerPaperTrading({
+    ...(user.paperTrading && typeof user.paperTrading === "object" ? user.paperTrading : {}),
+    commodities: normalizeSavedCommodityIds(selectedPaperCommodities).filter((id) => nextCommodities.includes(id))
+  });
   saveUserRoster();
   saveSharedSettings();
   applyCurrentUserPaperSettings();
@@ -3512,7 +3519,7 @@ function saveUserPaperTradingSettings(user, container) {
     .map((input) => input.value);
   user.paperTrading = normalizeServerPaperTrading({
     enabled: container.querySelector("[data-server-paper-field='enabled']")?.checked,
-    commodities: selectedCommodities.length ? selectedCommodities : ["oil"],
+    commodities: selectedCommodities,
     riskPct: container.querySelector("[data-server-paper-field='riskPct']")?.value,
     maxOpenTrades: container.querySelector("[data-server-paper-field='maxOpenTrades']")?.value,
     entryThreshold: container.querySelector("[data-server-paper-field='entryThreshold']")?.value,
@@ -3749,6 +3756,7 @@ function createUserProfilePanel(user) {
   commodityEditor.className = "profile-commodity-list";
   accountSummary.className = "profile-account-capital";
   const selectedCommodities = new Set(normalizeCommodityIds(user.commodities));
+  const paperTradingCommodities = new Set(normalizeServerPaperTrading(user.paperTrading).commodities);
   const allocations = normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity);
   const accountPnl = getUserCommodityPnl(user);
   let accountStartCapital = 0;
@@ -3762,6 +3770,8 @@ function createUserProfilePanel(user) {
     const row = document.createElement("div");
     const tradedLabel = document.createElement("label");
     const checkbox = document.createElement("input");
+    const paperLabel = document.createElement("label");
+    const paperCheckbox = document.createElement("input");
     const capitalLabel = document.createElement("label");
     const capitalInput = document.createElement("input");
     const longLeverageLabel = document.createElement("label");
@@ -3792,6 +3802,10 @@ function createUserProfilePanel(user) {
     checkbox.type = "checkbox";
     checkbox.dataset.commodityEnabled = "true";
     checkbox.checked = isSelected;
+    paperCheckbox.type = "checkbox";
+    paperCheckbox.dataset.commodityPaperTrading = "true";
+    paperCheckbox.checked = isSelected && paperTradingCommodities.has(id);
+    paperCheckbox.disabled = !isSelected;
     capitalInput.type = "number";
     capitalInput.min = "0";
     capitalInput.step = "0.01";
@@ -3833,6 +3847,8 @@ function createUserProfilePanel(user) {
 
     tradedLabel.className = "profile-commodity-name";
     tradedLabel.append(checkbox, document.createTextNode(name));
+    paperLabel.className = "profile-commodity-paper-field";
+    paperLabel.append(paperCheckbox, document.createTextNode("Paper trading"));
     capitalLabel.className = "profile-commodity-capital-field";
     capitalLabel.append(document.createTextNode("Start capital"), capitalInput);
     [longLeverageLabel, shortLeverageLabel, feeSideLabel, multiplierLabel, tickerLabel, productIdLabel, contractMonthLabel, expiresAtLabel, rollDaysLabel, feeLabelField].forEach((label) => {
@@ -3856,10 +3872,13 @@ function createUserProfilePanel(user) {
       if (checkbox.checked && Number(capitalInput.value) === 0) {
         capitalInput.value = "1000.00";
       }
+      paperCheckbox.disabled = !checkbox.checked;
+      if (!checkbox.checked) paperCheckbox.checked = false;
     });
 
     row.append(
       tradedLabel,
+      paperLabel,
       capitalLabel,
       longLeverageLabel,
       shortLeverageLabel,
@@ -4680,6 +4699,10 @@ function addUser(name, email) {
     sessions: 0,
     paperBaseEquity: PAPER_START_EQUITY,
     paperRiskPct: PAPER_DEFAULT_RISK_PCT,
+    paperTrading: {
+      enabled: false,
+      commodities: []
+    },
     enabled: true
   });
   saveUserRoster();

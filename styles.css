@@ -1210,6 +1210,7 @@ body {
   gap: 14px;
   grid-template-columns:
     minmax(120px, 0.8fr)
+    minmax(132px, 0.8fr)
     minmax(130px, 0.8fr)
     repeat(4, minmax(108px, 0.65fr))
     minmax(160px, 1fr)
@@ -1219,6 +1220,7 @@ body {
 }
 
 .profile-commodity-name,
+.profile-commodity-paper-field,
 .profile-commodity-capital-field,
 .profile-commodity-terms-field {
   color: #dbeafe;
@@ -1235,6 +1237,27 @@ body {
 
 .profile-commodity-name input {
   accent-color: var(--accent);
+}
+
+.profile-commodity-paper-field {
+  align-items: center;
+  background: rgba(34, 211, 166, 0.08);
+  border: 1px solid rgba(34, 211, 166, 0.18);
+  border-radius: 8px;
+  color: #c7f9ea;
+  display: flex;
+  gap: 10px;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.profile-commodity-paper-field input {
+  accent-color: #22d3a6;
+  margin: 0;
+}
+
+.profile-commodity-paper-field:has(input:disabled) {
+  opacity: 0.55;
 }
 
 .profile-commodity-capital-field input,

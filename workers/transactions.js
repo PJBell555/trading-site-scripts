@@ -1545,12 +1545,13 @@ function getEnabledPaperTraderEmails(env) {
     .filter(Boolean));
 }
 
-function normalizeCommodityIds(ids = ["oil"]) {
+function normalizeCommodityIds(ids = ["oil"], fallback = ["oil"]) {
   const values = Array.isArray(ids) ? ids : [ids];
   const normalized = values
     .map((id) => String(id || "").trim().toLowerCase())
     .filter((id) => SERVER_COMMODITIES[id]);
-  return normalized.length ? [...new Set(normalized)] : ["oil"];
+  if (normalized.length) return [...new Set(normalized)];
+  return Array.isArray(fallback) ? fallback.filter((id) => SERVER_COMMODITIES[id]) : [];
 }
 
 function normalizeMarketTime(value, fallback) {
@@ -1585,7 +1586,9 @@ function getUserPaperSchedulerSettings(user = {}, env) {
 
   return {
     enabled,
-    commodities: normalizeCommodityIds(explicit.commodities || user.commodities || ["oil"]),
+    commodities: Object.prototype.hasOwnProperty.call(explicit, "commodities")
+      ? normalizeCommodityIds(explicit.commodities, [])
+      : normalizeCommodityIds(user.commodities || ["oil"]),
     riskPct: clamp(Number(explicit.riskPct ?? user.paperRiskPct ?? PAPER_SCHEDULER_DEFAULT_RISK_PCT) || PAPER_SCHEDULER_DEFAULT_RISK_PCT, 0.1, 25),
     maxOpenTrades: clamp(Math.round(Number(explicit.maxOpenTrades ?? PAPER_SCHEDULER_DEFAULT_MAX_OPEN) || PAPER_SCHEDULER_DEFAULT_MAX_OPEN), 1, 10),
     entryThreshold: clamp(Math.round(Number(explicit.entryThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD) || PAPER_SCHEDULER_DEFAULT_THRESHOLD), 1, 100),
