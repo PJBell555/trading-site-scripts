@@ -73,7 +73,8 @@ const saveOpenBrainEndpointEl = document.querySelector("#save-open-brain-endpoin
 const captureOpenBrainAdvisoryEl = document.querySelector("#capture-open-brain-advisory");
 const exportOpenBrainMemoryEl = document.querySelector("#export-open-brain-memory");
 const openBrainMemoryTableEl = document.querySelector("#open-brain-memory-table");
-const skillSystemButtons = Array.from(document.querySelectorAll("[data-skill-system]"));
+let skillSystemButtons = Array.from(document.querySelectorAll("[data-skill-system]"));
+const skillsSidebarEl = document.querySelector("#skills-sidebar");
 const skillsDetailCardEl = document.querySelector("#skills-detail-card");
 const skillAddNewEl = document.querySelector("#skill-add-new");
 const skillVoiceButtonEl = document.querySelector("#skill-voice-button");
@@ -887,6 +888,87 @@ function renderSkillSystemDetail() {
   skillsDetailCardEl.replaceChildren(label, title, subtitle, grid, note);
 }
 
+function bindSkillSidebarButtons() {
+  document.querySelectorAll("[data-skill-system]").forEach((button) => {
+    if (button.dataset.skillBound === "true") return;
+    button.dataset.skillBound = "true";
+    button.addEventListener("click", () => selectSkillSystem(button.dataset.skillSystem));
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectSkillSystem(button.dataset.skillSystem);
+    });
+  });
+
+  document.querySelectorAll("[data-custom-skill-id]").forEach((button) => {
+    if (button.dataset.skillBound === "true") return;
+    button.dataset.skillBound = "true";
+    button.addEventListener("click", () => selectCustomSkill(button.dataset.customSkillId));
+    button.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectCustomSkill(button.dataset.customSkillId);
+    });
+  });
+}
+
+function getSkillAdoptionLabel(skill) {
+  return [
+    skill.adoptAdvisory ? "Advisory" : "",
+    skill.adoptOpinion ? "Second Opinion" : ""
+  ].filter(Boolean).join(" + ") || "Not adopted";
+}
+
+function getVisibleSkillRows() {
+  return customSkills.filter((skill) => skill.adoptAdvisory || skill.adoptOpinion);
+}
+
+function renderSkillsSidebar() {
+  if (!skillsSidebarEl) return;
+  skillsSidebarEl.innerHTML = "";
+
+  Object.entries(SKILL_SYSTEM_DETAILS).forEach(([systemId, detail]) => {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    const title = document.createElement("strong");
+    item.className = "skills-category";
+    item.dataset.skillSystem = systemId;
+    item.dataset.skillKind = "system";
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    label.textContent = systemId.split("-")[0];
+    title.textContent = detail.title;
+    item.append(label, title);
+    skillsSidebarEl.append(item);
+  });
+
+  const adoptedSkills = getVisibleSkillRows();
+  if (adoptedSkills.length) {
+    const divider = document.createElement("div");
+    divider.className = "skills-sidebar-divider";
+    divider.textContent = `${adoptedSkills.length} adopted user skill${adoptedSkills.length === 1 ? "" : "s"}`;
+    skillsSidebarEl.append(divider);
+  }
+
+  adoptedSkills.forEach((skill) => {
+    const item = document.createElement("div");
+    const label = document.createElement("span");
+    const title = document.createElement("strong");
+    item.className = "skills-category user-skill-nav";
+    item.dataset.customSkillId = skill.id;
+    item.dataset.skillKind = "custom";
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    label.textContent = getSkillAdoptionLabel(skill);
+    title.textContent = skill.name;
+    item.append(label, title);
+    skillsSidebarEl.append(item);
+  });
+
+  skillSystemButtons = Array.from(document.querySelectorAll("[data-skill-system]"));
+  bindSkillSidebarButtons();
+}
+
 function selectSkillSystem(systemId) {
   if (!SKILL_SYSTEM_DETAILS[systemId]) return;
   activeCustomSkillId = "";
@@ -1060,10 +1142,11 @@ function renderCustomSkillDetail(skillId) {
     return;
   }
 
-  skillSystemButtons.forEach((button) => {
-    button.classList.remove("is-active");
+  document.querySelectorAll("[data-skill-system], [data-custom-skill-id]").forEach((button) => {
+    const isCustomActive = button.dataset.customSkillId === skill.id;
+    button.classList.toggle("is-active", isCustomActive && button.classList.contains("skills-category"));
     if (button.classList.contains("system-skill-card")) button.dataset.systemTone = "";
-    button.setAttribute("aria-selected", "false");
+    button.setAttribute("aria-selected", String(isCustomActive));
   });
 
   const label = document.createElement("span");
@@ -1072,6 +1155,8 @@ function renderCustomSkillDetail(skillId) {
   const grid = document.createElement("div");
   const note = document.createElement("div");
   const actions = document.createElement("div");
+  const adoptAdvisory = document.createElement("button");
+  const adoptOpinion = document.createElement("button");
   const edit = document.createElement("button");
   const remove = document.createElement("button");
   const adoptedAt = skill.adoptedAdvisoryAt || skill.adoptedOpinionAt || skill.createdAt;
@@ -1105,6 +1190,14 @@ function renderCustomSkillDetail(skillId) {
   note.className = "system-note";
   note.textContent = "Adopted skills are inserted as lightweight context in the advisory plan and second-opinion output. Keep them specific and testable.";
   actions.className = "skill-detail-actions";
+  adoptAdvisory.className = "filter-button skill-seed-button";
+  adoptAdvisory.type = "button";
+  adoptAdvisory.textContent = skill.adoptAdvisory ? "Remove from advisories" : "Adopt in advisories";
+  adoptAdvisory.addEventListener("click", () => toggleCustomSkillAdoption(skill.id, "advisory"));
+  adoptOpinion.className = "filter-button skill-seed-button";
+  adoptOpinion.type = "button";
+  adoptOpinion.textContent = skill.adoptOpinion ? "Remove from second opinions" : "Adopt in second opinions";
+  adoptOpinion.addEventListener("click", () => toggleCustomSkillAdoption(skill.id, "opinion"));
   edit.className = "filter-button skill-seed-button";
   edit.type = "button";
   edit.textContent = "Edit";
@@ -1113,7 +1206,7 @@ function renderCustomSkillDetail(skillId) {
   remove.type = "button";
   remove.textContent = "Delete";
   remove.addEventListener("click", () => deleteCustomSkill(skill.id));
-  actions.append(edit, remove);
+  actions.append(adoptAdvisory, adoptOpinion, edit, remove);
   skillsDetailCardEl.replaceChildren(label, title, subtitle, grid, note, actions);
 }
 
@@ -1159,6 +1252,24 @@ function saveCustomSkillFromForm(event) {
   calculateSignal();
 }
 
+function toggleCustomSkillAdoption(skillId, target) {
+  const skill = customSkills.find((candidate) => candidate.id === skillId);
+  if (!skill) return;
+  const now = new Date().toISOString();
+  if (target === "opinion") {
+    skill.adoptOpinion = !skill.adoptOpinion;
+    if (skill.adoptOpinion && !skill.adoptedOpinionAt) skill.adoptedOpinionAt = now;
+  } else {
+    skill.adoptAdvisory = !skill.adoptAdvisory;
+    if (skill.adoptAdvisory && !skill.adoptedAdvisoryAt) skill.adoptedAdvisoryAt = now;
+  }
+  skill.updatedAt = now;
+  activeCustomSkillId = skill.id;
+  saveCustomSkills();
+  renderSkillsWorkspace();
+  calculateSignal();
+}
+
 function deleteCustomSkill(skillId) {
   const index = customSkills.findIndex((skill) => skill.id === skillId);
   if (index < 0) return;
@@ -1171,6 +1282,7 @@ function deleteCustomSkill(skillId) {
 }
 
 function renderSkillsWorkspace() {
+  renderSkillsSidebar();
   renderSkillSystemDetail();
   renderCustomSkills();
 }
@@ -10264,14 +10376,7 @@ captureOpenBrainAdvisoryEl.addEventListener("click", () => {
   openBrainStatusEl.textContent = event ? "Advisory captured" : "No advisory to capture";
 });
 exportOpenBrainMemoryEl.addEventListener("click", downloadOpenBrainMemory);
-skillSystemButtons.forEach((button) => {
-  button.addEventListener("click", () => selectSkillSystem(button.dataset.skillSystem));
-  button.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter" && event.key !== " ") return;
-    event.preventDefault();
-    selectSkillSystem(button.dataset.skillSystem);
-  });
-});
+bindSkillSidebarButtons();
 skillAddNewEl?.addEventListener("click", () => {
   activeCustomSkillId = "";
   resetSkillEditor();

@@ -1662,6 +1662,23 @@ body {
   padding: 16px;
 }
 
+.skills-sidebar-divider {
+  color: #8fa3bf;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  padding: 8px 14px 2px;
+  text-transform: uppercase;
+}
+
+.skills-category.user-skill-nav span {
+  color: #5eead4;
+}
+
+.skills-category.user-skill-nav strong {
+  font-size: 0.9rem;
+}
+
 .system-skill-card,
 .skills-detail-card,
 .karpathy-coach-panel {
