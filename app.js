@@ -2128,6 +2128,13 @@ function getUserLastTradeTime(user, entries = getUserPaperLedgerEntries(user)) {
   return new Date(Math.max(...times));
 }
 
+function getUserSchedulerSummary(user) {
+  const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
+  const evaluated = paperTrading.lastEvaluationAt ? formatRelativeDate(paperTrading.lastEvaluationAt) : "Never";
+  const decision = paperTrading.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
+  return `${evaluated}: ${decision}`;
+}
+
 function getUserTradeCount(user, entries = getUserPaperLedgerEntries(user)) {
   return entries.filter((entry) => isOpeningTransaction(entry)).length;
 }
@@ -2190,6 +2197,7 @@ function getLeaderBoardRows() {
       winRate,
       expectancy,
       lastTradeTime,
+      schedulerSummary: getUserSchedulerSummary(user),
       groupNote
     };
   }).sort((left, right) => {
@@ -2435,7 +2443,7 @@ function renderLeaderBoard() {
   if (!rankedRows.length) {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
-    cell.colSpan = 9;
+    cell.colSpan = 10;
     cell.textContent = "No users available.";
     row.append(cell);
     leaderboardBodyEl.append(row);
@@ -2479,6 +2487,7 @@ function renderLeaderBoard() {
         className: Number.isFinite(entry.expectancy) ? (entry.expectancy >= 0 ? "gain" : "loss") : ""
       },
       { value: `${entry.tradeCount} opened / ${entry.closedCount} closed` },
+      { value: entry.schedulerSummary },
       { value: entry.lastTradeTime ? formatRelativeDate(entry.lastTradeTime) : "No trades" }
     ].forEach((item) => {
       if (item instanceof HTMLElement) {
@@ -6272,6 +6281,7 @@ async function loadSharedSettings(manual = false) {
     if (usersChanged || profilesChanged) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
+      renderLeaderBoard();
     }
     setCoinbaseSandboxEnabled(true);
     calculateSignal();
@@ -7629,6 +7639,7 @@ async function loadSharedTransactionHistory(manual = false) {
     }
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
+    renderLeaderBoard();
     return true;
   } catch (error) {
     backendHistoryReady = true;
@@ -7638,6 +7649,7 @@ async function loadSharedTransactionHistory(manual = false) {
       : `Backend offline; using local ledger. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
     await loadBundledTransactionHistory();
     calculateSignal();
+    renderLeaderBoard();
     return false;
   } finally {
     backendSyncInFlight = false;
@@ -7654,6 +7666,19 @@ async function autoSyncTransactionHistory() {
   }
 
   return loadSharedTransactionHistory(false);
+}
+
+async function refreshLeaderBoardData() {
+  if (leaderboardRefreshEl) leaderboardRefreshEl.textContent = "Refreshing";
+  try {
+    await Promise.all([
+      loadSharedSettings(true),
+      loadSharedTransactionHistory(true)
+    ]);
+  } finally {
+    renderLeaderBoard();
+    if (leaderboardRefreshEl) leaderboardRefreshEl.textContent = "Refresh";
+  }
 }
 
 async function initializeBackendState() {
@@ -9445,8 +9470,7 @@ advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 leaderboardRefreshEl?.addEventListener("click", () => {
-  renderLeaderBoard();
-  loadSharedTransactionHistory(true);
+  refreshLeaderBoardData();
 });
 leaderboardRankControlsEl?.addEventListener("click", (event) => {
   const button = event.target.closest("[data-leaderboard-rank]");
