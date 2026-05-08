@@ -4720,6 +4720,13 @@ function getStaticSnapshotUrl() {
   return `./prices.json?ts=${Date.now()}`;
 }
 
+function hasUsableSnapshotPrices(data) {
+  return Object.values(data?.prices || {}).some((snapshot) => {
+    const price = Number(snapshot?.price);
+    return snapshot?.ok && Number.isFinite(price) && price > 0;
+  });
+}
+
 async function loadSnapshotPrices() {
   const now = Date.now();
   if (snapshotPricesPromise && now - snapshotPricesLoadedAt < SNAPSHOT_PRICE_REFRESH_MS) {
@@ -4731,6 +4738,10 @@ async function loadSnapshotPrices() {
     .then((response) => {
       if (!response.ok) throw new Error("snapshot unavailable");
       return response.json();
+    })
+    .then((data) => {
+      if (!hasUsableSnapshotPrices(data)) throw new Error("snapshot has no usable prices");
+      return data;
     })
     .catch(async (error) => {
       if (getSnapshotUrl().startsWith("./")) throw error;

@@ -1874,11 +1874,19 @@ async function getPriceSnapshots(env, forceRefresh = false) {
   const stored = await loadStoredPriceSnapshots(env);
   const entries = await Promise.all(Object.values(SERVER_COMMODITIES).map(async (commodity) => {
     const existing = stored[commodity.id];
-    if (!forceRefresh && isFreshPriceSnapshot(existing)) return existing;
+    if (!forceRefresh && existing?.ok && isFreshPriceSnapshot(existing)) return existing;
 
     const snapshot = await fetchCoinbasePriceSnapshot(commodity);
-    await savePriceSnapshot(env, snapshot);
-    return snapshot;
+    if (snapshot.ok || !existing) {
+      await savePriceSnapshot(env, snapshot);
+      return snapshot;
+    }
+
+    return {
+      ...existing,
+      stale: true,
+      refreshError: snapshot.error || "Refresh failed"
+    };
   }));
 
   return {
