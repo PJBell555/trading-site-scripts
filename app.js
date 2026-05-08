@@ -787,17 +787,61 @@ function normalizeSkillTags(value) {
 function normalizeCustomSkill(skill = {}) {
   const now = new Date().toISOString();
   const name = String(skill.name || "").trim();
+  const adoptAdvisory = skill.adoptAdvisory !== false;
+  const adoptOpinion = skill.adoptOpinion === true;
   if (!name) return null;
   return {
     id: String(skill.id || `skill-${Date.now()}-${Math.random().toString(16).slice(2)}`),
     name,
     body: String(skill.body || "").trim(),
     tags: normalizeSkillTags(skill.tags),
-    adoptAdvisory: skill.adoptAdvisory !== false,
-    adoptOpinion: skill.adoptOpinion === true,
+    adoptAdvisory,
+    adoptOpinion,
+    adoptedAdvisoryAt: adoptAdvisory ? (skill.adoptedAdvisoryAt || now) : (skill.adoptedAdvisoryAt || null),
+    adoptedOpinionAt: adoptOpinion ? (skill.adoptedOpinionAt || now) : (skill.adoptedOpinionAt || null),
     createdAt: skill.createdAt || now,
     updatedAt: skill.updatedAt || now
   };
+}
+
+function getMetricStartDate(value) {
+  const date = getTransactionDate(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function getClosedTradesSince(value) {
+  const start = getMetricStartDate(value);
+  if (!start) return [];
+  return getDedupedPaperCloseEntries(transactionHistory)
+    .filter(isClosingTransaction)
+    .filter((entry) => getTransactionDate(entry.closedAt || entry.time) >= start);
+}
+
+function summarizeClosedTradePerformanceSince(value) {
+  const closed = getClosedTradesSince(value);
+  const netPnl = closed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const wins = closed.filter((entry) => getDisplayPnl(entry) > 0).length;
+  const winRate = closed.length ? (wins / closed.length) * 100 : NaN;
+  const expectancy = closed.length ? netPnl / closed.length : NaN;
+  return { closedCount: closed.length, netPnl, wins, winRate, expectancy };
+}
+
+function formatDurationSince(value) {
+  const start = getMetricStartDate(value);
+  if (!start) return "Not started";
+  const days = Math.max(0, Math.floor((Date.now() - start.getTime()) / 86400000));
+  if (days >= 1) return `${days} day${days === 1 ? "" : "s"}`;
+  const hours = Math.max(0, Math.floor((Date.now() - start.getTime()) / 3600000));
+  if (hours >= 1) return `${hours} hour${hours === 1 ? "" : "s"}`;
+  const minutes = Math.max(0, Math.floor((Date.now() - start.getTime()) / 60000));
+  return `${minutes} min`;
+}
+
+function formatPerformanceSummary(summary) {
+  if (!summary.closedCount) return "No closed trades yet";
+  const winRate = Number.isFinite(summary.winRate) ? formatPercent(summary.winRate) : "-";
+  const expectancy = Number.isFinite(summary.expectancy) ? formatSignedMoney(summary.expectancy) : "-";
+  return `${formatSignedMoney(summary.netPnl)} / ${summary.closedCount} closed / ${winRate} win / ${expectancy} expectancy`;
 }
 
 function loadCustomSkills() {
@@ -858,7 +902,10 @@ function renderCustomSkills() {
     const meta = document.createElement("span");
     const title = document.createElement("strong");
     const copy = document.createElement("p");
+    const performance = document.createElement("p");
     const chips = document.createElement("div");
+    const adoptedAt = skill.adoptedAdvisoryAt || skill.adoptedOpinionAt || skill.createdAt;
+    const summary = summarizeClosedTradePerformanceSince(adoptedAt);
 
     card.className = "custom-skill-card";
     card.dataset.active = String(skill.id === activeCustomSkillId);
@@ -876,13 +923,15 @@ function renderCustomSkills() {
     ].filter(Boolean).join(" + ") || "Not adopted";
     title.textContent = skill.name;
     copy.textContent = skill.body || "No instructions yet.";
+    performance.className = "skill-performance-line";
+    performance.textContent = `Started ${formatTradeTime(adoptedAt)} / active ${formatDurationSince(adoptedAt)} / ${formatPerformanceSummary(summary)}`;
     chips.className = "skill-tag-row";
     (skill.tags || []).forEach((tag) => {
       const chip = document.createElement("span");
       chip.textContent = tag;
       chips.append(chip);
     });
-    card.append(meta, title, copy, chips);
+    card.append(meta, title, copy, performance, chips);
     customSkillListEl.append(card);
   });
 }
@@ -909,6 +958,8 @@ function renderCustomSkillDetail(skillId) {
   const actions = document.createElement("div");
   const edit = document.createElement("button");
   const remove = document.createElement("button");
+  const adoptedAt = skill.adoptedAdvisoryAt || skill.adoptedOpinionAt || skill.createdAt;
+  const summary = summarizeClosedTradePerformanceSince(adoptedAt);
 
   label.className = "stat-label";
   label.textContent = "User skill";
@@ -922,6 +973,8 @@ function renderCustomSkillDetail(skillId) {
       skill.adoptOpinion ? "Second opinions" : ""
     ].filter(Boolean).join(", ") || "Not adopted"],
     ["Tags", (skill.tags || []).join(", ") || "No tags"],
+    ["Started", `${formatTradeTime(adoptedAt)} (${formatDurationSince(adoptedAt)})`],
+    ["Success", formatPerformanceSummary(summary)],
     ["Updated", formatTradeTime(skill.updatedAt)],
     ["Created", formatTradeTime(skill.createdAt)]
   ].forEach(([sectionTitle, sectionCopy]) => {
@@ -962,13 +1015,17 @@ function saveCustomSkillFromForm(event) {
   const now = new Date().toISOString();
   const existingId = skillEditIdEl?.value || "";
   const existing = customSkills.find((skill) => skill.id === existingId);
+  const nextAdoptAdvisory = skillAdoptAdvisoryInputEl?.checked;
+  const nextAdoptOpinion = skillAdoptOpinionInputEl?.checked;
   const next = normalizeCustomSkill({
     id: existing?.id,
     name,
     body: skillBodyInputEl?.value || "",
     tags: skillTagsInputEl?.value || "",
-    adoptAdvisory: skillAdoptAdvisoryInputEl?.checked,
-    adoptOpinion: skillAdoptOpinionInputEl?.checked,
+    adoptAdvisory: nextAdoptAdvisory,
+    adoptOpinion: nextAdoptOpinion,
+    adoptedAdvisoryAt: nextAdoptAdvisory && !existing?.adoptAdvisory ? now : existing?.adoptedAdvisoryAt,
+    adoptedOpinionAt: nextAdoptOpinion && !existing?.adoptOpinion ? now : existing?.adoptedOpinionAt,
     createdAt: existing?.createdAt || now,
     updatedAt: now
   });
@@ -1142,7 +1199,7 @@ function saveStrategyEdits(edits) {
 function loadCustomStrategies() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(CUSTOM_STRATEGIES_KEY) || "[]");
-    customStrategies.splice(0, customStrategies.length, ...(Array.isArray(stored) ? stored : []));
+    customStrategies.splice(0, customStrategies.length, ...(Array.isArray(stored) ? stored.map(normalizeCustomStrategy).filter(Boolean) : []));
   } catch (error) {
     customStrategies.splice(0, customStrategies.length);
   }
@@ -1150,6 +1207,22 @@ function loadCustomStrategies() {
 
 function saveCustomStrategies() {
   window.localStorage.setItem(CUSTOM_STRATEGIES_KEY, JSON.stringify(customStrategies));
+}
+
+function normalizeCustomStrategy(strategy = {}) {
+  const now = new Date().toISOString();
+  const title = String(strategy.title || "").trim();
+  if (!title) return null;
+  return {
+    key: String(strategy.key || `custom-strategy-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    title,
+    meta: String(strategy.meta || "Custom / draft").trim(),
+    summary: String(strategy.summary || "").trim(),
+    note: String(strategy.note || "").trim(),
+    startedAt: strategy.startedAt || strategy.createdAt || now,
+    createdAt: strategy.createdAt || now,
+    updatedAt: strategy.updatedAt || now
+  };
 }
 
 function getStrategyCard(strategyKey) {
@@ -1236,8 +1309,19 @@ function saveStrategyEditor(event) {
     note: strategyEditNoteEl.value
   };
   if (!strategyKey) {
-    const key = `custom-strategy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-    customStrategies.unshift({ key, ...values });
+    customStrategies.unshift(normalizeCustomStrategy(values));
+    saveCustomStrategies();
+    renderCustomStrategies();
+    closeStrategyEditor();
+    return;
+  }
+  const customStrategy = customStrategies.find((strategy) => strategy.key === strategyKey);
+  if (customStrategy) {
+    Object.assign(customStrategy, normalizeCustomStrategy({
+      ...customStrategy,
+      ...values,
+      updatedAt: new Date().toISOString()
+    }));
     saveCustomStrategies();
     renderCustomStrategies();
     closeStrategyEditor();
@@ -1255,6 +1339,7 @@ function renderCustomStrategies() {
   if (!grid) return;
   grid.querySelectorAll("[data-custom-strategy='true']").forEach((card) => card.remove());
   customStrategies.forEach((strategy) => {
+    const performance = summarizeClosedTradePerformanceSince(strategy.startedAt);
     const card = document.createElement("article");
     const head = document.createElement("div");
     const titleWrap = document.createElement("div");
@@ -1262,6 +1347,7 @@ function renderCustomStrategies() {
     const meta = document.createElement("span");
     const summary = document.createElement("p");
     const note = document.createElement("div");
+    const metric = document.createElement("div");
     const actions = document.createElement("div");
     const edit = document.createElement("button");
     const remove = document.createElement("button");
@@ -1278,6 +1364,9 @@ function renderCustomStrategies() {
     summary.textContent = strategy.summary || "No summary yet.";
     note.className = "strategy-note";
     note.textContent = strategy.note || "No execution note yet.";
+    metric.className = "strategy-note";
+    metric.dataset.strategyMetric = "true";
+    metric.textContent = `Started ${formatTradeTime(strategy.startedAt)} / active ${formatDurationSince(strategy.startedAt)} / ${formatPerformanceSummary(performance)}`;
     actions.className = "strategy-card-actions";
     edit.className = "strategy-pill strategy-edit-button";
     edit.type = "button";
@@ -1298,7 +1387,7 @@ function renderCustomStrategies() {
     titleWrap.append(title, meta);
     head.append(titleWrap);
     actions.append(edit, remove);
-    card.append(head, summary, note, actions);
+    card.append(head, summary, note, metric, actions);
     grid.prepend(card);
   });
 }
