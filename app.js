@@ -146,6 +146,7 @@ const userStrategyBannerEl = document.querySelector("#user-strategy-banner");
 const advisoryUserAvatarEl = document.querySelector("#advisory-user-avatar");
 const advisoryUserNameEl = document.querySelector("#advisory-user-name");
 const advisoryUserStrategyNameEl = document.querySelector("#advisory-user-strategy-name");
+const advisoryAdoptedSystemsEl = document.querySelector("#advisory-adopted-systems");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -3326,6 +3327,60 @@ function renderCurrentUserStrategy() {
     ].join(" / ");
     copy.textContent = `${strategy.description} ${access}.`;
   }
+  renderAdvisoryAdoptedSystems(strategy);
+}
+
+function getBuiltInStrategyStartedAt() {
+  const user = getCurrentUserProfile();
+  return user?.createdAt || new Date().toISOString();
+}
+
+function renderAdvisoryAdoptedSystems(strategy = getCurrentUserStrategy()) {
+  if (!advisoryAdoptedSystemsEl) return;
+  const rows = [];
+  const strategyStart = getBuiltInStrategyStartedAt();
+  const strategySummary = summarizeClosedTradePerformanceSince(strategyStart);
+  rows.push({
+    type: "Strategy",
+    name: strategy.name || "Profile strategy",
+    status: strategy.karpathyLoop ? "Adopted" : "Available",
+    startedAt: strategyStart,
+    summary: strategySummary,
+    note: strategy.description || "Profile strategy settings."
+  });
+
+  getAdoptedSkills("advisory").forEach((skill) => {
+    const startedAt = skill.adoptedAdvisoryAt || skill.createdAt;
+    rows.push({
+      type: "Skill",
+      name: skill.name,
+      status: "Adopted",
+      startedAt,
+      summary: summarizeClosedTradePerformanceSince(startedAt),
+      note: skill.body || "No instructions yet."
+    });
+  });
+
+  advisoryAdoptedSystemsEl.innerHTML = "";
+  if (!rows.length) {
+    advisoryAdoptedSystemsEl.textContent = "No adopted skills or strategies are active.";
+    return;
+  }
+
+  rows.forEach((row) => {
+    const card = document.createElement("div");
+    const head = document.createElement("span");
+    const title = document.createElement("strong");
+    const meta = document.createElement("small");
+    const note = document.createElement("p");
+    card.className = "advisory-system-card";
+    head.textContent = `${row.type} / ${row.status}`;
+    title.textContent = row.name;
+    meta.textContent = `Started ${formatTradeTime(row.startedAt)} / active ${formatDurationSince(row.startedAt)} / ${formatPerformanceSummary(row.summary)}`;
+    note.textContent = row.note;
+    card.append(head, title, meta, note);
+    advisoryAdoptedSystemsEl.append(card);
+  });
 }
 
 function createUserProfilePanel(user) {
@@ -9432,6 +9487,9 @@ function calculateSignal() {
   if (reasons.length < 3) {
     reasons.push("The setup is mixed, so conviction depends more on execution quality than raw direction.");
   }
+  getAdoptedSkills("advisory").slice(0, 3).forEach((skill) => {
+    reasons.push(`Adopted skill - ${skill.name}: ${skill.body || "No instructions yet."}`);
+  });
 
   commodities.forEach(({ id }) => {
     const chipSignal = scoreCommodity(id, baseSignals);
@@ -9515,6 +9573,7 @@ function calculateSignal() {
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
   maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
+  renderAdvisoryAdoptedSystems();
   applyLLMDisplayOverride(commodity);
   maybeAutoTriggerLLM();
 }
