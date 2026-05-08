@@ -371,6 +371,9 @@ const HIDDEN_CHART_THROTTLE_MS = 60000;
 const NORMAL_PAPER_SWEEP_THROTTLE_MS = 2000;
 const LOW_POWER_PAPER_SWEEP_THROTTLE_MS = 10000;
 const HIDDEN_PAPER_SWEEP_THROTTLE_MS = 30000;
+const NORMAL_LIVE_PRICE_PAINT_MS = 250;
+const LOW_POWER_LIVE_PRICE_PAINT_MS = 750;
+const HIDDEN_LIVE_PRICE_PAINT_MS = 5000;
 const LEADERBOARD_DEFAULT_RANK = "closed-pnl";
 const LEADERBOARD_DEFAULT_PERIOD = "all";
 const LEADERBOARD_RANK_OPTIONS = {
@@ -568,6 +571,8 @@ let chartRenderTimer = null;
 let lastChartRenderAt = 0;
 let paperSweepTimer = null;
 let lastPaperSweepAt = 0;
+let livePricePaintTimer = null;
+let lastLivePricePaintAt = 0;
 let historyCommodityFilter = "all";
 let historyPeriodFilter = "all";
 let historyFiltersTouched = false;
@@ -719,6 +724,47 @@ function queuePaperSweep(options = {}) {
     paperSweepTimer = null;
     lastPaperSweepAt = Date.now();
     closeOnlyPaperSweep();
+  }, delay);
+}
+
+function paintLivePriceFields(commodity) {
+  if (!commodity || commoditySelect?.value !== commodity) return;
+  const price = confirmedLivePrices.has(commodity) ? confirmedLivePrices.get(commodity) : latestPrices.get(commodity);
+  const updatedAt = confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
+  const source = confirmedLivePriceSources.has(commodity) ? confirmedLivePriceSources.get(commodity) : latestPriceSources.get(commodity);
+
+  if (priceEl && Number.isFinite(price) && price > 0) {
+    priceEl.textContent = formatPrice(price);
+  }
+
+  if (priceSourceEl) {
+    priceSourceEl.textContent = updatedAt && !Number.isNaN(getTransactionDate(updatedAt).getTime())
+      ? `${source || "Coinbase live"} / ${formatPriceTime(updatedAt)}`
+      : UNAVAILABLE_TEXT;
+  }
+}
+
+function queueLivePricePaint(commodity, options = {}) {
+  const immediate = options.immediate === true;
+  const now = Date.now();
+  const throttleMs = immediate ? 0 : getVisibleThrottle(
+    NORMAL_LIVE_PRICE_PAINT_MS,
+    LOW_POWER_LIVE_PRICE_PAINT_MS,
+    HIDDEN_LIVE_PRICE_PAINT_MS
+  );
+  const delay = Math.max(0, throttleMs - (now - lastLivePricePaintAt));
+
+  if (delay === 0 && !livePricePaintTimer) {
+    lastLivePricePaintAt = now;
+    paintLivePriceFields(commodity);
+    return;
+  }
+
+  if (livePricePaintTimer) return;
+  livePricePaintTimer = window.setTimeout(() => {
+    livePricePaintTimer = null;
+    lastLivePricePaintAt = Date.now();
+    paintLivePriceFields(commodity);
   }, delay);
 }
 
@@ -5687,6 +5733,7 @@ function rememberConfirmedLivePrice(commodity, price, source) {
   confirmedLivePrices.set(commodity, price);
   confirmedLivePriceTimes.set(commodity, now);
   confirmedLivePriceSources.set(commodity, source);
+  queueLivePricePaint(commodity);
 }
 
 function isBackendBackoffActive(syncAt) {
@@ -6097,6 +6144,7 @@ async function refreshSnapshotPrice(commodity) {
     rememberPriceTick(commodity, snapshotPrice, snapshotTime);
     latestPriceTimes.set(commodity, snapshotTime);
     latestPriceSources.set(commodity, snapshot.ok ? "Cloudflare snapshot" : "Unavailable snapshot");
+    queueLivePricePaint(commodity, { immediate: true });
 
     const minimumTradeValue = Number(snapshot.minimumTradeValue);
     if (Number.isFinite(minimumTradeValue) && minimumTradeValue > 0) {
@@ -6664,6 +6712,16 @@ function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
   return Number.isFinite(closeTime) && Number.isFinite(openTime) && closeTime >= openTime;
 }
 
+function closingEntryMatchesActiveTrade(closeEntry, activeTrade) {
+  if (samePaperTradeIdentity(closeEntry, activeTrade)) return true;
+  if (!isClosingTransaction(closeEntry) || !activeTrade) return false;
+  if (!samePaperTradePosition(closeEntry, activeTrade)) return false;
+  if (closeEntry.contract && activeTrade.contract && closeEntry.contract !== activeTrade.contract) return false;
+  const closeTime = getTransactionDate(closeEntry.closedAt || closeEntry.time).getTime();
+  const openTime = getTransactionDate(activeTrade.openedAt || activeTrade.time).getTime();
+  return Number.isFinite(closeTime) && Number.isFinite(openTime) && closeTime >= openTime;
+}
+
 function getPaperCloseDedupeKey(entry) {
   const identityKey = getTradeIdentityKey(entry);
   if (identityKey) return identityKey;
@@ -6774,7 +6832,7 @@ function rebuildPaperStateFromHistory() {
     if (isClosingTransaction(entry)) {
       if (identityKey) activeTrades.delete(identityKey);
       Array.from(activeTrades.entries()).forEach(([activeKey, activeTrade]) => {
-        if (samePaperTradeIdentity(entry, activeTrade)) activeTrades.delete(activeKey);
+        if (closingEntryMatchesActiveTrade(entry, activeTrade)) activeTrades.delete(activeKey);
       });
       // Only count the current user's closes for martingale step computation.
       if (isTransactionForCurrentUser(entry)) latestClosed = entry;
@@ -8630,7 +8688,7 @@ function getCurrentUserActivePaperTrades() {
         if (identityKey) active.delete(identityKey);
         active.delete(lifecycleKey);
         Array.from(active.entries()).forEach(([activeKey, activeTrade]) => {
-          if (samePaperTradeIdentity(entry, activeTrade)) active.delete(activeKey);
+          if (closingEntryMatchesActiveTrade(entry, activeTrade)) active.delete(activeKey);
         });
       }
     });
@@ -9237,6 +9295,9 @@ function getLatestUnclosedOpeningTrade(commodity) {
     if (isClosingTransaction(entry)) {
       if (identityKey) active.delete(identityKey);
       active.delete(lifecycleKey);
+      Array.from(active.entries()).forEach(([activeKey, activeEntry]) => {
+        if (closingEntryMatchesOpenTrade(entry, activeEntry)) active.delete(activeKey);
+      });
     }
   });
 
@@ -9914,6 +9975,7 @@ if (lowPowerModeToggleEl) {
   lowPowerModeToggleEl.addEventListener("change", () => {
     lowPowerMode = lowPowerModeToggleEl.checked;
     saveLowPowerMode();
+    queueLivePricePaint(commoditySelect.value, { immediate: true });
     queueSignalRecalculation("low-power-toggle", { immediate: true });
     queueAdvisoryChartRender({ immediate: true });
   });
@@ -9921,6 +9983,7 @@ if (lowPowerModeToggleEl) {
 
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) return;
+  queueLivePricePaint(commoditySelect.value, { immediate: true });
   queueSignalRecalculation("tab-visible", { immediate: true });
   queueAdvisoryChartRender({ immediate: true });
   refreshCoinbasePrice(commoditySelect.value, { force: true });

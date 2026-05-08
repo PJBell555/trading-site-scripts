@@ -167,6 +167,19 @@ function samePaperTradeIdentity(left = {}, right = {}) {
   );
 }
 
+function closingEntryMatchesOpenTrade(closeEntry = {}, openEntry = {}) {
+  if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
+  if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
+  if (normalizeEmail(closeEntry.userEmail || "") !== normalizeEmail(openEntry.userEmail || "")) return false;
+  if (String(closeEntry.commodity || "") !== String(openEntry.commodity || "")) return false;
+  if (closeEntry.contract && openEntry.contract && String(closeEntry.contract) !== String(openEntry.contract)) return false;
+  if (String(closeEntry.side || "") !== String(openEntry.side || "")) return false;
+  if (String(closeEntry.step || "") !== String(openEntry.step || "")) return false;
+  const closeTime = getTransactionDate(closeEntry.closedAt || closeEntry.time).getTime();
+  const openTime = getTransactionDate(openEntry.openedAt || openEntry.time).getTime();
+  return Number.isFinite(closeTime) && Number.isFinite(openTime) && closeTime >= openTime;
+}
+
 function mergeTransactions(existing = [], incoming = []) {
   const bySharedKey = new Map();
 
@@ -1630,7 +1643,7 @@ function getOpenPaperTradesForUser(transactions = [], userEmail) {
         if (identityKey) active.delete(identityKey);
         active.delete(lifecycleKey);
         Array.from(active.entries()).forEach(([activeKey, activeEntry]) => {
-          if (samePaperTradeIdentity(activeEntry, entry)) active.delete(activeKey);
+          if (closingEntryMatchesOpenTrade(entry, activeEntry)) active.delete(activeKey);
         });
       }
     });
