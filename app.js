@@ -8598,6 +8598,10 @@ function isPaperActionPending(commodity) {
   return true;
 }
 
+function hasAnyPaperActionPending() {
+  return Array.from(pendingPaperActions.keys()).some((commodity) => isPaperActionPending(commodity));
+}
+
 function markPaperActionPending(commodity) {
   pendingPaperActions.set(commodity, Date.now());
 }
@@ -8606,10 +8610,53 @@ function clearPaperActionPending(commodity) {
   pendingPaperActions.delete(commodity);
 }
 
+function getCurrentUserActivePaperTrades() {
+  const active = new Map();
+  getUserScopedTransactions()
+    .slice()
+    .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
+    .forEach((entry) => {
+      const identityKey = getTradeIdentityKey(entry);
+      const lifecycleKey = getTradeLifecycleKey(entry);
+      const key = identityKey || lifecycleKey;
+      if (!key) return;
+
+      if (isOpeningTransaction(entry)) {
+        active.set(key, tradeFromOpeningEntry(entry));
+        return;
+      }
+
+      if (isClosingTransaction(entry)) {
+        if (identityKey) active.delete(identityKey);
+        active.delete(lifecycleKey);
+        Array.from(active.entries()).forEach(([activeKey, activeTrade]) => {
+          if (samePaperTradeIdentity(entry, activeTrade)) active.delete(activeKey);
+        });
+      }
+    });
+
+  openPaperTrades.forEach((trade) => {
+    if (!trade || !isTransactionForCurrentUser(trade) || isPaperTradeClosedInLedger(trade)) return;
+    active.set(getOpenTradeIdentityKey(trade), trade);
+  });
+
+  return Array.from(active.values());
+}
+
+function getBlockingOpenPaperTradeForNewEntry(commodity) {
+  const activeTrades = getCurrentUserActivePaperTrades();
+  const sameCommodity = activeTrades.find((trade) => trade.commodity === commodity);
+  if (sameCommodity) return sameCommodity;
+
+  const strategy = getCurrentUserStrategy();
+  const isMartingale = String(strategy.type || "").includes("martingale");
+  return isMartingale ? activeTrades[0] || null : null;
+}
+
 async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {
   const side = getSignalSide(signal);
   if (!side) return;
-  if (getOpenPaperTrade(commodity) || isPaperActionPending(commodity)) return;
+  if (getBlockingOpenPaperTradeForNewEntry(commodity) || hasAnyPaperActionPending()) return;
   markPaperActionPending(commodity);
 
   const entryPrice = tradePlan.livePrice;
@@ -8828,9 +8875,9 @@ function queuePaperExitIfTriggered(commodity, trade, fallbackPrice = null) {
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   reconcilePaperStateFromHistory();
 
-  const openTrade = getOpenPaperTrade(commodity);
+  const openTrade = getOpenPaperTrade(commodity) || getBlockingOpenPaperTradeForNewEntry(commodity);
   if (openTrade) {
-    queuePaperExitIfTriggered(commodity, openTrade, tradePlan.livePrice);
+    if (openTrade.commodity === commodity) queuePaperExitIfTriggered(commodity, openTrade, tradePlan.livePrice);
     return;
   }
 

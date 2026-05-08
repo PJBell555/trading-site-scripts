@@ -1637,6 +1637,10 @@ function getOpenPaperTradesForUser(transactions = [], userEmail) {
   return Array.from(active.values());
 }
 
+function shouldUseExclusiveMartingale(user = {}) {
+  return String(user.strategy?.type || "").includes("martingale");
+}
+
 function getClosedPaperTradesForUser(transactions = [], userEmail) {
   return getTransactionsForUser(transactions, userEmail)
     .filter(isClosingTransaction)
@@ -2249,6 +2253,7 @@ async function runPaperTradingScheduler(env, options = {}) {
       run.evaluatedUsers += 1;
       const openTrades = getOpenPaperTradesForUser(transactions, email);
       let activeOpenCount = openTrades.length;
+      const exclusiveMartingale = shouldUseExclusiveMartingale(user);
       let lastDecision = "No eligible commodities evaluated";
       const marketSchedule = getUserMarketScheduleStatus(schedulerSettings);
 
@@ -2319,6 +2324,10 @@ async function runPaperTradingScheduler(env, options = {}) {
 
         const hasCommodityOpen = getOpenPaperTradesForUser(transactions, email).some((trade) => trade.commodity === commodity);
         if (hasCommodityOpen) continue;
+        if (exclusiveMartingale && getOpenPaperTradesForUser(transactions, email).length > 0) {
+          if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: martingale sequence already has an open trade`;
+          continue;
+        }
 
         const signal = getServerSignal(advisory);
         if (!signal.side || signal.conviction < schedulerSettings.entryThreshold) {
