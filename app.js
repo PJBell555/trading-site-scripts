@@ -75,6 +75,20 @@ const exportOpenBrainMemoryEl = document.querySelector("#export-open-brain-memor
 const openBrainMemoryTableEl = document.querySelector("#open-brain-memory-table");
 const skillSystemButtons = Array.from(document.querySelectorAll("[data-skill-system]"));
 const skillsDetailCardEl = document.querySelector("#skills-detail-card");
+const skillAddNewEl = document.querySelector("#skill-add-new");
+const skillVoiceButtonEl = document.querySelector("#skill-voice-button");
+const skillInspectButtonEl = document.querySelector("#skill-inspect-button");
+const skillSearchInputEl = document.querySelector("#skill-search-input");
+const skillEditorFormEl = document.querySelector("#skill-editor-form");
+const skillEditIdEl = document.querySelector("#skill-edit-id");
+const skillNameInputEl = document.querySelector("#skill-name-input");
+const skillBodyInputEl = document.querySelector("#skill-body-input");
+const skillTagsInputEl = document.querySelector("#skill-tags-input");
+const skillAdoptAdvisoryInputEl = document.querySelector("#skill-adopt-advisory-input");
+const skillAdoptOpinionInputEl = document.querySelector("#skill-adopt-opinion-input");
+const skillEditorResetEl = document.querySelector("#skill-editor-reset");
+const skillVoiceStatusEl = document.querySelector("#skill-voice-status");
+const customSkillListEl = document.querySelector("#custom-skill-list");
 const strategyEditorEl = document.querySelector("#strategy-editor");
 const strategyEditorCancelEl = document.querySelector("#strategy-editor-cancel");
 const strategyEditKeyEl = document.querySelector("#strategy-edit-key");
@@ -332,6 +346,7 @@ const SECOND_OPINION_PROMPTS_KEY = "atlas-second-opinion-prompts";
 const OPEN_BRAIN_MEMORY_KEY = "atlas-open-brain-memory-events-v1";
 const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
 const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
+const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
@@ -488,6 +503,29 @@ const SKILL_SYSTEM_DETAILS = {
     note: "The LLM is a slower checkpoint, not the tick engine. Keep second-by-second prediction in microstructure logic and use LLMs for context review."
   }
 };
+const CUSTOM_SKILLS_KEY = "comhedge-custom-skills-v1";
+const DEFAULT_CUSTOM_SKILLS = [
+  {
+    id: "skill-short-bias-confirmation",
+    name: "Require Short Bias Confirmation",
+    body: "When the scheduled LLM and second opinions lean short, avoid flipping long on one or two rising ticks. Require sustained reclaim of VWAP and improving 30s/60s returns before changing the advisory side.",
+    tags: ["oil", "short", "stability"],
+    adoptAdvisory: true,
+    adoptOpinion: true,
+    createdAt: "2026-05-08T00:00:00.000Z",
+    updatedAt: "2026-05-08T00:00:00.000Z"
+  },
+  {
+    id: "skill-market-close-gap-risk",
+    name: "Respect Market-Close Gap Risk",
+    body: "Before the Coinbase futures maintenance break or weekly close, check whether the user accepts overnight gap risk. If not, flatten open positions before the configured close window.",
+    tags: ["risk", "calendar", "execution"],
+    adoptAdvisory: true,
+    adoptOpinion: false,
+    createdAt: "2026-05-08T00:00:00.000Z",
+    updatedAt: "2026-05-08T00:00:00.000Z"
+  }
+];
 
 const chipMap = new Map();
 const openPaperTrades = new Map();
@@ -525,6 +563,9 @@ let activeSection = "home";
 let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
 let activeSkillSystem = "micro-predictor";
+let activeCustomSkillId = "";
+let skillSearchQuery = "";
+let activeSkillVoiceRecognizer = null;
 let featureTypeFilter = "all";
 let primaryModelId = "sonnet-4.6";
 let secondaryModelId = "gpt-5-mini";
@@ -553,6 +594,8 @@ let lastCommodityMeta = commodities[0];
 const userRoster = [];
 const featureRequests = [];
 const openBrainMemory = [];
+const customSkills = [];
+const customStrategies = [];
 const PAPER_STATE_KEY = "atlas-paper-trading-state-v1";
 const PAPER_DECISION_LOG_KEY = "comhedge-paper-decision-log-v1";
 const PAPER_DECISION_LOG_LIMIT = 300;
@@ -615,6 +658,7 @@ function setActiveSection(section) {
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
   if (section === "leaderboard") renderLeaderBoard();
+  if (section === "skills") renderSkillsWorkspace();
   if (section === "users") showUserManagement(true);
   if (section === "actual-trades") renderLiveTradeLedger();
   if (section === "token-costs") renderTokenCosts();
@@ -683,6 +727,10 @@ function renderOpenBrainMemory() {
 
 function renderSkillSystemDetail() {
   if (!skillsDetailCardEl) return;
+  if (activeCustomSkillId) {
+    renderCustomSkillDetail(activeCustomSkillId);
+    return;
+  }
   const detail = SKILL_SYSTEM_DETAILS[activeSkillSystem] || SKILL_SYSTEM_DETAILS["micro-predictor"];
 
   skillSystemButtons.forEach((button) => {
@@ -725,8 +773,290 @@ function renderSkillSystemDetail() {
 
 function selectSkillSystem(systemId) {
   if (!SKILL_SYSTEM_DETAILS[systemId]) return;
+  activeCustomSkillId = "";
   activeSkillSystem = systemId;
   renderSkillSystemDetail();
+  renderCustomSkills();
+}
+
+function normalizeSkillTags(value) {
+  const values = Array.isArray(value) ? value : String(value || "").split(",");
+  return [...new Set(values.map((tag) => String(tag || "").trim()).filter(Boolean))].slice(0, 8);
+}
+
+function normalizeCustomSkill(skill = {}) {
+  const now = new Date().toISOString();
+  const name = String(skill.name || "").trim();
+  if (!name) return null;
+  return {
+    id: String(skill.id || `skill-${Date.now()}-${Math.random().toString(16).slice(2)}`),
+    name,
+    body: String(skill.body || "").trim(),
+    tags: normalizeSkillTags(skill.tags),
+    adoptAdvisory: skill.adoptAdvisory !== false,
+    adoptOpinion: skill.adoptOpinion === true,
+    createdAt: skill.createdAt || now,
+    updatedAt: skill.updatedAt || now
+  };
+}
+
+function loadCustomSkills() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CUSTOM_SKILLS_KEY) || "null");
+    const rows = Array.isArray(stored) ? stored : DEFAULT_CUSTOM_SKILLS;
+    customSkills.splice(0, customSkills.length, ...rows.map(normalizeCustomSkill).filter(Boolean));
+  } catch (error) {
+    customSkills.splice(0, customSkills.length, ...DEFAULT_CUSTOM_SKILLS.map(normalizeCustomSkill).filter(Boolean));
+  }
+}
+
+function saveCustomSkills() {
+  window.localStorage.setItem(CUSTOM_SKILLS_KEY, JSON.stringify(customSkills));
+}
+
+function getAdoptedSkills(target = "advisory") {
+  const key = target === "opinion" ? "adoptOpinion" : "adoptAdvisory";
+  return customSkills.filter((skill) => skill[key]);
+}
+
+function getAdoptedSkillSummary(target = "advisory", limit = 3) {
+  const adopted = getAdoptedSkills(target).slice(0, limit);
+  if (!adopted.length) return "";
+  return adopted.map((skill) => `${skill.name}: ${skill.body || "No instructions yet"}`).join(" ");
+}
+
+function resetSkillEditor(skill = null) {
+  if (!skillEditorFormEl) return;
+  skillEditIdEl.value = skill?.id || "";
+  skillNameInputEl.value = skill?.name || "";
+  skillBodyInputEl.value = skill?.body || "";
+  skillTagsInputEl.value = (skill?.tags || []).join(", ");
+  skillAdoptAdvisoryInputEl.checked = skill?.adoptAdvisory !== false;
+  skillAdoptOpinionInputEl.checked = skill?.adoptOpinion === true;
+  if (!skill && skillNameInputEl) skillNameInputEl.focus();
+}
+
+function renderCustomSkills() {
+  if (!customSkillListEl) return;
+  const query = skillSearchQuery.toLowerCase();
+  const filtered = customSkills.filter((skill) => {
+    const haystack = [skill.name, skill.body, ...(skill.tags || [])].join(" ").toLowerCase();
+    return !query || haystack.includes(query);
+  });
+
+  customSkillListEl.innerHTML = "";
+  if (!filtered.length) {
+    const empty = document.createElement("div");
+    empty.className = "skills-empty compact";
+    empty.textContent = "No user skills match the current search.";
+    customSkillListEl.append(empty);
+    return;
+  }
+
+  filtered.forEach((skill) => {
+    const card = document.createElement("article");
+    const meta = document.createElement("span");
+    const title = document.createElement("strong");
+    const copy = document.createElement("p");
+    const chips = document.createElement("div");
+
+    card.className = "custom-skill-card";
+    card.dataset.active = String(skill.id === activeCustomSkillId);
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.addEventListener("click", () => selectCustomSkill(skill.id));
+    card.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      selectCustomSkill(skill.id);
+    });
+    meta.textContent = [
+      skill.adoptAdvisory ? "Advisory" : "",
+      skill.adoptOpinion ? "Second Opinion" : ""
+    ].filter(Boolean).join(" + ") || "Not adopted";
+    title.textContent = skill.name;
+    copy.textContent = skill.body || "No instructions yet.";
+    chips.className = "skill-tag-row";
+    (skill.tags || []).forEach((tag) => {
+      const chip = document.createElement("span");
+      chip.textContent = tag;
+      chips.append(chip);
+    });
+    card.append(meta, title, copy, chips);
+    customSkillListEl.append(card);
+  });
+}
+
+function renderCustomSkillDetail(skillId) {
+  const skill = customSkills.find((candidate) => candidate.id === skillId);
+  if (!skillsDetailCardEl || !skill) {
+    activeCustomSkillId = "";
+    renderSkillSystemDetail();
+    return;
+  }
+
+  skillSystemButtons.forEach((button) => {
+    button.classList.remove("is-active");
+    if (button.classList.contains("system-skill-card")) button.dataset.systemTone = "";
+    button.setAttribute("aria-selected", "false");
+  });
+
+  const label = document.createElement("span");
+  const title = document.createElement("h3");
+  const subtitle = document.createElement("p");
+  const grid = document.createElement("div");
+  const note = document.createElement("div");
+  const actions = document.createElement("div");
+  const edit = document.createElement("button");
+  const remove = document.createElement("button");
+
+  label.className = "stat-label";
+  label.textContent = "User skill";
+  title.textContent = skill.name;
+  subtitle.className = "skills-detail-subtitle";
+  subtitle.textContent = skill.body || "No detailed instructions yet.";
+  grid.className = "system-adjust-grid";
+  [
+    ["Adopted In", [
+      skill.adoptAdvisory ? "Advisories" : "",
+      skill.adoptOpinion ? "Second opinions" : ""
+    ].filter(Boolean).join(", ") || "Not adopted"],
+    ["Tags", (skill.tags || []).join(", ") || "No tags"],
+    ["Updated", formatTradeTime(skill.updatedAt)],
+    ["Created", formatTradeTime(skill.createdAt)]
+  ].forEach(([sectionTitle, sectionCopy]) => {
+    const item = document.createElement("div");
+    const strong = document.createElement("strong");
+    const span = document.createElement("span");
+    strong.textContent = sectionTitle;
+    span.textContent = sectionCopy;
+    item.append(strong, span);
+    grid.append(item);
+  });
+  note.className = "system-note";
+  note.textContent = "Adopted skills are inserted as lightweight context in the advisory plan and second-opinion output. Keep them specific and testable.";
+  actions.className = "skill-detail-actions";
+  edit.className = "filter-button skill-seed-button";
+  edit.type = "button";
+  edit.textContent = "Edit";
+  edit.addEventListener("click", () => resetSkillEditor(skill));
+  remove.className = "filter-button";
+  remove.type = "button";
+  remove.textContent = "Delete";
+  remove.addEventListener("click", () => deleteCustomSkill(skill.id));
+  actions.append(edit, remove);
+  skillsDetailCardEl.replaceChildren(label, title, subtitle, grid, note, actions);
+}
+
+function selectCustomSkill(skillId) {
+  if (!customSkills.some((skill) => skill.id === skillId)) return;
+  activeCustomSkillId = skillId;
+  renderSkillSystemDetail();
+  renderCustomSkills();
+}
+
+function saveCustomSkillFromForm(event) {
+  event?.preventDefault();
+  const name = skillNameInputEl?.value.trim();
+  if (!name) return;
+  const now = new Date().toISOString();
+  const existingId = skillEditIdEl?.value || "";
+  const existing = customSkills.find((skill) => skill.id === existingId);
+  const next = normalizeCustomSkill({
+    id: existing?.id,
+    name,
+    body: skillBodyInputEl?.value || "",
+    tags: skillTagsInputEl?.value || "",
+    adoptAdvisory: skillAdoptAdvisoryInputEl?.checked,
+    adoptOpinion: skillAdoptOpinionInputEl?.checked,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now
+  });
+  if (!next) return;
+
+  if (existing) {
+    Object.assign(existing, next);
+  } else {
+    customSkills.unshift(next);
+  }
+  activeCustomSkillId = next.id;
+  saveCustomSkills();
+  resetSkillEditor();
+  renderSkillsWorkspace();
+  calculateSignal();
+}
+
+function deleteCustomSkill(skillId) {
+  const index = customSkills.findIndex((skill) => skill.id === skillId);
+  if (index < 0) return;
+  customSkills.splice(index, 1);
+  if (activeCustomSkillId === skillId) activeCustomSkillId = "";
+  saveCustomSkills();
+  resetSkillEditor();
+  renderSkillsWorkspace();
+  calculateSignal();
+}
+
+function renderSkillsWorkspace() {
+  renderSkillSystemDetail();
+  renderCustomSkills();
+}
+
+function parseVoiceSkillTranscript(transcript) {
+  const text = String(transcript || "").trim();
+  if (!text) return;
+  const titleMatch = text.match(/(?:called|named|title)\s+(.+?)(?:\s+(?:that|which|and|with)\s+|$)/i);
+  if (titleMatch && !skillNameInputEl.value.trim()) {
+    skillNameInputEl.value = titleMatch[1].trim();
+  } else if (!skillNameInputEl.value.trim()) {
+    skillNameInputEl.value = text.split(/[.!?]/)[0].slice(0, 70);
+  }
+  skillBodyInputEl.value = skillBodyInputEl.value
+    ? `${skillBodyInputEl.value}\n${text}`
+    : text;
+  const lowered = text.toLowerCase();
+  if (lowered.includes("second opinion")) skillAdoptOpinionInputEl.checked = true;
+  if (lowered.includes("do not adopt") || lowered.includes("don't adopt")) {
+    skillAdoptAdvisoryInputEl.checked = false;
+    skillAdoptOpinionInputEl.checked = false;
+  }
+  if (skillVoiceStatusEl) skillVoiceStatusEl.textContent = "Voice captured. Review and save the skill.";
+}
+
+function startSkillVoiceCapture() {
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRecognition) {
+    if (skillVoiceStatusEl) skillVoiceStatusEl.textContent = "Voice input is not supported in this browser.";
+    return;
+  }
+  if (activeSkillVoiceRecognizer) {
+    activeSkillVoiceRecognizer.stop();
+    activeSkillVoiceRecognizer = null;
+    return;
+  }
+  const recognizer = new SpeechRecognition();
+  activeSkillVoiceRecognizer = recognizer;
+  recognizer.lang = "en-US";
+  recognizer.continuous = false;
+  recognizer.interimResults = false;
+  recognizer.onstart = () => {
+    if (skillVoiceStatusEl) skillVoiceStatusEl.textContent = "Listening for a skill...";
+    if (skillVoiceButtonEl) skillVoiceButtonEl.textContent = "Stop Voice";
+  };
+  recognizer.onresult = (event) => {
+    const transcript = Array.from(event.results || [])
+      .map((result) => result[0]?.transcript || "")
+      .join(" ");
+    parseVoiceSkillTranscript(transcript);
+  };
+  recognizer.onerror = () => {
+    if (skillVoiceStatusEl) skillVoiceStatusEl.textContent = "Voice capture failed.";
+  };
+  recognizer.onend = () => {
+    activeSkillVoiceRecognizer = null;
+    if (skillVoiceButtonEl) skillVoiceButtonEl.textContent = "Voice";
+  };
+  recognizer.start();
 }
 
 function captureCurrentAdvisoryMemory(source = "manual") {
@@ -809,6 +1139,19 @@ function saveStrategyEdits(edits) {
   window.localStorage.setItem(STRATEGY_EDITS_KEY, JSON.stringify(edits));
 }
 
+function loadCustomStrategies() {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(CUSTOM_STRATEGIES_KEY) || "[]");
+    customStrategies.splice(0, customStrategies.length, ...(Array.isArray(stored) ? stored : []));
+  } catch (error) {
+    customStrategies.splice(0, customStrategies.length);
+  }
+}
+
+function saveCustomStrategies() {
+  window.localStorage.setItem(CUSTOM_STRATEGIES_KEY, JSON.stringify(customStrategies));
+}
+
 function getStrategyCard(strategyKey) {
   return Array.from(document.querySelectorAll("[data-strategy-key]"))
     .find((card) => card.dataset.strategyKey === strategyKey) || null;
@@ -838,22 +1181,37 @@ function updateStrategyCard(strategyKey, values) {
 }
 
 function applySavedStrategyEdits() {
+  renderCustomStrategies();
   const edits = loadStrategyEdits();
   Object.entries(edits).forEach(([strategyKey, values]) => updateStrategyCard(strategyKey, values));
 }
 
-function openStrategyEditor(strategyKey) {
+function openStrategyEditor(strategyKey = "") {
   if (!strategyEditorEl || !strategyEditKeyEl) return;
-  const card = getStrategyCard(strategyKey);
-  if (!card) return;
+  const isNew = !strategyKey;
+  const card = isNew ? null : getStrategyCard(strategyKey);
+  if (!isNew && !card) return;
 
   const saved = loadStrategyEdits()[strategyKey] || {};
-  const current = { ...readStrategyCard(card), ...saved };
-  strategyEditKeyEl.value = strategyKey;
+  const current = isNew
+    ? {
+      title: "",
+      meta: "Custom / draft",
+      summary: "",
+      note: ""
+    }
+    : { ...readStrategyCard(card), ...saved };
+  strategyEditKeyEl.value = isNew ? "" : strategyKey;
   strategyEditTitleEl.value = current.title;
   strategyEditMetaEl.value = current.meta;
   strategyEditSummaryEl.value = current.summary;
   strategyEditNoteEl.value = current.note;
+  const heading = strategyEditorEl.querySelector(".strategy-editor-head strong");
+  const subheading = strategyEditorEl.querySelector(".strategy-editor-head span");
+  if (heading) heading.textContent = isNew ? "Add strategy" : "Edit strategy";
+  if (subheading) subheading.textContent = isNew
+    ? "Create a new strategy card in the arsenal."
+    : "Update the card copy shown in the strategy arsenal.";
   strategyEditorEl.hidden = false;
   strategyEditorEl.scrollIntoView({ behavior: "smooth", block: "center" });
   strategyEditTitleEl.focus();
@@ -870,7 +1228,6 @@ function saveStrategyEditor(event) {
   if (!strategyEditKeyEl) return;
 
   const strategyKey = strategyEditKeyEl.value;
-  if (!strategyKey) return;
 
   const values = {
     title: strategyEditTitleEl.value,
@@ -878,11 +1235,72 @@ function saveStrategyEditor(event) {
     summary: strategyEditSummaryEl.value,
     note: strategyEditNoteEl.value
   };
+  if (!strategyKey) {
+    const key = `custom-strategy-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    customStrategies.unshift({ key, ...values });
+    saveCustomStrategies();
+    renderCustomStrategies();
+    closeStrategyEditor();
+    return;
+  }
   const edits = loadStrategyEdits();
   edits[strategyKey] = values;
   saveStrategyEdits(edits);
   updateStrategyCard(strategyKey, values);
   closeStrategyEditor();
+}
+
+function renderCustomStrategies() {
+  const grid = document.querySelector(".strategy-card-grid");
+  if (!grid) return;
+  grid.querySelectorAll("[data-custom-strategy='true']").forEach((card) => card.remove());
+  customStrategies.forEach((strategy) => {
+    const card = document.createElement("article");
+    const head = document.createElement("div");
+    const titleWrap = document.createElement("div");
+    const title = document.createElement("h3");
+    const meta = document.createElement("span");
+    const summary = document.createElement("p");
+    const note = document.createElement("div");
+    const actions = document.createElement("div");
+    const edit = document.createElement("button");
+    const remove = document.createElement("button");
+
+    card.className = "strategy-method-card";
+    card.dataset.strategyKey = strategy.key;
+    card.dataset.customStrategy = "true";
+    title.dataset.strategyField = "title";
+    meta.dataset.strategyField = "meta";
+    summary.dataset.strategyField = "summary";
+    note.dataset.strategyField = "note";
+    title.textContent = strategy.title || "Untitled strategy";
+    meta.textContent = strategy.meta || "Custom";
+    summary.textContent = strategy.summary || "No summary yet.";
+    note.className = "strategy-note";
+    note.textContent = strategy.note || "No execution note yet.";
+    actions.className = "strategy-card-actions";
+    edit.className = "strategy-pill strategy-edit-button";
+    edit.type = "button";
+    edit.dataset.strategyEdit = strategy.key;
+    edit.textContent = "Edit";
+    edit.addEventListener("click", () => openStrategyEditor(strategy.key));
+    remove.className = "strategy-pill";
+    remove.type = "button";
+    remove.textContent = "Delete";
+    remove.addEventListener("click", () => {
+      const index = customStrategies.findIndex((candidate) => candidate.key === strategy.key);
+      if (index >= 0) {
+        customStrategies.splice(index, 1);
+        saveCustomStrategies();
+        renderCustomStrategies();
+      }
+    });
+    titleWrap.append(title, meta);
+    head.append(titleWrap);
+    actions.append(edit, remove);
+    card.append(head, summary, note, actions);
+    grid.prepend(card);
+  });
 }
 
 function renderPrimaryModelSelector() {
@@ -1211,6 +1629,7 @@ function renderSecondOpinionResults(modelIds) {
   const tradePlan = lastTradePlan;
   const commodityMeta = lastCommodityMeta;
   const promptIds = getSelectedSecondOpinionPrompts();
+  const adoptedOpinionSkills = getAdoptedSkills("opinion").slice(0, 3);
 
   secondOpinionResultsEl.innerHTML = "";
 
@@ -1248,14 +1667,18 @@ function renderSecondOpinionResults(modelIds) {
       ? `Data: ${formatPrice(tradePlan.livePrice)} via ${tradePlan.priceSource}`
       : `Data: ${UNAVAILABLE_TEXT}`;
 
-    [
+    const opinionBullets = [
       `${model.name} ${directionText} on ${commodityMeta.name.toLowerCase()} with ${score}/100 conviction.`,
       `Primary advisory is ${signal.label.toLowerCase()} from ${getModelById(primaryModelId).name}.`,
       tradePlan.priceReady
         ? `Entry ${formatPrice(tradePlan.buyPrice)}, target ${formatPrice(tradePlan.sellPrice)}, stop ${formatPrice(tradePlan.stopLoss)}.`
         : "Entry, target, and stop are not available until a valid price source is loaded.",
       tone === "wait" ? "Main risk: signal strength is not high enough for a clean independent confirmation." : "Main risk: validate price source, spread, and stop distance before using this as trade support."
-    ].forEach((text) => {
+    ];
+    adoptedOpinionSkills.forEach((skill) => {
+      opinionBullets.push(`Adopted skill - ${skill.name}: ${skill.body || "No instructions yet."}`);
+    });
+    opinionBullets.forEach((text) => {
       const item = document.createElement("li");
       item.textContent = text;
       list.append(item);
@@ -5063,8 +5486,9 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     : "Reference margin";
   const strategyName = userStrategy.name || "Profile strategy";
   const loopName = userStrategy.karpathyLoop ? "Karpathy loop" : "profile threshold";
+  const adoptedAdvisorySkills = getAdoptedSkillSummary("advisory", 3);
   const skillText = userStrategy.skillsAccess
-    ? ` Use ${userStrategy.skillFocus || "selected skills"} as supporting context.`
+    ? ` Use ${userStrategy.skillFocus || "selected skills"} as supporting context.${adoptedAdvisorySkills ? ` Adopted skills: ${adoptedAdvisorySkills}` : ""}`
     : "";
   const memoryText = userStrategy.openBrainAccess
     ? ` Capture context in Open Brain before changing thresholds.`
@@ -9053,7 +9477,12 @@ function getLiveAdvisoryContext() {
       currentPrice: livePrice,
       signals: baseSignals,
       uiPrimaryModel: primaryEntry.name,
-      uiSecondaryModel: secondaryEntry.name
+      uiSecondaryModel: secondaryEntry.name,
+      adoptedSkills: getAdoptedSkills("advisory").map((skill) => ({
+        name: skill.name,
+        instruction: skill.body,
+        tags: skill.tags
+      }))
     }
   };
   if (primaryEntry.openrouterId) body.model = primaryEntry.openrouterId;
@@ -9564,8 +9993,22 @@ skillSystemButtons.forEach((button) => {
     selectSkillSystem(button.dataset.skillSystem);
   });
 });
+skillAddNewEl?.addEventListener("click", () => {
+  activeCustomSkillId = "";
+  resetSkillEditor();
+  renderSkillsWorkspace();
+});
+skillEditorFormEl?.addEventListener("submit", saveCustomSkillFromForm);
+skillEditorResetEl?.addEventListener("click", () => resetSkillEditor());
+skillVoiceButtonEl?.addEventListener("click", startSkillVoiceCapture);
+skillInspectButtonEl?.addEventListener("click", renderSkillsWorkspace);
+skillSearchInputEl?.addEventListener("input", () => {
+  skillSearchQuery = skillSearchInputEl.value.trim();
+  renderCustomSkills();
+});
 strategyEditorEl?.addEventListener("submit", saveStrategyEditor);
 strategyEditorCancelEl?.addEventListener("click", closeStrategyEditor);
+document.querySelector(".strategy-add-button")?.addEventListener("click", () => openStrategyEditor());
 document.querySelectorAll("[data-strategy-edit]").forEach((button) => {
   button.addEventListener("click", () => openStrategyEditor(button.dataset.strategyEdit));
 });
@@ -9639,7 +10082,9 @@ function initializeApp() {
   loadPaperDecisionLog();
   loadLeaderBoardRankMode();
   loadLeaderBoardPeriodMode();
+  loadCustomStrategies();
   applySavedStrategyEdits();
+  loadCustomSkills();
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
   loadFeatureRequests();
@@ -9653,7 +10098,7 @@ function initializeApp() {
   renderSecondOpinionControls();
   renderTokenCosts();
   renderOpenBrainMemory();
-  renderSkillSystemDetail();
+  renderSkillsWorkspace();
   renderCurrentUserStrategy();
   showUserManagement();
   renderFeatureRequests();

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-llm-tone-anchor-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-editable-skills-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -533,11 +533,11 @@
         <div>
           <p class="eyebrow">Intelligence pipeline</p>
           <h2>Skills</h2>
-          <p>The knowledge pipeline that powers advisories: what we know, what we watch, and how we improve.</p>
+          <p>The knowledge pipeline that powers advisories: what we know, what we watch, and which skills are adopted into model work.</p>
         </div>
         <div class="skills-actions">
-          <button class="filter-button skill-seed-button" type="button">Generate Seed Content</button>
-          <button class="filter-button" type="button">Voice</button>
+          <button class="filter-button skill-seed-button" type="button" id="skill-add-new">Add Skill</button>
+          <button class="filter-button" type="button" id="skill-voice-button">Voice</button>
         </div>
       </div>
       <div class="skills-workspace">
@@ -570,8 +570,8 @@
         <div class="skills-files">
           <div class="skills-file-toolbar">
             <span class="skills-icon">SYS</span>
-            <input type="text" placeholder="Search systems..." aria-label="Search skill systems">
-            <button class="filter-button" type="button">Inspect</button>
+            <input type="text" id="skill-search-input" placeholder="Search skills..." aria-label="Search skill systems">
+            <button class="filter-button" type="button" id="skill-inspect-button">Inspect</button>
           </div>
           <div class="system-skill-list" aria-label="Built trading systems">
             <article class="system-skill-card" data-system-tone="active" data-skill-system="micro-predictor" role="button" tabindex="0">
@@ -604,6 +604,37 @@
               <strong>LLM Advisory Checkpoint</strong>
               <p>Runs the selected advisory model on a schedule, keeps its conviction separate from the local predictor, and displays the latest verified LLM score.</p>
             </article>
+          </div>
+          <div class="custom-skill-panel">
+            <div class="custom-skill-head">
+              <span class="skills-icon">USER</span>
+              <strong>Skill Library</strong>
+            </div>
+            <form class="skill-editor-form" id="skill-editor-form">
+              <input type="hidden" id="skill-edit-id">
+              <label>
+                Skill name
+                <input type="text" id="skill-name-input" placeholder="Example: Fade weak inventory rallies" required>
+              </label>
+              <label>
+                What the skill should do
+                <textarea id="skill-body-input" rows="4" placeholder="Describe the rule, market lesson, checklist, or prompt guidance."></textarea>
+              </label>
+              <label>
+                Tags
+                <input type="text" id="skill-tags-input" placeholder="oil, short, inventory">
+              </label>
+              <div class="skill-adoption-row">
+                <label><input type="checkbox" id="skill-adopt-advisory-input" checked> Adopt in advisories</label>
+                <label><input type="checkbox" id="skill-adopt-opinion-input"> Adopt in second opinions</label>
+              </div>
+              <div class="skill-form-actions">
+                <button class="filter-button skill-seed-button" type="submit">Save Skill</button>
+                <button class="filter-button" type="button" id="skill-editor-reset">Clear</button>
+              </div>
+              <p class="skill-voice-status" id="skill-voice-status">Voice is idle.</p>
+            </form>
+            <div class="custom-skill-list" id="custom-skill-list" aria-label="User skills"></div>
           </div>
         </div>
         <div class="skills-detail">
@@ -1591,6 +1622,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-llm-tone-anchor-1"></script>
+  <script src="./app.js?v=comhedge-editable-skills-1"></script>
 </body>
 </html>
