@@ -2093,7 +2093,7 @@ function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user))
         if (identityKey) active.delete(identityKey);
         active.delete(lifecycleKey);
         Array.from(active.entries()).forEach(([activeKey, activeEntry]) => {
-          if (samePaperTradeIdentity(entry, activeEntry)) active.delete(activeKey);
+          if (closingEntryMatchesOpenTrade(entry, activeEntry)) active.delete(activeKey);
         });
       }
     });
@@ -5761,6 +5761,19 @@ function samePaperTradeLifecycle(a, b) {
     && Number(a.step || a.martingaleStep || 1) === Number(b.step || b.martingaleStep || 1);
 }
 
+function samePaperTradeAccount(a, b) {
+  return normalizeEmail(a?.userEmail || a?.profileEmail || a?.accountEmail || LEGACY_LEDGER_USER_EMAIL)
+    === normalizeEmail(b?.userEmail || b?.profileEmail || b?.accountEmail || LEGACY_LEDGER_USER_EMAIL);
+}
+
+function samePaperTradePosition(a, b) {
+  if (!a || !b) return false;
+  return samePaperTradeAccount(a, b)
+    && a.commodity === b.commodity
+    && a.side === b.side
+    && Number(a.step || a.martingaleStep || 1) === Number(b.step || b.martingaleStep || 1);
+}
+
 function samePaperTradeIdentity(a, b) {
   if (!a || !b) return false;
 
@@ -5773,6 +5786,15 @@ function samePaperTradeIdentity(a, b) {
   if (aTradeId && bTradeId && String(aTradeId) === String(bTradeId)) return true;
 
   return samePaperTradeLifecycle(a, b) && sameOpenTimestamp(a, b);
+}
+
+function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
+  if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
+  if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
+  if (!samePaperTradePosition(closeEntry, openEntry)) return false;
+  const closeTime = getTransactionDate(closeEntry.closedAt || closeEntry.time).getTime();
+  const openTime = getTransactionDate(openEntry.openedAt || openEntry.time).getTime();
+  return Number.isFinite(closeTime) && Number.isFinite(openTime) && closeTime >= openTime;
 }
 
 function getPaperCloseDedupeKey(entry) {
