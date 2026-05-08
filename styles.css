@@ -1387,6 +1387,39 @@ body {
   line-height: 1.4;
 }
 
+.advisory-power-row {
+  align-items: center;
+  border-top: 1px solid rgba(96, 165, 250, 0.18);
+  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.advisory-power-toggle {
+  align-items: center;
+  color: #f8fafc;
+  display: inline-flex;
+  gap: 8px;
+  margin: 0;
+}
+
+.advisory-power-toggle input {
+  accent-color: var(--accent);
+  margin: 0;
+}
+
+.advisory-power-toggle span {
+  font-weight: 800;
+}
+
+#low-power-mode-status {
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
 .user-status {
   border-radius: 999px;
   display: inline-block;

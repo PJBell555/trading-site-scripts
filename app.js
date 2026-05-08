@@ -147,6 +147,8 @@ const advisoryUserAvatarEl = document.querySelector("#advisory-user-avatar");
 const advisoryUserNameEl = document.querySelector("#advisory-user-name");
 const advisoryUserStrategyNameEl = document.querySelector("#advisory-user-strategy-name");
 const advisoryAdoptedSystemsEl = document.querySelector("#advisory-adopted-systems");
+const lowPowerModeToggleEl = document.querySelector("#low-power-mode-toggle");
+const lowPowerModeStatusEl = document.querySelector("#low-power-mode-status");
 const paperSizeEl = document.querySelector("#paper-size");
 const paperStatusEl = document.querySelector("#paper-status");
 const paperCommittedEl = document.querySelector("#paper-committed");
@@ -358,6 +360,16 @@ const MICRO_PREDICTION_PENDING_LOCAL_KEY = "comhedge-pending-micro-predictions-v
 const MICRO_PREDICTION_CAPTURE_KEY = "comhedge-last-micro-prediction-key-v1";
 const LEADERBOARD_RANK_KEY = "comhedge-leaderboard-rank-v2";
 const LEADERBOARD_PERIOD_KEY = "comhedge-leaderboard-period-v1";
+const LOW_POWER_MODE_KEY = "comhedge-low-power-mode-v1";
+const NORMAL_SIGNAL_THROTTLE_MS = 1000;
+const LOW_POWER_SIGNAL_THROTTLE_MS = 5000;
+const HIDDEN_SIGNAL_THROTTLE_MS = 15000;
+const NORMAL_CHART_THROTTLE_MS = 3000;
+const LOW_POWER_CHART_THROTTLE_MS = 15000;
+const HIDDEN_CHART_THROTTLE_MS = 60000;
+const NORMAL_PAPER_SWEEP_THROTTLE_MS = 2000;
+const LOW_POWER_PAPER_SWEEP_THROTTLE_MS = 10000;
+const HIDDEN_PAPER_SWEEP_THROTTLE_MS = 30000;
 const LEADERBOARD_DEFAULT_RANK = "closed-pnl";
 const LEADERBOARD_DEFAULT_PERIOD = "all";
 const LEADERBOARD_RANK_OPTIONS = {
@@ -548,6 +560,13 @@ let snapshotPricesLoadedAt = 0;
 let activePriceSocket = null;
 let activePriceSocketCommodity = null;
 let activePriceSocketReconnectTimer = null;
+let lowPowerMode = true;
+let signalRecalcTimer = null;
+let lastSignalRecalcAt = 0;
+let chartRenderTimer = null;
+let lastChartRenderAt = 0;
+let paperSweepTimer = null;
+let lastPaperSweepAt = 0;
 let historyCommodityFilter = "all";
 let historyPeriodFilter = "all";
 let historyFiltersTouched = false;
@@ -606,6 +625,102 @@ let lastPaperDecisionLogKey = "";
 let lastPaperDecisionLogAt = 0;
 let lastMicroPredictionKey = "";
 
+function syncLowPowerModeControls() {
+  if (lowPowerModeToggleEl) lowPowerModeToggleEl.checked = lowPowerMode;
+  if (lowPowerModeStatusEl) {
+    lowPowerModeStatusEl.textContent = lowPowerMode
+      ? "Low power mode batches live ticks, chart redraws, and advisory recalculations."
+      : "Live mode recalculates more often and can use more CPU.";
+  }
+}
+
+function loadLowPowerMode() {
+  lowPowerMode = localStorage.getItem(LOW_POWER_MODE_KEY) !== "false";
+  syncLowPowerModeControls();
+}
+
+function saveLowPowerMode() {
+  localStorage.setItem(LOW_POWER_MODE_KEY, String(lowPowerMode));
+  syncLowPowerModeControls();
+}
+
+function getVisibleThrottle(normalMs, lowPowerMs, hiddenMs) {
+  if (document.hidden) return hiddenMs;
+  return lowPowerMode ? lowPowerMs : normalMs;
+}
+
+function queueSignalRecalculation(reason = "live-update", options = {}) {
+  const immediate = options.immediate === true;
+  const now = Date.now();
+  const throttleMs = immediate ? 0 : getVisibleThrottle(
+    NORMAL_SIGNAL_THROTTLE_MS,
+    LOW_POWER_SIGNAL_THROTTLE_MS,
+    HIDDEN_SIGNAL_THROTTLE_MS
+  );
+  const delay = Math.max(0, throttleMs - (now - lastSignalRecalcAt));
+
+  if (delay === 0 && !signalRecalcTimer) {
+    lastSignalRecalcAt = now;
+    calculateSignal();
+    return;
+  }
+
+  if (signalRecalcTimer) return;
+  signalRecalcTimer = window.setTimeout(() => {
+    signalRecalcTimer = null;
+    lastSignalRecalcAt = Date.now();
+    calculateSignal();
+  }, delay);
+}
+
+function queueAdvisoryChartRender(options = {}) {
+  const immediate = options.immediate === true;
+  const now = Date.now();
+  const throttleMs = immediate ? 0 : getVisibleThrottle(
+    NORMAL_CHART_THROTTLE_MS,
+    LOW_POWER_CHART_THROTTLE_MS,
+    HIDDEN_CHART_THROTTLE_MS
+  );
+  const delay = Math.max(0, throttleMs - (now - lastChartRenderAt));
+
+  if (delay === 0 && !chartRenderTimer) {
+    lastChartRenderAt = now;
+    renderAdvisoryChart();
+    return;
+  }
+
+  if (chartRenderTimer) return;
+  chartRenderTimer = window.setTimeout(() => {
+    chartRenderTimer = null;
+    lastChartRenderAt = Date.now();
+    renderAdvisoryChart();
+  }, delay);
+}
+
+function queuePaperSweep(options = {}) {
+  const immediate = options.immediate === true;
+  const now = Date.now();
+  const throttleMs = immediate ? 0 : getVisibleThrottle(
+    NORMAL_PAPER_SWEEP_THROTTLE_MS,
+    LOW_POWER_PAPER_SWEEP_THROTTLE_MS,
+    HIDDEN_PAPER_SWEEP_THROTTLE_MS
+  );
+  const delay = Math.max(0, throttleMs - (now - lastPaperSweepAt));
+
+  if (delay === 0 && !paperSweepTimer) {
+    lastPaperSweepAt = now;
+    closeOnlyPaperSweep();
+    return;
+  }
+
+  if (paperSweepTimer) return;
+  paperSweepTimer = window.setTimeout(() => {
+    paperSweepTimer = null;
+    lastPaperSweepAt = Date.now();
+    closeOnlyPaperSweep();
+  }, delay);
+}
+
 async function hashAccessPassword(value) {
   const bytes = new TextEncoder().encode(value);
   const digest = await crypto.subtle.digest("SHA-256", bytes);
@@ -654,7 +769,7 @@ function setActiveSection(section) {
   if (noticeEl) noticeEl.hidden = section !== "home";
   if (section === "advisories") {
     renderCurrentUserStrategy();
-    renderAdvisoryChart();
+    queueAdvisoryChartRender({ immediate: true });
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
@@ -5725,8 +5840,8 @@ async function refreshCoinbasePrice(commodity, options = {}) {
     if (livePrice) {
       rememberConfirmedLivePrice(commodity, livePrice, "Coinbase live");
       await refreshCoinbaseProductDetails(commodity, livePrice);
-      if (runCloseSweep) closeOnlyPaperSweep();
-      if (commoditySelect.value === commodity) calculateSignal();
+      if (runCloseSweep) queuePaperSweep({ immediate: forceRefresh });
+      if (commoditySelect.value === commodity) queueSignalRecalculation("coinbase-rest", { immediate: forceRefresh });
     }
   } catch (error) {
     await refreshSnapshotPrice(commodity);
@@ -5793,9 +5908,9 @@ function connectCoinbaseWebSocket(commodity) {
 
       rememberConfirmedLivePrice(commodity, socketPrice, "Coinbase WebSocket");
       refreshCoinbaseProductDetails(commodity, socketPrice);
-      closeOnlyPaperSweep();
+      queuePaperSweep();
 
-      if (commoditySelect.value === commodity) calculateSignal();
+      if (commoditySelect.value === commodity) queueSignalRecalculation("coinbase-websocket");
     };
 
     socket.onerror = () => {
@@ -5842,12 +5957,12 @@ async function refreshSnapshotPrice(commodity) {
       productMinimums.set(commodity, minimumTradeValue);
     }
 
-    if (commoditySelect.value === commodity) calculateSignal();
+    if (commoditySelect.value === commodity) queueSignalRecalculation("cloudflare-snapshot");
   } catch (error) {
     if (!latestPrices.has(commodity)) {
       latestPriceTimes.delete(commodity);
       latestPriceSources.delete(commodity);
-      if (commoditySelect.value === commodity) calculateSignal();
+      if (commoditySelect.value === commodity) queueSignalRecalculation("snapshot-error", { immediate: true });
     }
   }
 }
@@ -5864,7 +5979,7 @@ async function refreshCoinbaseProductDetails(commodity, livePrice) {
     const data = await response.json();
     const minimumTradeValue = getCoinbaseMinimumTradeValue(data, livePrice);
     productMinimums.set(commodity, minimumTradeValue);
-    if (commoditySelect.value === commodity) calculateSignal();
+    if (commoditySelect.value === commodity) queueSignalRecalculation("product-details");
   } catch (error) {
     productMinimums.set(commodity, livePrice);
   }
@@ -9602,6 +9717,22 @@ if (inputs.manualConviction) {
   });
 }
 
+if (lowPowerModeToggleEl) {
+  lowPowerModeToggleEl.addEventListener("change", () => {
+    lowPowerMode = lowPowerModeToggleEl.checked;
+    saveLowPowerMode();
+    queueSignalRecalculation("low-power-toggle", { immediate: true });
+    queueAdvisoryChartRender({ immediate: true });
+  });
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  queueSignalRecalculation("tab-visible", { immediate: true });
+  queueAdvisoryChartRender({ immediate: true });
+  refreshCoinbasePrice(commoditySelect.value, { force: true });
+});
+
 function escapeHtml(value) {
   return String(value == null ? "" : value).replace(/[&<>"']/g, (ch) => ({
     "&": "&amp;",
@@ -10257,6 +10388,7 @@ function initializeApp() {
   renderAdvisoryFilterButtons();
   renderMicroLearningLoop();
   loadBundledTransactionHistory();
+  loadLowPowerMode();
   calculateSignal();
   initializeBackendState();
   connectCoinbaseWebSocket(commoditySelect.value);
@@ -10268,9 +10400,9 @@ function initializeApp() {
   window.setInterval(loadSharedMicroPredictions, BACKEND_ADVISORY_SYNC_MS);
   window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
-  window.setInterval(closeOnlyPaperSweep, Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
+  window.setInterval(() => queuePaperSweep(), Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", () => {
-    renderAdvisoryChart();
+    queueAdvisoryChartRender();
     renderLeaderBoard();
   });
 }
