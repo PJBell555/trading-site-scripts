@@ -15,6 +15,7 @@ const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
 const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 100000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
+const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
 const DEFAULT_MARKET_CALENDAR = {
   overnightRiskMode: "accept",
   marketTimeZone: "America/New_York",
@@ -1694,11 +1695,226 @@ async function fetchCoinbaseProductPrice(productId) {
     : null;
 }
 
+function getCoinbaseTickerPrice(data) {
+  const bestBid = Number(data?.best_bid);
+  const bestAsk = Number(data?.best_ask);
+  const lastTrade = Number(data?.trades?.[0]?.price);
+
+  if (Number.isFinite(bestBid) && Number.isFinite(bestAsk) && bestBid > 0 && bestAsk > 0) {
+    return {
+      price: (bestBid + bestAsk) / 2,
+      bestBid,
+      bestAsk,
+      lastTrade: Number.isFinite(lastTrade) ? lastTrade : null,
+      method: "bid_ask_midpoint"
+    };
+  }
+
+  if (Number.isFinite(lastTrade) && lastTrade > 0) {
+    return { price: lastTrade, bestBid: null, bestAsk: null, lastTrade, method: "last_trade" };
+  }
+
+  if (Number.isFinite(bestBid) && bestBid > 0) {
+    return { price: bestBid, bestBid, bestAsk: null, lastTrade: null, method: "best_bid" };
+  }
+
+  if (Number.isFinite(bestAsk) && bestAsk > 0) {
+    return { price: bestAsk, bestBid: null, bestAsk, lastTrade: null, method: "best_ask" };
+  }
+
+  return null;
+}
+
+function getCoinbaseMinimumTradeValue(data, livePrice) {
+  const directMinimums = [
+    data?.quote_min_size,
+    data?.quote_minimum_size,
+    data?.min_market_funds,
+    data?.minimum_market_funds
+  ].map(Number).filter((value) => Number.isFinite(value) && value > 0);
+
+  if (directMinimums.length) return Math.max(...directMinimums);
+
+  const baseMinimums = [
+    data?.base_min_size,
+    data?.base_increment
+  ].map(Number).filter((value) => Number.isFinite(value) && value > 0);
+
+  if (baseMinimums.length) return Math.max(...baseMinimums) * livePrice;
+  return livePrice;
+}
+
+async function fetchJson(url) {
+  const response = await fetch(url, {
+    headers: {
+      "Accept": "application/json",
+      "Cache-Control": "no-cache"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`${response.status} ${response.statusText}`);
+  }
+
+  return response.json();
+}
+
+async function fetchCoinbasePriceSnapshot(config) {
+  const productId = config.productId || config.ticker;
+  const fetchedAt = new Date().toISOString();
+
+  try {
+    const tickerData = await fetchJson(`${COINBASE_PRODUCTS_BASE_URL.replace("/products", "/market/products")}/${encodeURIComponent(productId)}/ticker?ts=${Date.now()}`);
+    const priceData = getCoinbaseTickerPrice(tickerData);
+
+    if (!priceData) {
+      throw new Error("No usable ticker price in Coinbase response");
+    }
+
+    let minimumTradeValue = priceData.price;
+    try {
+      const productData = await fetchJson(`${COINBASE_PRODUCTS_BASE_URL}/${encodeURIComponent(productId)}?ts=${Date.now()}`);
+      minimumTradeValue = getCoinbaseMinimumTradeValue(productData, priceData.price);
+    } catch (_error) {
+      minimumTradeValue = priceData.price;
+    }
+
+    return {
+      id: config.id,
+      ticker: config.ticker,
+      productId,
+      productType: config.productType || "Coinbase futures contract",
+      contractMonth: config.contractMonth || "Front month",
+      fetchedAt,
+      minimumTradeValue,
+      ok: true,
+      ...priceData
+    };
+  } catch (error) {
+    return {
+      id: config.id,
+      ticker: config.ticker,
+      productId,
+      productType: config.productType || "Coinbase futures contract",
+      contractMonth: config.contractMonth || "Front month",
+      fetchedAt,
+      minimumTradeValue: null,
+      ok: false,
+      price: null,
+      error: error.message,
+      method: "unavailable"
+    };
+  }
+}
+
+function normalizeStoredPriceSnapshot(row) {
+  return parseStoredJson(row?.payload_json, null);
+}
+
+function isFreshPriceSnapshot(snapshot) {
+  const fetchedAt = getTransactionDate(snapshot?.fetchedAt);
+  return Date.now() - fetchedAt.getTime() <= PRICE_SNAPSHOT_MAX_AGE_MS;
+}
+
+async function savePriceSnapshot(env, snapshot) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO price_snapshots (
+      commodity, product_id, ticker, price, best_bid, best_ask, last_trade,
+      minimum_trade_value, method, ok, error, fetched_at, source, payload_json, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(commodity) DO UPDATE SET
+      product_id = excluded.product_id,
+      ticker = excluded.ticker,
+      price = excluded.price,
+      best_bid = excluded.best_bid,
+      best_ask = excluded.best_ask,
+      last_trade = excluded.last_trade,
+      minimum_trade_value = excluded.minimum_trade_value,
+      method = excluded.method,
+      ok = excluded.ok,
+      error = excluded.error,
+      fetched_at = excluded.fetched_at,
+      source = excluded.source,
+      payload_json = excluded.payload_json,
+      updated_at = excluded.updated_at
+  `).bind(
+    snapshot.id,
+    snapshot.productId || null,
+    snapshot.ticker || null,
+    Number.isFinite(Number(snapshot.price)) ? Number(snapshot.price) : null,
+    Number.isFinite(Number(snapshot.bestBid)) ? Number(snapshot.bestBid) : null,
+    Number.isFinite(Number(snapshot.bestAsk)) ? Number(snapshot.bestAsk) : null,
+    Number.isFinite(Number(snapshot.lastTrade)) ? Number(snapshot.lastTrade) : null,
+    Number.isFinite(Number(snapshot.minimumTradeValue)) ? Number(snapshot.minimumTradeValue) : null,
+    snapshot.method || null,
+    snapshot.ok ? 1 : 0,
+    snapshot.error || null,
+    snapshot.fetchedAt || now,
+    "cloudflare-d1-price-snapshot",
+    JSON.stringify(snapshot),
+    now
+  ).run();
+}
+
+async function loadStoredPriceSnapshots(env) {
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM price_snapshots
+  `).all();
+
+  return Object.fromEntries((result.results || [])
+    .map(normalizeStoredPriceSnapshot)
+    .filter(Boolean)
+    .map((snapshot) => [snapshot.id, snapshot]));
+}
+
+async function getPriceSnapshots(env, forceRefresh = false) {
+  const stored = await loadStoredPriceSnapshots(env);
+  const entries = await Promise.all(Object.values(SERVER_COMMODITIES).map(async (commodity) => {
+    const existing = stored[commodity.id];
+    if (!forceRefresh && isFreshPriceSnapshot(existing)) return existing;
+
+    const snapshot = await fetchCoinbasePriceSnapshot(commodity);
+    await savePriceSnapshot(env, snapshot);
+    return snapshot;
+  }));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-price-snapshots",
+    maxAgeSeconds: Math.round(PRICE_SNAPSHOT_MAX_AGE_MS / 1000),
+    prices: Object.fromEntries(entries.map((snapshot) => [snapshot.id, snapshot]))
+  };
+}
+
+async function handlePriceSnapshotsRoute(env, request, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
+  const payload = await getPriceSnapshots(env, forceRefresh);
+  return jsonResponse(payload, 200, origin);
+}
+
 async function getServerMarketPrice(env, user, commodity, advisory = null) {
   const config = getServerCommodityConfig(user, commodity);
   let live = null;
   try {
-    live = await fetchCoinbaseProductPrice(config.productId);
+    const snapshot = await fetchCoinbasePriceSnapshot(config);
+    if (snapshot.ok && Number.isFinite(Number(snapshot.price)) && Number(snapshot.price) > 0) {
+      await savePriceSnapshot(env, snapshot);
+      live = {
+        price: Number(snapshot.price),
+        source: "Coinbase ticker API",
+        time: snapshot.fetchedAt
+      };
+    } else {
+      live = await fetchCoinbaseProductPrice(config.productId);
+    }
   } catch (_error) {
     live = null;
   }
@@ -2689,6 +2905,10 @@ export default {
 
       if (url.pathname === "/micro-predictions") {
         return handleMicroPredictionsRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/prices") {
+        return handlePriceSnapshotsRoute(env, request, origin);
       }
 
       if (url.pathname === "/actual-trades") {

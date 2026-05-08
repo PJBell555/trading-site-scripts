@@ -173,3 +173,24 @@ CREATE TABLE IF NOT EXISTS paper_scheduler_runs (
 
 CREATE INDEX IF NOT EXISTS idx_paper_scheduler_runs_started
   ON paper_scheduler_runs (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS price_snapshots (
+  commodity TEXT PRIMARY KEY,
+  product_id TEXT,
+  ticker TEXT,
+  price REAL,
+  best_bid REAL,
+  best_ask REAL,
+  last_trade REAL,
+  minimum_trade_value REAL,
+  method TEXT,
+  ok INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  fetched_at TEXT NOT NULL,
+  source TEXT NOT NULL,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_price_snapshots_updated
+  ON price_snapshots (updated_at DESC);

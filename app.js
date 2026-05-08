@@ -4712,6 +4712,11 @@ function getCoinbaseMinimumTradeValue(data, livePrice) {
 }
 
 function getSnapshotUrl() {
+  const apiUrl = getHistoryApiUrl();
+  return apiUrl ? `${apiUrl}/prices?ts=${Date.now()}` : `./prices.json?ts=${Date.now()}`;
+}
+
+function getStaticSnapshotUrl() {
   return `./prices.json?ts=${Date.now()}`;
 }
 
@@ -4726,6 +4731,16 @@ async function loadSnapshotPrices() {
     .then((response) => {
       if (!response.ok) throw new Error("snapshot unavailable");
       return response.json();
+    })
+    .catch(async (error) => {
+      if (getSnapshotUrl().startsWith("./")) throw error;
+      const response = await fetch(getStaticSnapshotUrl(), { cache: "no-store" });
+      if (!response.ok) throw error;
+      const data = await response.json();
+      return {
+        ...data,
+        source: `${data.source || "static-price-snapshot"} fallback`
+      };
     });
 
   return snapshotPricesPromise;
@@ -5229,7 +5244,7 @@ async function refreshSnapshotPrice(commodity) {
     const snapshotTime = new Date(snapshot.fetchedAt || data.generatedAt || Date.now());
     rememberPriceTick(commodity, snapshotPrice, snapshotTime);
     latestPriceTimes.set(commodity, snapshotTime);
-    latestPriceSources.set(commodity, snapshot.ok ? "GitHub snapshot" : "Unavailable snapshot");
+    latestPriceSources.set(commodity, snapshot.ok ? "Cloudflare snapshot" : "Unavailable snapshot");
 
     const minimumTradeValue = Number(snapshot.minimumTradeValue);
     if (Number.isFinite(minimumTradeValue) && minimumTradeValue > 0) {
