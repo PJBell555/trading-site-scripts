@@ -4082,10 +4082,58 @@ function getCoachTelemetryStatus(learner) {
   return "Watching; no adjustment needed";
 }
 
+function getLearnerSampleBalance(learner) {
+  if (!learner?.enabled) return "Outcome learner is not active for this strategy.";
+
+  const longCount = learner.longSummary?.count || 0;
+  const shortCount = learner.shortSummary?.count || 0;
+  const waitCount = learner.waitSummary?.count || 0;
+  const actionableCount = longCount + shortCount;
+
+  if (!learner.evaluatedCount) {
+    return "No advisory snapshots have reached the evaluation window yet.";
+  }
+  if (!actionableCount && waitCount) {
+    return "Only wait calls have been evaluated so far; long and short forecast quality is still unknown.";
+  }
+  if (longCount && !shortCount) {
+    return "Long-bias warning: no short advisories have been evaluated yet, so short accuracy cannot be learned from this sample set.";
+  }
+  if (shortCount && !longCount) {
+    return "Short-bias warning: no long advisories have been evaluated yet, so long accuracy cannot be learned from this sample set.";
+  }
+  if (longCount >= Math.max(3, shortCount * 3)) {
+    return "Long-heavy sample set: short calls need more evaluated examples before the learner can compare both sides reliably.";
+  }
+  if (shortCount >= Math.max(3, longCount * 3)) {
+    return "Short-heavy sample set: long calls need more evaluated examples before the learner can compare both sides reliably.";
+  }
+  return "Long and short samples are balanced enough for directional threshold coaching.";
+}
+
+function getLearnerSampleBalanceLabel(learner) {
+  if (!learner?.enabled) return "Disabled";
+
+  const longCount = learner.longSummary?.count || 0;
+  const shortCount = learner.shortSummary?.count || 0;
+  const waitCount = learner.waitSummary?.count || 0;
+  const actionableCount = longCount + shortCount;
+
+  if (!learner.evaluatedCount) return "No evaluated samples";
+  if (!actionableCount && waitCount) return "Wait-only";
+  if (longCount && !shortCount) return "Long-only";
+  if (shortCount && !longCount) return "Short-only";
+  if (longCount >= Math.max(3, shortCount * 3)) return "Long-heavy";
+  if (shortCount >= Math.max(3, longCount * 3)) return "Short-heavy";
+  return "Balanced";
+}
+
 function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commoditySelect?.value || "oil") {
   if (!coachTelemetryEl) return;
   const learner = signal?.outcomeLearner || getAdvisoryOutcomeLearner(commodity);
   const sampleCount = (learner?.longSummary?.count || 0) + (learner?.shortSummary?.count || 0);
+  const storedCount = learner?.storedCount || 0;
+  const evaluatedCount = learner?.evaluatedCount || sampleCount;
   const currentTone = signal?.tone || "wait";
   const adjustment = Number(learner?.adjustment) || 0;
   const adjustmentText = learner?.ready
@@ -4104,14 +4152,18 @@ function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commodityS
       <span>${escapeHtml(getCoachTelemetryStatus(learner))}</span>
     </div>
     <div class="coach-telemetry-grid">
-      <div><span>Samples evaluated</span><strong>${sampleCount}</strong></div>
+      <div><span>Stored snapshots</span><strong>${storedCount}</strong></div>
+      <div><span>Evaluated snapshots</span><strong>${evaluatedCount}</strong></div>
+      <div><span>Actionable evaluated</span><strong>${sampleCount}</strong></div>
       <div><span>Long forecast accuracy</span><strong>${escapeHtml(formatLearnerAccuracy(learner?.longSummary))}</strong></div>
       <div><span>Short forecast accuracy</span><strong>${escapeHtml(formatLearnerAccuracy(learner?.shortSummary))}</strong></div>
+      <div><span>Wait forecast accuracy</span><strong>${escapeHtml(formatLearnerAccuracy(learner?.waitSummary))}</strong></div>
       <div><span>Current adjustment</span><strong>${escapeHtml(adjustmentText)}</strong></div>
       <div><span>Current advisory tone</span><strong>${escapeHtml(currentTone.toUpperCase())}</strong></div>
-      <div><span>Learning source</span><strong>Evaluated advisory snapshots</strong></div>
+      <div><span>Sample balance</span><strong>${escapeHtml(getLearnerSampleBalanceLabel(learner))}</strong></div>
     </div>
     <p>${escapeHtml(latestAction)}</p>
+    <p class="coach-telemetry-warning">${escapeHtml(getLearnerSampleBalance(learner))}</p>
   `;
 }
 
@@ -5888,17 +5940,23 @@ function getAdvisoryOutcomeLearner(commodity) {
     .filter((entry) => entry.commodity === commodity)
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
     .slice(0, ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE);
-  const evaluations = evaluateAdvisorySamples(samples).filter((item) => item.metric === "forecast");
+  const allEvaluations = evaluateAdvisorySamples(samples, { includeWait: true }).filter((item) => item.metric === "forecast");
+  const evaluations = allEvaluations.filter((item) => isActionableAdvisoryTone(item.entry.tone));
   const longSummary = summarizeEvaluations(evaluations, (item) => item.entry.tone === "long");
   const shortSummary = summarizeEvaluations(evaluations, (item) => item.entry.tone === "short");
+  const waitSummary = summarizeEvaluations(allEvaluations, (item) => item.entry.tone === "wait");
   const ready = longSummary.count + shortSummary.count >= ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
 
   return {
     enabled: true,
     ready,
+    storedCount: samples.length,
+    evaluatedCount: allEvaluations.length,
+    actionableCount: evaluations.length,
     evaluations,
     longSummary,
     shortSummary,
+    waitSummary,
     adjustment: 0,
     note: ready
       ? `Learner has ${longSummary.count + shortSummary.count} evaluated forecasts`
@@ -8588,12 +8646,13 @@ function isActionableAdvisoryTone(tone) {
   return tone === "long" || tone === "short";
 }
 
-function evaluateAdvisorySamples(samples) {
+function evaluateAdvisorySamples(samples, options = {}) {
+  const includeWait = options.includeWait === true;
   const sorted = [...samples].sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
   const evaluationWindow = getAdvisoryEvaluationWindow();
 
   return sorted.map((entry, index) => {
-    if (!isActionableAdvisoryTone(entry.tone)) return null;
+    if (!isActionableAdvisoryTone(entry.tone) && !(includeWait && entry.tone === "wait")) return null;
 
     const entryTime = new Date(entry.time || 0).getTime();
     const future = sorted.find((candidate, candidateIndex) => (
@@ -8613,6 +8672,7 @@ function evaluateAdvisorySamples(samples) {
 
     if (entry.tone === "long") correct = move > threshold;
     if (entry.tone === "short") correct = move < -threshold;
+    if (entry.tone === "wait") correct = Math.abs(move) <= threshold;
 
     return {
       entry,

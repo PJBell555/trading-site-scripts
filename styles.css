@@ -2376,6 +2376,16 @@ body {
   color: #f8fafc;
 }
 
+.coach-telemetry-warning {
+  background: rgba(180, 83, 9, 0.12);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 8px;
+  color: #fde68a;
+  font-weight: 800;
+  margin: 0;
+  padding: 10px 12px;
+}
+
 .strategy-card-grid {
   display: grid;
   gap: 14px;
