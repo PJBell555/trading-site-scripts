@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-advisory-systems-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-strategy-rules-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -736,8 +736,33 @@
         <div class="strategy-callout" data-strategy-field="note">
           Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.
         </div>
-        <div class="strategy-engine-panel" id="strategy-engine-panel" aria-label="Trading engine executable rules"></div>
-        <div class="strategy-history-panel" id="strategy-history-panel" aria-label="Strategy update log"></div>
+        <div class="strategy-engine-panel" id="strategy-engine-panel" aria-label="Trading engine executable rules">
+          <div class="strategy-engine-head">
+            <div>
+              <span class="strategy-card-kicker">Trading engine reads</span>
+              <h4>Executable rules now active</h4>
+            </div>
+            <span class="strategy-prose-status">Text is notes only</span>
+          </div>
+          <div class="strategy-engine-grid">
+            <div class="strategy-engine-rule"><span>Regime-aware Martingale</span><strong>On</strong></div>
+            <div class="strategy-engine-rule"><span>Flat/mixed step cap</span><strong>2</strong></div>
+            <div class="strategy-engine-rule"><span>Flat/mixed size multiplier</span><strong>0.50x</strong></div>
+            <div class="strategy-engine-rule"><span>Flat/mixed threshold boost</span><strong>+8</strong></div>
+            <div class="strategy-engine-rule"><span>Trending minimum edge</span><strong>58%</strong></div>
+            <div class="strategy-engine-rule"><span>Karpathy loop</span><strong>Adjusts thresholds only</strong></div>
+          </div>
+          <p class="strategy-engine-note">Further refinements change trading only when saved into structured fields or implemented as new executable rules.</p>
+        </div>
+        <div class="strategy-history-panel" id="strategy-history-panel" aria-label="Strategy update log">
+          <div class="strategy-engine-head">
+            <div>
+              <span class="strategy-card-kicker">Update log</span>
+              <h4>Recent strategy changes</h4>
+            </div>
+          </div>
+          <p class="strategy-engine-note">Live profile changes appear here after the app loads.</p>
+        </div>
       </article>
 
       <section class="karpathy-coach-panel" aria-label="Karpathy loop coach">
@@ -1632,6 +1657,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-advisory-systems-1"></script>
+  <script src="./app.js?v=comhedge-strategy-rules-1"></script>
 </body>
 </html>
