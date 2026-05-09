@@ -100,6 +100,7 @@ const strategyEditNoteEl = document.querySelector("#strategy-edit-note");
 const strategyReferenceButtonEl = document.querySelector("#strategy-reference-button");
 const strategyEnginePanelEl = document.querySelector("#strategy-engine-panel");
 const strategyHistoryPanelEl = document.querySelector("#strategy-history-panel");
+const coachTelemetryEl = document.querySelector("#coach-telemetry");
 const tokenCostsRefreshEl = document.querySelector("#token-costs-refresh");
 const tokenCostsStatusEl = document.querySelector("#token-costs-status");
 const tokenRefreshHoursEl = document.querySelector("#token-llm-refresh-hours");
@@ -3935,6 +3936,7 @@ function renderCurrentUserStrategy() {
   }
   renderAdvisoryAdoptedSystems(strategy);
   renderStrategyEnginePanel(user, strategy);
+  renderCoachTelemetry();
 }
 
 function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
@@ -4066,6 +4068,51 @@ function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = ge
       ` : `<p class="strategy-engine-note">No strategy updates logged yet.</p>`}
     `;
   }
+}
+
+function formatLearnerAccuracy(summary) {
+  if (!summary || !summary.count) return "No samples";
+  return `${formatPercent(summary.accuracy)} / ${summary.count}`;
+}
+
+function getCoachTelemetryStatus(learner) {
+  if (!learner?.enabled) return "Outcome learner disabled";
+  if (!learner.ready) return learner.note || "Collecting evaluated forecasts";
+  if (learner.adjustment) return `Active adjustment ${learner.adjustment > 0 ? "+" : ""}${learner.adjustment}`;
+  return "Watching; no adjustment needed";
+}
+
+function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commoditySelect?.value || "oil") {
+  if (!coachTelemetryEl) return;
+  const learner = signal?.outcomeLearner || getAdvisoryOutcomeLearner(commodity);
+  const sampleCount = (learner?.longSummary?.count || 0) + (learner?.shortSummary?.count || 0);
+  const currentTone = signal?.tone || "wait";
+  const adjustment = Number(learner?.adjustment) || 0;
+  const adjustmentText = learner?.ready
+    ? `${adjustment > 0 ? "+" : ""}${adjustment} score points`
+    : "None yet";
+  const latestAction = learner?.ready
+    ? learner.note
+    : `${learner?.note || "Collecting evaluated forecasts"}; needs ${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES} total samples.`;
+
+  coachTelemetryEl.innerHTML = `
+    <div class="coach-telemetry-head">
+      <div>
+        <p class="eyebrow">Live coach telemetry</p>
+        <h3>Advisory learner status</h3>
+      </div>
+      <span>${escapeHtml(getCoachTelemetryStatus(learner))}</span>
+    </div>
+    <div class="coach-telemetry-grid">
+      <div><span>Samples evaluated</span><strong>${sampleCount}</strong></div>
+      <div><span>Long forecast accuracy</span><strong>${escapeHtml(formatLearnerAccuracy(learner?.longSummary))}</strong></div>
+      <div><span>Short forecast accuracy</span><strong>${escapeHtml(formatLearnerAccuracy(learner?.shortSummary))}</strong></div>
+      <div><span>Current adjustment</span><strong>${escapeHtml(adjustmentText)}</strong></div>
+      <div><span>Current advisory tone</span><strong>${escapeHtml(currentTone.toUpperCase())}</strong></div>
+      <div><span>Learning source</span><strong>Evaluated advisory snapshots</strong></div>
+    </div>
+    <p>${escapeHtml(latestAction)}</p>
+  `;
 }
 
 function getBuiltInStrategyStartedAt() {
@@ -10623,6 +10670,7 @@ function calculateSignal() {
 
   executePaperTrading(commodity, commodityMeta, primarySignal, tradePlan, { allowOpen: true });
   renderKarpathyLoop(primarySignal, tradePlan);
+  renderCoachTelemetry(primarySignal, commodity);
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
   maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
