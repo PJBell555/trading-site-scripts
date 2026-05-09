@@ -1654,6 +1654,22 @@ function shouldUseExclusiveMartingale(user = {}) {
   return String(user.strategy?.type || "").includes("martingale");
 }
 
+function getServerStrategySettings(user = {}) {
+  const strategy = user.strategy && typeof user.strategy === "object" ? user.strategy : {};
+  return {
+    type: String(strategy.type || "martingale-karpathy"),
+    martingaleSteps: clamp(Math.round(Number(strategy.martingaleSteps) || 4), 1, 8),
+    regimeAware: strategy.regimeAware !== false,
+    flatMaxMartingaleSteps: clamp(Math.round(Number(strategy.flatMaxMartingaleSteps) || 2), 1, 8),
+    flatSizeMultiplier: clamp(Number(strategy.flatSizeMultiplier) || 0.5, 0.1, 1),
+    flatThresholdBoost: clamp(Math.round(Number(strategy.flatThresholdBoost) || 8), 0, 30),
+    flatMinEdgePercent: clamp(Math.round(Number(strategy.flatMinEdgePercent) || 56), 50, 80),
+    flatMinVolatilityBps: clamp(Number(strategy.flatMinVolatilityBps) || 0.8, 0, 20),
+    trendingMinEdgePercent: clamp(Math.round(Number(strategy.trendingMinEdgePercent) || 58), 50, 85),
+    trendingMinVolatilityBps: clamp(Number(strategy.trendingMinVolatilityBps) || 1.2, 0, 20)
+  };
+}
+
 function getClosedPaperTradesForUser(transactions = [], userEmail) {
   return getTransactionsForUser(transactions, userEmail)
     .filter(isClosingTransaction)
@@ -1991,7 +2007,68 @@ function getServerSignal(advisory = {}) {
   };
 }
 
-function getServerTradeTerms(config, side, price, step) {
+async function getLatestServerMicroPrediction(env, commodity) {
+  const row = await env.DB.prepare(`
+    SELECT probability_up, probability_down, predicted_tone, short_trigger, long_trigger, payload_json, prediction_time
+    FROM micro_predictions
+    WHERE commodity = ?
+    ORDER BY prediction_time DESC
+    LIMIT 1
+  `).bind(commodity).first();
+  if (!row) return null;
+  const payload = parseStoredJson(row.payload_json, {});
+  return {
+    ready: true,
+    probabilityUp: Number(row.probability_up),
+    probabilityDown: Number(row.probability_down),
+    predictedTone: row.predicted_tone,
+    shortTrigger: Boolean(row.short_trigger),
+    longTrigger: Boolean(row.long_trigger),
+    ret10: Number(payload.ret10),
+    ret30: Number(payload.ret30),
+    vwapDistance: Number(payload.vwapDistance),
+    volatility: Number(payload.volatility),
+    predictionTime: row.prediction_time
+  };
+}
+
+function getServerRegimeAssessment(signal, micro, strategy) {
+  const side = signal.side;
+  const probability = side === "short" ? Number(micro?.probabilityDown) : Number(micro?.probabilityUp);
+  const edgePercent = Math.round((Number.isFinite(probability) ? probability : 0.5) * 100);
+  const volatility = Number(micro?.volatility) || 0;
+  const vwapDistance = Math.abs(Number(micro?.vwapDistance) || 0);
+  const momentumAligned = side === "long"
+    ? Boolean(micro?.longTrigger || (Number(micro?.ret10) > 0 && Number(micro?.ret30) > 0 && Number(micro?.vwapDistance) > 0))
+    : side === "short"
+      ? Boolean(micro?.shortTrigger || (Number(micro?.ret10) < 0 && Number(micro?.ret30) < 0 && Number(micro?.vwapDistance) < 0))
+      : false;
+  const trending = Boolean(
+    micro?.ready
+    && momentumAligned
+    && edgePercent >= strategy.trendingMinEdgePercent
+    && volatility >= strategy.trendingMinVolatilityBps
+  );
+  const flat = !micro?.ready || !side || edgePercent < strategy.trendingMinEdgePercent || volatility < strategy.trendingMinVolatilityBps || !momentumAligned || vwapDistance < 0.8;
+  const regime = trending ? "trending" : flat ? "flat" : "mixed";
+  return {
+    enabled: strategy.regimeAware,
+    regime,
+    edgePercent,
+    volatility,
+    momentumAligned,
+    maxMartingaleStep: regime === "trending" ? strategy.martingaleSteps : strategy.flatMaxMartingaleSteps,
+    sizeMultiplier: regime === "trending" ? 1 : strategy.flatSizeMultiplier,
+    thresholdBoost: regime === "trending" ? 0 : strategy.flatThresholdBoost,
+    confirmationOk: regime === "trending" || (
+      edgePercent >= strategy.flatMinEdgePercent
+      && volatility >= strategy.flatMinVolatilityBps
+      && momentumAligned
+    )
+  };
+}
+
+function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1) {
   const contractMultiplier = Number(config.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
   const marginRate = side === "short"
     ? Number(config.marginRateShort) || 1
@@ -2001,7 +2078,7 @@ function getServerTradeTerms(config, side, price, step) {
   const stopOffset = 0.0075;
   const targetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
   const stopPrice = side === "short" ? price * (1 + stopOffset) : price * (1 - stopOffset);
-  const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1));
+  const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1)) * clamp(Number(sizeMultiplier) || 1, 0.1, 1);
   const contracts = Math.max(1, Math.min(PAPER_SCHEDULER_MAX_CONTRACTS, Math.floor(plannedCapital / marginRequirement) || 1));
   const feePerContractSide = Number(config.feePerContractSide) >= 0 ? Number(config.feePerContractSide) : 0;
   const openFee = feePerContractSide * contracts;
@@ -2266,6 +2343,7 @@ async function runPaperTradingScheduler(env, options = {}) {
       run.evaluatedUsers += 1;
       const openTrades = getOpenPaperTradesForUser(transactions, email);
       let activeOpenCount = openTrades.length;
+      const strategySettings = getServerStrategySettings(user);
       const exclusiveMartingale = shouldUseExclusiveMartingale(user);
       let lastDecision = "No eligible commodities evaluated";
       const marketSchedule = getUserMarketScheduleStatus(schedulerSettings);
@@ -2343,14 +2421,27 @@ async function runPaperTradingScheduler(env, options = {}) {
         }
 
         const signal = getServerSignal(advisory);
-        if (!signal.side || signal.conviction < schedulerSettings.entryThreshold) {
-          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${schedulerSettings.entryThreshold}`;
+        const micro = strategySettings.regimeAware ? await getLatestServerMicroPrediction(env, commodity) : null;
+        const regime = getServerRegimeAssessment(signal, micro, strategySettings);
+        const effectiveThreshold = clamp(schedulerSettings.entryThreshold + (regime.enabled ? regime.thresholdBoost : 0), 1, 100);
+        if (!signal.side || signal.conviction < effectiveThreshold) {
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}`;
           run.skippedTrades += 1;
           continue;
         }
 
-        const step = getNextServerMartingaleStep(transactions, email, Number(user.strategy?.martingaleSteps) || 4);
-        const terms = getServerTradeTerms(config, signal.side, price.price, step);
+        const step = getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps);
+        if (regime.enabled && step > regime.maxMartingaleStep) {
+          lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
+          run.skippedTrades += 1;
+          continue;
+        }
+        if (regime.enabled && !regime.confirmationOk) {
+          lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
+          run.skippedTrades += 1;
+          continue;
+        }
+        const terms = getServerTradeTerms(config, signal.side, price.price, step, regime.enabled ? regime.sizeMultiplier : 1);
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
@@ -2380,7 +2471,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
-          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}`
+          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps`
         });
         transactions.push(open);
         run.openedTrades += 1;

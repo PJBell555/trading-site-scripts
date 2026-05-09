@@ -414,7 +414,15 @@ const DEFAULT_USER_STRATEGY = {
   skillsAccess: true,
   openBrainAccess: true,
   skillFocus: "Lessons from Paper Trades",
-  openBrainMemory: "Capture trade decisions, advisory context, and outcomes before changing thresholds."
+  openBrainMemory: "Capture trade decisions, advisory context, and outcomes before changing thresholds.",
+  regimeAware: true,
+  flatMaxMartingaleSteps: 2,
+  flatSizeMultiplier: 0.5,
+  flatThresholdBoost: 8,
+  flatMinEdgePercent: 56,
+  flatMinVolatilityBps: 0.8,
+  trendingMinEdgePercent: 58,
+  trendingMinVolatilityBps: 1.2
 };
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
@@ -2454,7 +2462,15 @@ function normalizeUserStrategy(strategy = {}) {
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
     skillFocus: String(merged.skillFocus || DEFAULT_USER_STRATEGY.skillFocus).trim(),
-    openBrainMemory: String(merged.openBrainMemory || DEFAULT_USER_STRATEGY.openBrainMemory).trim()
+    openBrainMemory: String(merged.openBrainMemory || DEFAULT_USER_STRATEGY.openBrainMemory).trim(),
+    regimeAware: merged.regimeAware !== false,
+    flatMaxMartingaleSteps: clamp(Math.round(Number(merged.flatMaxMartingaleSteps) || DEFAULT_USER_STRATEGY.flatMaxMartingaleSteps), 1, 8),
+    flatSizeMultiplier: clamp(Number(merged.flatSizeMultiplier) || DEFAULT_USER_STRATEGY.flatSizeMultiplier, 0.1, 1),
+    flatThresholdBoost: clamp(Math.round(Number(merged.flatThresholdBoost) || DEFAULT_USER_STRATEGY.flatThresholdBoost), 0, 30),
+    flatMinEdgePercent: clamp(Math.round(Number(merged.flatMinEdgePercent) || DEFAULT_USER_STRATEGY.flatMinEdgePercent), 50, 80),
+    flatMinVolatilityBps: clamp(Number(merged.flatMinVolatilityBps) || DEFAULT_USER_STRATEGY.flatMinVolatilityBps, 0, 20),
+    trendingMinEdgePercent: clamp(Math.round(Number(merged.trendingMinEdgePercent) || DEFAULT_USER_STRATEGY.trendingMinEdgePercent), 50, 85),
+    trendingMinVolatilityBps: clamp(Number(merged.trendingMinVolatilityBps) || DEFAULT_USER_STRATEGY.trendingMinVolatilityBps, 0, 20)
   };
 }
 
@@ -2489,6 +2505,14 @@ function getStrategyChangeSummary(before, after) {
   if (before.openBrainAccess !== after.openBrainAccess) changes.push(after.openBrainAccess ? "enabled Open Brain access" : "disabled Open Brain access");
   if (before.skillFocus !== after.skillFocus) changes.push("skill focus");
   if (before.openBrainMemory !== after.openBrainMemory) changes.push("Open Brain instruction");
+  if (before.regimeAware !== after.regimeAware) changes.push(after.regimeAware ? "enabled regime awareness" : "disabled regime awareness");
+  if (before.flatMaxMartingaleSteps !== after.flatMaxMartingaleSteps) changes.push("flat-regime step cap");
+  if (before.flatSizeMultiplier !== after.flatSizeMultiplier) changes.push("flat-regime size multiplier");
+  if (before.flatThresholdBoost !== after.flatThresholdBoost) changes.push("flat-regime threshold boost");
+  if (before.flatMinEdgePercent !== after.flatMinEdgePercent) changes.push("flat-regime edge minimum");
+  if (before.flatMinVolatilityBps !== after.flatMinVolatilityBps) changes.push("flat-regime volatility minimum");
+  if (before.trendingMinEdgePercent !== after.trendingMinEdgePercent) changes.push("trending edge minimum");
+  if (before.trendingMinVolatilityBps !== after.trendingMinVolatilityBps) changes.push("trending volatility minimum");
   return changes.length ? `Changed ${changes.join(", ")}` : "No material strategy change";
 }
 
@@ -3574,7 +3598,15 @@ function saveUserStrategySettings(user, container) {
     skillsAccess: container.querySelector("[data-strategy-field='skillsAccess']")?.checked,
     openBrainAccess: container.querySelector("[data-strategy-field='openBrainAccess']")?.checked,
     skillFocus: container.querySelector("[data-strategy-field='skillFocus']")?.value,
-    openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value
+    openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value,
+    regimeAware: container.querySelector("[data-strategy-field='regimeAware']")?.checked,
+    flatMaxMartingaleSteps: container.querySelector("[data-strategy-field='flatMaxMartingaleSteps']")?.value,
+    flatSizeMultiplier: container.querySelector("[data-strategy-field='flatSizeMultiplier']")?.value,
+    flatThresholdBoost: container.querySelector("[data-strategy-field='flatThresholdBoost']")?.value,
+    flatMinEdgePercent: container.querySelector("[data-strategy-field='flatMinEdgePercent']")?.value,
+    flatMinVolatilityBps: container.querySelector("[data-strategy-field='flatMinVolatilityBps']")?.value,
+    trendingMinEdgePercent: container.querySelector("[data-strategy-field='trendingMinEdgePercent']")?.value,
+    trendingMinVolatilityBps: container.querySelector("[data-strategy-field='trendingMinVolatilityBps']")?.value
   });
 
   const changed = JSON.stringify(before) !== JSON.stringify(strategy);
@@ -3678,7 +3710,8 @@ function renderCurrentUserStrategy() {
     const access = [
       strategy.skillsAccess ? `Skills: ${strategy.skillFocus}` : "Skills disabled",
       strategy.openBrainAccess ? "Open Brain enabled" : "Open Brain disabled",
-      strategy.karpathyLoop ? "Karpathy loop enabled" : "Karpathy loop disabled"
+      strategy.karpathyLoop ? "Karpathy loop enabled" : "Karpathy loop disabled",
+      strategy.regimeAware ? "Regime-aware sizing enabled" : "Fixed Martingale sizing"
     ].join(" / ");
     copy.textContent = `${strategy.description} ${access}.`;
   }
@@ -4059,6 +4092,38 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="openBrainAccess" type="checkbox"${strategy.openBrainAccess ? " checked" : ""}>
         Allow Open Brain access
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="regimeAware" type="checkbox"${strategy.regimeAware ? " checked" : ""}>
+        Regime-aware Martingale
+      </label>
+      <label>
+        Flat max steps
+        <input data-strategy-field="flatMaxMartingaleSteps" type="number" min="1" max="8" step="1" value="${strategy.flatMaxMartingaleSteps}">
+      </label>
+      <label>
+        Flat size multiplier
+        <input data-strategy-field="flatSizeMultiplier" type="number" min="0.1" max="1" step="0.05" value="${formatNumberInput(strategy.flatSizeMultiplier, 2)}">
+      </label>
+      <label>
+        Flat threshold boost
+        <input data-strategy-field="flatThresholdBoost" type="number" min="0" max="30" step="1" value="${strategy.flatThresholdBoost}">
+      </label>
+      <label>
+        Flat min edge %
+        <input data-strategy-field="flatMinEdgePercent" type="number" min="50" max="80" step="1" value="${strategy.flatMinEdgePercent}">
+      </label>
+      <label>
+        Flat min volatility bps
+        <input data-strategy-field="flatMinVolatilityBps" type="number" min="0" max="20" step="0.1" value="${formatNumberInput(strategy.flatMinVolatilityBps, 2)}">
+      </label>
+      <label>
+        Trending min edge %
+        <input data-strategy-field="trendingMinEdgePercent" type="number" min="50" max="85" step="1" value="${strategy.trendingMinEdgePercent}">
+      </label>
+      <label>
+        Trending min volatility bps
+        <input data-strategy-field="trendingMinVolatilityBps" type="number" min="0" max="20" step="0.1" value="${formatNumberInput(strategy.trendingMinVolatilityBps, 2)}">
       </label>
       <label class="profile-strategy-wide">
         Strategy definition
@@ -5732,6 +5797,51 @@ function getMartingaleCapital(minTradeValue) {
   return minTradeValue * (2 ** (martingaleStep - 1));
 }
 
+function getDirectionalEdgePercent(micro, side) {
+  if (!micro?.ready) return 50;
+  const probability = side === "short" ? micro.probabilityDown : micro.probabilityUp;
+  return Math.round((Number(probability) || 0.5) * 100);
+}
+
+function getRegimeAssessment(signal, strategy = getCurrentUserStrategy()) {
+  const micro = signal?.micro || {};
+  const side = getSignalSide(signal);
+  const edgePercent = getDirectionalEdgePercent(micro, side);
+  const volatility = Number(micro.volatility) || 0;
+  const vwapDistance = Math.abs(Number(micro.vwapDistance) || 0);
+  const momentumAligned = side === "long"
+    ? Boolean(micro.longTrigger || (Number(micro.ret10) > 0 && Number(micro.ret30) > 0 && Number(micro.vwapDistance) > 0))
+    : side === "short"
+      ? Boolean(micro.shortTrigger || (Number(micro.ret10) < 0 && Number(micro.ret30) < 0 && Number(micro.vwapDistance) < 0))
+      : false;
+  const edgeNearFlat = edgePercent < (Number(strategy.trendingMinEdgePercent) || DEFAULT_USER_STRATEGY.trendingMinEdgePercent);
+  const lowVolatility = volatility < (Number(strategy.trendingMinVolatilityBps) || DEFAULT_USER_STRATEGY.trendingMinVolatilityBps);
+  const choppy = !momentumAligned || vwapDistance < 0.8;
+  const trending = micro.ready
+    && momentumAligned
+    && edgePercent >= strategy.trendingMinEdgePercent
+    && volatility >= strategy.trendingMinVolatilityBps;
+  const flat = !micro.ready || !side || edgeNearFlat || lowVolatility || choppy;
+  const regime = trending ? "trending" : flat ? "flat" : "mixed";
+
+  return {
+    enabled: strategy.regimeAware !== false,
+    regime,
+    edgePercent,
+    volatility,
+    momentumAligned,
+    maxMartingaleStep: regime === "trending" ? getCurrentMartingaleMaxStep() : strategy.flatMaxMartingaleSteps,
+    sizeMultiplier: regime === "trending" ? 1 : strategy.flatSizeMultiplier,
+    thresholdBoost: regime === "trending" ? 0 : strategy.flatThresholdBoost,
+    blocksWeakSetup: regime !== "trending" && gradeSignal(signal, 1.2) === "C",
+    confirmationOk: regime === "trending" || (
+      edgePercent >= strategy.flatMinEdgePercent
+      && volatility >= strategy.flatMinVolatilityBps
+      && momentumAligned
+    )
+  };
+}
+
 function getEffectiveCommodityConfig(commodity, user = getCurrentUserProfile()) {
   const baseConfig = marketConfig[commodity] || {};
   const profileTerms = normalizeCommodityTradeTerms(user?.commodityTradeTerms?.[commodity], commodity);
@@ -5988,18 +6098,28 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const reward = priceReady ? Math.abs(sellPrice - buyPrice) : null;
   const risk = priceReady ? Math.abs(buyPrice - stopLoss) : null;
   const rewardRisk = Number.isFinite(risk) && risk > 0 ? reward / risk : 0;
+  const setupGrade = gradeSignal(signal, rewardRisk);
+  const regime = getRegimeAssessment(signal, userStrategy);
+  regime.blocksWeakSetup = regime.regime !== "trending" && setupGrade === "C";
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
-  const entryThreshold = getPaperEntryThreshold(getSignalSide(signal));
-  const entryThresholdSource = getPaperEntryThresholdSource();
+  const baseEntryThreshold = getPaperEntryThreshold(getSignalSide(signal));
+  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0), 1, 100);
+  const entryThresholdSource = regime.enabled && regime.thresholdBoost
+    ? `${getPaperEntryThresholdSource()} + regime`
+    : getPaperEntryThresholdSource();
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
   const longMargin = getMarginRequirement(config, "long", livePrice);
   const shortMargin = getMarginRequirement(config, "short", livePrice);
   const minTradeValue = tradeSide === "short" ? shortMargin : longMargin;
   const feePerContractSide = getFeePerContractSide(config);
-  const nextCapital = getMartingaleCapital(minTradeValue);
+  const rawNextCapital = getMartingaleCapital(minTradeValue);
+  const effectiveStep = regime.enabled ? Math.min(martingaleStep, regime.maxMartingaleStep) : martingaleStep;
+  const nextCapital = Number.isFinite(rawNextCapital)
+    ? rawNextCapital * (regime.enabled ? regime.sizeMultiplier : 1)
+    : rawNextCapital;
   const plannedContracts = Number.isFinite(nextCapital) && Number.isFinite(minTradeValue)
     ? Math.max(1, Math.floor(nextCapital / minTradeValue))
     : null;
@@ -6050,8 +6170,10 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     nextCapital,
     learnedThreshold,
     entryThresholdSource,
+    baseEntryThreshold,
+    regime,
     entryThreshold,
-    setupGrade: gradeSignal(signal, rewardRisk),
+    setupGrade,
     rewardRisk: `${rewardRisk.toFixed(2)}x`,
     keyDriver: getDriverSummary(baseSignals, signal),
     riskPct,
@@ -6059,7 +6181,8 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     status,
     steps: [
       `${strategyName}: auto-enter long or short when conviction clears the ${entryThresholdSource} trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
-      `Commit Martingale step ${martingaleStep} of ${maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
+      `Regime is ${regime.regime}: edge ${regime.edgePercent}%, volatility ${regime.volatility.toFixed(2)} bps, ${regime.momentumAligned ? "momentum aligned" : "confirmation incomplete"}.`,
+      `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
     ]
@@ -9016,7 +9139,13 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
   if (!tradePlan.priceReady) return;
 
   const allowOpen = options.allowOpen !== false;
-  if (allowOpen && getSignalSide(signal) && signal.conviction >= tradePlan.entryThreshold) {
+  const regimeAllowsOpen = !tradePlan.regime?.enabled
+    || (
+      martingaleStep <= tradePlan.regime.maxMartingaleStep
+      && !tradePlan.regime.blocksWeakSetup
+      && tradePlan.regime.confirmationOk
+    );
+  if (allowOpen && regimeAllowsOpen && getSignalSide(signal) && signal.conviction >= tradePlan.entryThreshold) {
     openPaperTrade(commodity, commodityMeta, signal, tradePlan);
   }
 }
@@ -9099,6 +9228,27 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     return {
       title: `No trade: conviction ${thresholdText}`,
       detail: `The next trade is Martingale step ${martingaleStep}, but it waits until the ${signalSide} advisory reaches the ${thresholdSource} threshold of ${tradePlan.entryThreshold}. Current price is ${priceText}.${karpathyText}`
+    };
+  }
+
+  if (tradePlan.regime?.enabled && martingaleStep > tradePlan.regime.maxMartingaleStep) {
+    return {
+      title: `No trade: ${tradePlan.regime.regime} regime step cap`,
+      detail: `The current Martingale step is ${martingaleStep}, but this regime caps recovery steps at ${tradePlan.regime.maxMartingaleStep}.`
+    };
+  }
+
+  if (tradePlan.regime?.enabled && tradePlan.regime.blocksWeakSetup) {
+    return {
+      title: `No trade: ${tradePlan.regime.regime} regime blocks C setup`,
+      detail: `The profile requires smaller/fewer recovery steps in flat or mixed tape. Edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`
+    };
+  }
+
+  if (tradePlan.regime?.enabled && !tradePlan.regime.confirmationOk) {
+    return {
+      title: `No trade: ${tradePlan.regime.regime} confirmation incomplete`,
+      detail: `The profile requires sustained trend, VWAP confirmation, and enough volatility before sizing up. Edge is ${tradePlan.regime.edgePercent}% and momentum is ${tradePlan.regime.momentumAligned ? "aligned" : "not aligned"}.`
     };
   }
 
