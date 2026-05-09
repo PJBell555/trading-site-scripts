@@ -2299,6 +2299,7 @@ function normalizeUserRecord(user, fallback = {}) {
     commodityAllocations,
     commodityTradeTerms,
     strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
+    strategyHistory: normalizeStrategyHistory(user?.strategyHistory ?? fallback.strategyHistory),
     brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
     paperTrading: normalizeServerPaperTrading(user?.paperTrading ?? defaultServerPaperTrading, fallback.paperTrading),
     sessionHistory: sessionHistory
@@ -2457,6 +2458,40 @@ function normalizeUserStrategy(strategy = {}) {
   };
 }
 
+function normalizeStrategyHistoryEntry(entry = {}) {
+  const changedAt = getTransactionDate(entry.changedAt || entry.time || new Date()).toISOString();
+  return {
+    id: String(entry.id || `strategy-change-${changedAt}-${Math.random().toString(16).slice(2)}`),
+    changedAt,
+    changedByName: String(entry.changedByName || "").trim(),
+    changedByEmail: normalizeEmail(entry.changedByEmail || ""),
+    summary: String(entry.summary || "Strategy updated").trim(),
+    before: normalizeUserStrategy(entry.before || {}),
+    after: normalizeUserStrategy(entry.after || {})
+  };
+}
+
+function normalizeStrategyHistory(history = []) {
+  return (Array.isArray(history) ? history : [])
+    .map(normalizeStrategyHistoryEntry)
+    .sort((a, b) => getTransactionDate(b.changedAt) - getTransactionDate(a.changedAt))
+    .slice(0, 50);
+}
+
+function getStrategyChangeSummary(before, after) {
+  const changes = [];
+  if (before.name !== after.name) changes.push("name");
+  if (before.type !== after.type) changes.push("type");
+  if (before.description !== after.description) changes.push("definition");
+  if (before.martingaleSteps !== after.martingaleSteps) changes.push(`martingale steps ${before.martingaleSteps} to ${after.martingaleSteps}`);
+  if (before.karpathyLoop !== after.karpathyLoop) changes.push(after.karpathyLoop ? "enabled Karpathy loop" : "disabled Karpathy loop");
+  if (before.skillsAccess !== after.skillsAccess) changes.push(after.skillsAccess ? "enabled Skills access" : "disabled Skills access");
+  if (before.openBrainAccess !== after.openBrainAccess) changes.push(after.openBrainAccess ? "enabled Open Brain access" : "disabled Open Brain access");
+  if (before.skillFocus !== after.skillFocus) changes.push("skill focus");
+  if (before.openBrainMemory !== after.openBrainMemory) changes.push("Open Brain instruction");
+  return changes.length ? `Changed ${changes.join(", ")}` : "No material strategy change";
+}
+
 function normalizeBrokerAccount(account = {}) {
   const merged = { ...DEFAULT_BROKER_ACCOUNT, ...(account && typeof account === "object" ? account : {}) };
   return {
@@ -2585,6 +2620,7 @@ function getSharedUserProfilesPayload() {
       commodityAllocations: normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity),
       commodityTradeTerms: normalizeCommodityTradeTermsMap(user.commodityTradeTerms),
       strategy: normalizeUserStrategy(user.strategy),
+      strategyHistory: normalizeStrategyHistory(user.strategyHistory),
       brokerAccount: normalizeBrokerAccount(user.brokerAccount),
       paperTrading: normalizeServerPaperTrading(user.paperTrading)
     };
@@ -2635,6 +2671,7 @@ function mergeUserRecords(existing, incoming) {
     ),
     commodityTradeTerms: normalizeCommodityTradeTermsMap(incoming.commodityTradeTerms || existing.commodityTradeTerms),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
+    strategyHistory: normalizeStrategyHistory([...(incoming.strategyHistory || []), ...(existing.strategyHistory || [])]),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
     paperTrading: normalizeServerPaperTrading(incoming.paperTrading, existing.paperTrading),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
@@ -2718,6 +2755,13 @@ function mergeSharedUserProfiles(profiles) {
       const nextStrategy = normalizeUserStrategy(profile.strategy);
       if (JSON.stringify(nextStrategy) !== JSON.stringify(normalizeUserStrategy(user.strategy))) {
         user.strategy = nextStrategy;
+        changed = true;
+      }
+    }
+    if (Array.isArray(profile.strategyHistory)) {
+      const nextHistory = normalizeStrategyHistory([...(profile.strategyHistory || []), ...(user.strategyHistory || [])]);
+      if (JSON.stringify(nextHistory) !== JSON.stringify(normalizeStrategyHistory(user.strategyHistory))) {
+        user.strategyHistory = nextHistory;
         changed = true;
       }
     }
@@ -3520,6 +3564,7 @@ function saveUserCommoditySelection(user, container) {
 }
 
 function saveUserStrategySettings(user, container) {
+  const before = normalizeUserStrategy(user.strategy);
   const strategy = normalizeUserStrategy({
     name: container.querySelector("[data-strategy-field='name']")?.value,
     type: container.querySelector("[data-strategy-field='type']")?.value,
@@ -3532,12 +3577,31 @@ function saveUserStrategySettings(user, container) {
     openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value
   });
 
+  const changed = JSON.stringify(before) !== JSON.stringify(strategy);
+  if (changed) {
+    const actor = getCurrentUserProfile();
+    const changedAt = new Date().toISOString();
+    user.strategyHistory = normalizeStrategyHistory([
+      {
+        id: `strategy-change-${Date.now()}`,
+        changedAt,
+        changedByName: actor?.name || "Unknown user",
+        changedByEmail: actor?.email || getCurrentAccessEmail(),
+        summary: getStrategyChangeSummary(before, strategy),
+        before,
+        after: strategy
+      },
+      ...(user.strategyHistory || [])
+    ]);
+  }
   user.strategy = strategy;
   saveUserRoster();
   saveSharedSettings();
   renderCurrentUserStrategy();
   renderUserManagement();
-  userManagementStatusEl.textContent = `${user.name || user.email} strategy saved`;
+  userManagementStatusEl.textContent = changed
+    ? `${user.name || user.email} strategy saved and logged`
+    : `${user.name || user.email} strategy saved`;
 }
 
 function saveUserBrokerAccountSettings(user, container) {
@@ -3953,6 +4017,7 @@ function createUserProfilePanel(user) {
   commoditiesCard.append(commodityEditor, accountSummary, commoditySave);
 
   const strategy = normalizeUserStrategy(user.strategy);
+  const strategyHistory = normalizeStrategyHistory(user.strategyHistory);
   strategyCard.className = "user-profile-subcard profile-strategy-card";
   strategyCard.innerHTML = `
     <h3>Strategy, Skills, and Open Brain</h3>
@@ -4003,6 +4068,15 @@ function createUserProfilePanel(user) {
         Open Brain memory instruction
         <textarea data-strategy-field="openBrainMemory" rows="3">${escapeHtml(strategy.openBrainMemory)}</textarea>
       </label>
+    </div>
+    <div class="profile-strategy-history">
+      <span class="stat-label">Strategy update log</span>
+      ${strategyHistory.length ? strategyHistory.slice(0, 8).map((entry) => `
+        <div class="profile-strategy-history-row">
+          <strong>${escapeHtml(entry.summary)}</strong>
+          <span>${formatTradeTime(entry.changedAt)} by ${escapeHtml(entry.changedByName || entry.changedByEmail || "Unknown user")}</span>
+        </div>
+      `).join("") : "<p>No strategy updates logged yet.</p>"}
     </div>
   `;
   const strategySave = document.createElement("button");
