@@ -407,13 +407,20 @@ const ADVISORY_PERIODS = {
   year: 366 * 24 * 60 * 60 * 1000
 };
 const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
+const ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES = 8;
+const ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE = 160;
 const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
+const KARPATHY_OIL_COACH_TEXT = "Use the Karpathy loop to improve oil trading decisions by learning from closed trade outcomes and forecast accuracy. The advisory model makes the initial long, short, or wait call. The Karpathy loop reviews outcomes after the fact and adjusts thresholds over time. It should make the advisor more selective in flat or mixed markets. It should increase confidence only when market structure, momentum, and confirmation agree. It should not force extra trades or increase size without stronger evidence. Goal: better long/short/wait decisions, fewer weak trades, and smarter behavior in choppy oil markets.";
 const DEFAULT_USER_STRATEGY = {
   name: "Martingale with Karpathy loop",
   type: "martingale-karpathy",
   description: "Use four Martingale steps, then let the Karpathy loop adjust the advisory threshold from trade outcomes.",
   martingaleSteps: 4,
   karpathyLoop: true,
+  karpathyCoachText: KARPATHY_OIL_COACH_TEXT,
+  karpathyFlatSelectivity: true,
+  karpathyConfirmationGate: true,
+  advisoryOutcomeLearner: true,
   skillsAccess: true,
   openBrainAccess: true,
   skillFocus: "Lessons from Paper Trades",
@@ -2462,6 +2469,10 @@ function normalizeUserStrategy(strategy = {}) {
     description: String(merged.description || DEFAULT_USER_STRATEGY.description).trim(),
     martingaleSteps: clamp(Number(merged.martingaleSteps) || DEFAULT_USER_STRATEGY.martingaleSteps, 1, 8),
     karpathyLoop: merged.karpathyLoop !== false,
+    karpathyCoachText: String(merged.karpathyCoachText || DEFAULT_USER_STRATEGY.karpathyCoachText).trim(),
+    karpathyFlatSelectivity: merged.karpathyFlatSelectivity !== false,
+    karpathyConfirmationGate: merged.karpathyConfirmationGate !== false,
+    advisoryOutcomeLearner: merged.advisoryOutcomeLearner !== false,
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
     skillFocus: String(merged.skillFocus || DEFAULT_USER_STRATEGY.skillFocus).trim(),
@@ -2527,6 +2538,10 @@ const STRATEGY_HISTORY_FIELDS = [
   ["description", "Strategy definition"],
   ["martingaleSteps", "Martingale max steps"],
   ["karpathyLoop", "Karpathy loop"],
+  ["karpathyCoachText", "Karpathy coach policy"],
+  ["karpathyFlatSelectivity", "Karpathy flat selectivity"],
+  ["karpathyConfirmationGate", "Karpathy confirmation gate"],
+  ["advisoryOutcomeLearner", "Advisory outcome learner"],
   ["skillsAccess", "Skills access"],
   ["openBrainAccess", "Open Brain access"],
   ["skillFocus", "Skill focus"],
@@ -2636,6 +2651,10 @@ function getStrategyChangeSummary(before, after) {
   if (before.karpathyLoop !== after.karpathyLoop) changes.push(after.karpathyLoop ? "enabled Karpathy loop" : "disabled Karpathy loop");
   if (before.skillsAccess !== after.skillsAccess) changes.push(after.skillsAccess ? "enabled Skills access" : "disabled Skills access");
   if (before.openBrainAccess !== after.openBrainAccess) changes.push(after.openBrainAccess ? "enabled Open Brain access" : "disabled Open Brain access");
+  if (before.karpathyCoachText !== after.karpathyCoachText) changes.push("Karpathy coach policy");
+  if (before.karpathyFlatSelectivity !== after.karpathyFlatSelectivity) changes.push(after.karpathyFlatSelectivity ? "enabled Karpathy flat selectivity" : "disabled Karpathy flat selectivity");
+  if (before.karpathyConfirmationGate !== after.karpathyConfirmationGate) changes.push(after.karpathyConfirmationGate ? "enabled Karpathy confirmation gate" : "disabled Karpathy confirmation gate");
+  if (before.advisoryOutcomeLearner !== after.advisoryOutcomeLearner) changes.push(after.advisoryOutcomeLearner ? "enabled advisory outcome learner" : "disabled advisory outcome learner");
   if (before.skillFocus !== after.skillFocus) changes.push("skill focus");
   if (before.openBrainMemory !== after.openBrainMemory) changes.push("Open Brain instruction");
   if (before.regimeAware !== after.regimeAware) changes.push(after.regimeAware ? "enabled regime awareness" : "disabled regime awareness");
@@ -3728,6 +3747,10 @@ function saveUserStrategySettings(user, container) {
     description: container.querySelector("[data-strategy-field='description']")?.value,
     martingaleSteps: container.querySelector("[data-strategy-field='martingaleSteps']")?.value,
     karpathyLoop: container.querySelector("[data-strategy-field='karpathyLoop']")?.checked,
+    karpathyCoachText: container.querySelector("[data-strategy-field='karpathyCoachText']")?.value,
+    karpathyFlatSelectivity: container.querySelector("[data-strategy-field='karpathyFlatSelectivity']")?.checked,
+    karpathyConfirmationGate: container.querySelector("[data-strategy-field='karpathyConfirmationGate']")?.checked,
+    advisoryOutcomeLearner: container.querySelector("[data-strategy-field='advisoryOutcomeLearner']")?.checked,
     skillsAccess: container.querySelector("[data-strategy-field='skillsAccess']")?.checked,
     openBrainAccess: container.querySelector("[data-strategy-field='openBrainAccess']")?.checked,
     skillFocus: container.querySelector("[data-strategy-field='skillFocus']")?.value,
@@ -3842,6 +3865,9 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "martingaleEnabled", label: "Martingale recovery", value: String(strategy.type || "").includes("martingale"), type: "checkbox", on: "On", off: "Off" },
     { key: "martingaleSteps", label: "Martingale max steps", value: strategy.martingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "karpathyLoop", label: "Karpathy loop", value: strategy.karpathyLoop, type: "checkbox", on: "Adjusts thresholds from evaluated outcomes", off: "Off" },
+    { key: "karpathyFlatSelectivity", label: "Karpathy flat selectivity", value: strategy.karpathyFlatSelectivity, type: "checkbox", on: "More selective in flat/mixed markets", off: "Off" },
+    { key: "karpathyConfirmationGate", label: "Karpathy confirmation gate", value: strategy.karpathyConfirmationGate, type: "checkbox", on: "Requires structure + momentum confirmation", off: "Off" },
+    { key: "advisoryOutcomeLearner", label: "Advisory outcome learner", value: strategy.advisoryOutcomeLearner, type: "checkbox", on: "Learns long/short/wait from forecast outcomes", off: "Off" },
     { key: "regimeAware", label: "Regime-aware Martingale", value: strategy.regimeAware, type: "checkbox", on: "On", off: "Off" },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "flatSizeMultiplier", label: "Flat/mixed size multiplier", value: strategy.flatSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x" },
@@ -3925,7 +3951,7 @@ function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = ge
   }
 
   if (strategyHistoryPanelEl) {
-    const chronological = [...history].sort((a, b) => getTransactionDate(a.changedAt) - getTransactionDate(b.changedAt));
+    const newestFirst = [...history].sort((a, b) => getTransactionDate(b.changedAt) - getTransactionDate(a.changedAt));
     strategyHistoryPanelEl.innerHTML = `
       <div class="strategy-engine-head">
         <div>
@@ -3933,15 +3959,15 @@ function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = ge
           <h4>Strategy change history</h4>
         </div>
       </div>
-      ${chronological.length ? `
+      ${newestFirst.length ? `
         <div class="strategy-history-list">
-          ${chronological.map((entry, index) => {
+          ${newestFirst.map((entry, index) => {
             const diffRows = getStrategyDiffRows(entry.before, entry.after);
             const performance = summarizeClosedTradePerformanceSince(entry.changedAt);
             return `
               <details class="strategy-history-item">
                 <summary>
-                  <strong>Strategy change #${index + 1}: ${escapeHtml(entry.summary)}</strong>
+                  <strong>Strategy change #${newestFirst.length - index}: ${escapeHtml(entry.summary)}</strong>
                   <span>${formatTradeTime(entry.changedAt)} by ${escapeHtml(entry.changedByName || entry.changedByEmail || "Unknown user")} / ${formatPerformanceSummary(performance)}</span>
                 </summary>
                 ${entry.detail ? `<p>${escapeHtml(entry.detail)}</p>` : ""}
@@ -4332,6 +4358,18 @@ function createUserProfilePanel(user) {
         Karpathy loop enabled
       </label>
       <label class="profile-toggle-row">
+        <input data-strategy-field="karpathyFlatSelectivity" type="checkbox"${strategy.karpathyFlatSelectivity ? " checked" : ""}>
+        Karpathy flat selectivity
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="karpathyConfirmationGate" type="checkbox"${strategy.karpathyConfirmationGate ? " checked" : ""}>
+        Karpathy confirmation gate
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="advisoryOutcomeLearner" type="checkbox"${strategy.advisoryOutcomeLearner ? " checked" : ""}>
+        Advisory outcome learner
+      </label>
+      <label class="profile-toggle-row">
         <input data-strategy-field="skillsAccess" type="checkbox"${strategy.skillsAccess ? " checked" : ""}>
         Allow Skills access
       </label>
@@ -4374,6 +4412,10 @@ function createUserProfilePanel(user) {
       <label class="profile-strategy-wide">
         Strategy definition <span class="profile-field-hint">notes only until mapped to executable fields</span>
         <textarea data-strategy-field="description" rows="3">${escapeHtml(strategy.description)}</textarea>
+      </label>
+      <label class="profile-strategy-wide">
+        Karpathy coach policy
+        <textarea data-strategy-field="karpathyCoachText" rows="3">${escapeHtml(strategy.karpathyCoachText)}</textarea>
       </label>
       <label class="profile-strategy-wide">
         Open Brain memory instruction
@@ -5706,6 +5748,72 @@ function applyMicroPredictorToScore(automaticBounded, micro) {
   return clamp(Math.round(adjusted), -100, 100);
 }
 
+function getAdvisoryOutcomeLearner(commodity) {
+  const strategy = getCurrentUserStrategy();
+  if (!strategy.advisoryOutcomeLearner) {
+    return {
+      enabled: false,
+      ready: false,
+      adjustment: 0,
+      note: "Advisory outcome learner off"
+    };
+  }
+
+  const samples = advisoryHistory
+    .filter((entry) => entry.commodity === commodity)
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
+    .slice(0, ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE);
+  const evaluations = evaluateAdvisorySamples(samples).filter((item) => item.metric === "forecast");
+  const longSummary = summarizeEvaluations(evaluations, (item) => item.entry.tone === "long");
+  const shortSummary = summarizeEvaluations(evaluations, (item) => item.entry.tone === "short");
+  const ready = longSummary.count + shortSummary.count >= ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
+
+  return {
+    enabled: true,
+    ready,
+    evaluations,
+    longSummary,
+    shortSummary,
+    adjustment: 0,
+    note: ready
+      ? `Learner has ${longSummary.count + shortSummary.count} evaluated forecasts`
+      : `Learner needs ${Math.max(0, ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - (longSummary.count + shortSummary.count))} more evaluated forecasts`
+  };
+}
+
+function getToneAccuracyAdjustment(summary, tone) {
+  if (!summary || summary.count < 3 || !Number.isFinite(summary.accuracy)) return 0;
+  if (summary.accuracy < 45) return tone === "short" ? 10 : -10;
+  if (summary.accuracy < 55) return tone === "short" ? 5 : -5;
+  if (summary.accuracy >= 68) return tone === "short" ? -5 : 5;
+  return 0;
+}
+
+function applyAdvisoryOutcomeLearner(commodity, bounded) {
+  const learner = getAdvisoryOutcomeLearner(commodity);
+  if (!learner.enabled || !learner.ready) return { bounded, learner };
+
+  const proposedTone = bounded <= -12 ? "short" : bounded >= 12 ? "long" : "wait";
+  let adjustment = 0;
+  if (proposedTone === "long") adjustment += getToneAccuracyAdjustment(learner.longSummary, "long");
+  if (proposedTone === "short") adjustment += getToneAccuracyAdjustment(learner.shortSummary, "short");
+
+  const longWeak = learner.longSummary.count >= 3 && learner.longSummary.accuracy < 50;
+  const shortWeak = learner.shortSummary.count >= 3 && learner.shortSummary.accuracy < 50;
+  if (longWeak && shortWeak && Math.abs(bounded) < 28) {
+    adjustment += bounded > 0 ? -8 : bounded < 0 ? 8 : 0;
+  }
+
+  learner.adjustment = adjustment;
+  learner.note = adjustment
+    ? `Outcome learner ${adjustment > 0 ? "+" : ""}${adjustment} from forecast accuracy`
+    : "Outcome learner observed outcomes without changing this call";
+  return {
+    bounded: clamp(Math.round(bounded + adjustment), -100, 100),
+    learner
+  };
+}
+
 function scoreCommodity(commodity, baseSignals) {
   const tweak = commodityTweaks[commodity] || { trend: 0, inventory: 0, geopolitics: 0, dollar: 0, curve: 0 };
   const baseScore = (
@@ -5718,12 +5826,13 @@ function scoreCommodity(commodity, baseSignals) {
   const automaticBounded = Math.max(-100, Math.min(100, Math.round(baseScore)));
   const micro = getMicroPredictor(commodity);
   const microAdjustedBounded = applyMicroPredictorToScore(automaticBounded, micro);
+  const outcomeLearned = applyAdvisoryOutcomeLearner(commodity, microAdjustedBounded);
   const manualConviction = getManualConvictionOverride(commodity);
   const llmTone = getLatestLLMConvictionForCommodity(commodity)?.tone;
   const verifiedToneSign = llmTone === "short" ? -1 : llmTone === "long" ? 1 : 0;
-  const fallbackToneSign = Math.sign(microAdjustedBounded || automaticBounded || 1);
+  const fallbackToneSign = Math.sign(outcomeLearned.bounded || microAdjustedBounded || automaticBounded || 1);
   const bounded = manualConviction === null
-    ? microAdjustedBounded
+    ? outcomeLearned.bounded
     : (verifiedToneSign || fallbackToneSign) * Math.max(0, manualConviction - 40);
   const baseConviction = manualConviction === null
     ? Math.min(100, 40 + Math.abs(bounded))
@@ -5771,6 +5880,7 @@ function scoreCommodity(commodity, baseSignals) {
     karpathyAdjustment,
     automaticBounded,
     microAdjustedBounded,
+    outcomeLearner: outcomeLearned.learner,
     micro,
     manualOverride: manualConviction,
     label,
@@ -6293,6 +6403,19 @@ function getPaperEntryThreshold(side) {
   return advisoryScoreThresholdIsManual ? advisoryScoreThreshold : learnedThreshold;
 }
 
+function getKarpathyCoachThresholdBoost(signal, regime, strategy = getCurrentUserStrategy()) {
+  if (!strategy.karpathyLoop) return 0;
+  let boost = 0;
+  if (strategy.karpathyFlatSelectivity && regime?.enabled && regime.regime !== "trending") boost += 3;
+  if (strategy.karpathyConfirmationGate && regime?.enabled && !regime.momentumAligned) boost += 4;
+  if (signal?.micro?.ready && strategy.karpathyConfirmationGate) {
+    const side = getSignalSide(signal);
+    const counterEdge = side === "long" ? signal.micro.probabilityDown : side === "short" ? signal.micro.probabilityUp : 0.5;
+    if ((Number(counterEdge) || 0) > 0.52) boost += 2;
+  }
+  return boost;
+}
+
 function getPaperEntryThresholdSource() {
   return advisoryScoreThresholdIsManual ? "manual" : "Karpathy";
 }
@@ -6351,10 +6474,12 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
   const baseEntryThreshold = getPaperEntryThreshold(getSignalSide(signal));
-  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0), 1, 100);
-  const entryThresholdSource = regime.enabled && regime.thresholdBoost
-    ? `${getPaperEntryThresholdSource()} + regime`
-    : getPaperEntryThresholdSource();
+  const coachThresholdBoost = getKarpathyCoachThresholdBoost(signal, regime, userStrategy);
+  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0) + coachThresholdBoost, 1, 100);
+  const thresholdParts = [getPaperEntryThresholdSource()];
+  if (regime.enabled && regime.thresholdBoost) thresholdParts.push("regime");
+  if (coachThresholdBoost) thresholdParts.push("coach");
+  const entryThresholdSource = thresholdParts.join(" + ");
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
   const longMargin = getMarginRequirement(config, "long", livePrice);
@@ -6417,6 +6542,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     learnedThreshold,
     entryThresholdSource,
     baseEntryThreshold,
+    coachThresholdBoost,
     regime,
     entryThreshold,
     setupGrade,
@@ -10322,6 +10448,9 @@ function calculateSignal() {
   } else if (primarySignal.micro.ready && primarySignal.micro.longTrigger) {
     reasons.unshift("The short-horizon tape is rising, which confirms the long side for now.");
   }
+  if (primarySignal.outcomeLearner?.ready) {
+    reasons.push(`${primarySignal.outcomeLearner.note}. Long accuracy ${formatPercent(primarySignal.outcomeLearner.longSummary.accuracy)} over ${primarySignal.outcomeLearner.longSummary.count}; short accuracy ${formatPercent(primarySignal.outcomeLearner.shortSummary.accuracy)} over ${primarySignal.outcomeLearner.shortSummary.count}.`);
+  }
 
   if (reasons.length < 3) {
     reasons.push("The setup is mixed, so conviction depends more on execution quality than raw direction.");
@@ -10364,7 +10493,12 @@ function calculateSignal() {
   const adjustmentText = primarySignal.karpathyAdjustment
     ? `, Karpathy ${primarySignal.karpathyAdjustment > 0 ? "+" : ""}${primarySignal.karpathyAdjustment}`
     : "";
-  convictionEl.textContent = `${primarySignal.conviction} / 100 (${localBaselineSource} ${Math.round(primarySignal.baseConviction)}${adjustmentText})`;
+  const learnerText = primarySignal.outcomeLearner?.adjustment
+    ? `, Outcome learner ${primarySignal.outcomeLearner.adjustment > 0 ? "+" : ""}${primarySignal.outcomeLearner.adjustment}`
+    : primarySignal.outcomeLearner?.ready
+      ? ", Outcome learner watching"
+      : "";
+  convictionEl.textContent = `${primarySignal.conviction} / 100 (${localBaselineSource} ${Math.round(primarySignal.baseConviction)}${adjustmentText}${learnerText})`;
   if (localConvictionUpdatedEl) {
     localConvictionUpdatedEl.textContent = `Updated ${formatVerifiedTime(new Date())}`;
   }

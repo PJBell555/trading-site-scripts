@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-strategy-rules-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-advisory-learner-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -746,6 +746,7 @@
           </div>
           <div class="strategy-engine-grid">
             <div class="strategy-engine-rule"><span>Martingale recovery</span><strong>On</strong></div>
+            <div class="strategy-engine-rule"><span>Advisory outcome learner</span><strong>Learns from forecast outcomes</strong></div>
             <div class="strategy-engine-rule"><span>Regime-aware Martingale</span><strong>On</strong></div>
             <div class="strategy-engine-rule"><span>Flat/mixed step cap</span><strong>2</strong></div>
             <div class="strategy-engine-rule"><span>Flat/mixed size multiplier</span><strong>0.50x</strong></div>
@@ -769,16 +770,18 @@
       <section class="karpathy-coach-panel" aria-label="Karpathy loop coach">
         <div>
           <p class="eyebrow">Coach logic</p>
-          <h3>How the Karpathy loop improves the strategy</h3>
+          <h3>Karpathy Loop for Oil Advisory</h3>
           <p>
-            The loop does not guess better by itself. It records each forecast, waits for the future price or closed trade result, scores whether the call worked, then recommends stricter or looser thresholds only after there are enough evaluated samples.
+            Use the Karpathy loop to improve oil trading decisions by learning from closed trade outcomes and forecast accuracy.
           </p>
         </div>
         <div class="coach-step-grid">
-          <div><strong>Observe</strong><span>Capture advisory score, micro score, long or short tone, entry price, and horizon.</span></div>
-          <div><strong>Evaluate</strong><span>Compare against future price and closed paper-trade P/L.</span></div>
-          <div><strong>Coach</strong><span>Flag weak short accuracy, excessive long bias, or threshold settings that admit too many low-quality calls.</span></div>
-          <div><strong>Adjust</strong><span>Recommend threshold changes first; change predictor weights only after the sample size is meaningful.</span></div>
+          <div><strong>Initial call</strong><span>The advisory model makes the initial long, short, or wait call.</span></div>
+          <div><strong>Review outcomes</strong><span>The Karpathy loop reviews outcomes after the fact and adjusts thresholds over time.</span></div>
+          <div><strong>Flat markets</strong><span>Make the advisor more selective in flat or mixed markets.</span></div>
+          <div><strong>Confirmation</strong><span>Increase confidence only when market structure, momentum, and confirmation agree.</span></div>
+          <div><strong>Guardrail</strong><span>Do not force extra trades or increase size without stronger evidence.</span></div>
+          <div><strong>Goal</strong><span>Better long, short, and wait decisions; fewer weak trades; smarter behavior in choppy oil markets.</span></div>
         </div>
       </section>
 
@@ -1658,6 +1661,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-strategy-rules-1"></script>
+  <script src="./app.js?v=comhedge-advisory-learner-1"></script>
 </body>
 </html>
