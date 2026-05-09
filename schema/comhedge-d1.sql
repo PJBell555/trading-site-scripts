@@ -95,6 +95,44 @@ CREATE INDEX IF NOT EXISTS idx_actual_transactions_user
 CREATE INDEX IF NOT EXISTS idx_actual_transactions_commodity
   ON actual_transactions (commodity, transaction_time DESC);
 
+CREATE TABLE IF NOT EXISTS trade_transactions (
+  transaction_key TEXT PRIMARY KEY,
+  trade_mode TEXT NOT NULL DEFAULT 'P',
+  trade_id TEXT,
+  user_email TEXT,
+  commodity TEXT,
+  commodity_name TEXT,
+  action TEXT,
+  side TEXT,
+  step INTEGER,
+  contract TEXT,
+  price REAL,
+  entry_price REAL,
+  target_entry_price REAL,
+  target_price REAL,
+  stop_price REAL,
+  exit_price REAL,
+  committed REAL,
+  capital REAL,
+  gross_pnl REAL,
+  net_pnl REAL,
+  pnl REAL,
+  opened_at TEXT,
+  closed_at TEXT,
+  transaction_time TEXT NOT NULL,
+  payload_json TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_time
+  ON trade_transactions (trade_mode, transaction_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_user
+  ON trade_transactions (trade_mode, user_email, transaction_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_commodity
+  ON trade_transactions (trade_mode, commodity, transaction_time DESC);
+
 CREATE TABLE IF NOT EXISTS advisory_snapshots (
   snapshot_key TEXT PRIMARY KEY,
   snapshot_time TEXT NOT NULL,

@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-coach-telemetry-2">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-pr-ledger-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -1290,7 +1290,7 @@
                 </div>
                 <div class="paper-card live-card">
                   <span class="stat-label">Live ledger</span>
-                  <strong>Separate database required</strong>
+                  <strong>D1 real records</strong>
                 </div>
                 <div class="paper-card live-card">
                   <span class="stat-label">Trade mode</span>
@@ -1306,7 +1306,7 @@
             <div>
               <h2>Live execution plan</h2>
               <ol class="live-execution-plan">
-                <li>Use a separate live trade ledger from paper trades.</li>
+                <li>Use the same D1 transaction table as paper trades with an R record tag.</li>
                 <li>Require explicit user approval before any live brokerage integration is enabled.</li>
                 <li>Notify the trader when advisory, market status, and risk rules agree.</li>
               </ol>
@@ -1344,7 +1344,7 @@
         </details>
         <div class="paper-ledger live-ledger">
           <h2>Live trade history</h2>
-          <div class="trade-summary live-summary" id="live-trade-summary">No live trades recorded. This ledger will be separate from paper trade history.</div>
+          <div class="trade-summary live-summary" id="live-trade-summary">No real trades recorded. Real records use the same D1 ledger with an R tag.</div>
           <form class="live-trade-form" id="live-trade-form" aria-label="Actual Coinbase trade entry">
             <div class="live-form-head">
               <div>
@@ -1476,9 +1476,9 @@
             <div>
               <span class="stat-label">Live database</span>
               <div class="filter-row">
-                <button class="filter-button" type="button">Connect live ledger</button>
+                <button class="filter-button" type="button" id="refresh-live-ledger">Refresh real ledger</button>
                 <button class="filter-button" type="button">Export live history</button>
-                <span class="shared-status" id="live-ledger-status">Live ledger local only</span>
+                <span class="shared-status" id="live-ledger-status">Real ledger loading</span>
               </div>
             </div>
           </div>
@@ -1514,7 +1514,7 @@
               </thead>
               <tbody id="live-trade-history">
                 <tr>
-                  <td colspan="10">Live trade ledger is empty. Connect the live database before recording actual trades.</td>
+                  <td colspan="10">Real trade ledger is empty. Record a real trade above to save an R-tagged D1 transaction.</td>
                 </tr>
               </tbody>
             </table>
@@ -1682,6 +1682,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-coach-telemetry-2"></script>
+  <script src="./app.js?v=comhedge-pr-ledger-1"></script>
 </body>
 </html>

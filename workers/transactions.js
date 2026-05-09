@@ -102,9 +102,11 @@ function encodeContent(payload) {
 
 function getTransactionKey(entry) {
   if (entry.sharedKey) return entry.sharedKey;
+  const mode = String(firstPresent(entry.tradeMode, entry.trade_mode, entry.mode) || "").trim().toUpperCase();
+  const modePrefix = mode === REAL_TRADE_MODE ? `${REAL_TRADE_MODE}|` : "";
 
   return [
-    entry.tradeId || entry.id || "trade",
+    `${modePrefix}${entry.tradeId || entry.id || "trade"}`,
     entry.action || "action",
     entry.contract || "contract",
     entry.time || "time",
@@ -728,6 +730,9 @@ function getEntryTime(entry = {}) {
 }
 
 const TRANSACTION_TABLES = new Set(["paper_transactions", "actual_transactions"]);
+const TRADE_TRANSACTION_TABLE = "trade_transactions";
+const PAPER_TRADE_MODE = "P";
+const REAL_TRADE_MODE = "R";
 
 function assertTransactionTable(table) {
   if (!TRANSACTION_TABLES.has(table)) {
@@ -736,13 +741,20 @@ function assertTransactionTable(table) {
   return table;
 }
 
-function normalizeD1Transaction(entry = {}) {
+function normalizeTradeMode(value, fallback = PAPER_TRADE_MODE) {
+  const mode = String(value || fallback || PAPER_TRADE_MODE).trim().toUpperCase();
+  return mode === REAL_TRADE_MODE ? REAL_TRADE_MODE : PAPER_TRADE_MODE;
+}
+
+function normalizeD1Transaction(entry = {}, fallbackTradeMode = PAPER_TRADE_MODE) {
   const transactionKey = getTransactionKey(entry);
-  const payloadEntry = { ...entry, sharedKey: transactionKey };
+  const tradeMode = normalizeTradeMode(firstPresent(entry.tradeMode, entry.trade_mode, entry.mode), fallbackTradeMode);
+  const payloadEntry = { ...entry, sharedKey: transactionKey, tradeMode };
   const now = new Date().toISOString();
 
   return {
     transaction_key: transactionKey,
+    trade_mode: tradeMode,
     trade_id: textOrNull(firstPresent(entry.tradeId, entry.id)),
     user_email: textOrNull(firstPresent(entry.userEmail, entry.profileEmail, entry.accountEmail, entry.email)),
     commodity: textOrNull(entry.commodity),
@@ -881,6 +893,158 @@ async function replaceTransactionsD1(env, table, transactions = []) {
   await upsertTransactionRows(env, table, transactions);
 }
 
+async function upsertUnifiedTransactionRows(env, entries = [], tradeMode = PAPER_TRADE_MODE) {
+  await ensureTradeTransactionsTable(env);
+  const normalizedMode = normalizeTradeMode(tradeMode);
+
+  for (const entry of entries) {
+    const row = normalizeD1Transaction(entry, normalizedMode);
+    await env.DB.prepare(`
+      INSERT INTO ${TRADE_TRANSACTION_TABLE} (
+        transaction_key,
+        trade_mode,
+        trade_id,
+        user_email,
+        commodity,
+        commodity_name,
+        action,
+        side,
+        step,
+        contract,
+        price,
+        entry_price,
+        target_entry_price,
+        target_price,
+        stop_price,
+        exit_price,
+        committed,
+        capital,
+        gross_pnl,
+        net_pnl,
+        pnl,
+        opened_at,
+        closed_at,
+        transaction_time,
+        payload_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(transaction_key) DO UPDATE SET
+        trade_mode = excluded.trade_mode,
+        trade_id = excluded.trade_id,
+        user_email = excluded.user_email,
+        commodity = excluded.commodity,
+        commodity_name = excluded.commodity_name,
+        action = excluded.action,
+        side = excluded.side,
+        step = excluded.step,
+        contract = excluded.contract,
+        price = excluded.price,
+        entry_price = excluded.entry_price,
+        target_entry_price = excluded.target_entry_price,
+        target_price = excluded.target_price,
+        stop_price = excluded.stop_price,
+        exit_price = excluded.exit_price,
+        committed = excluded.committed,
+        capital = excluded.capital,
+        gross_pnl = excluded.gross_pnl,
+        net_pnl = excluded.net_pnl,
+        pnl = excluded.pnl,
+        opened_at = excluded.opened_at,
+        closed_at = excluded.closed_at,
+        transaction_time = excluded.transaction_time,
+        payload_json = excluded.payload_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.transaction_key,
+      row.trade_mode,
+      row.trade_id,
+      row.user_email,
+      row.commodity,
+      row.commodity_name,
+      row.action,
+      row.side,
+      row.step,
+      row.contract,
+      row.price,
+      row.entry_price,
+      row.target_entry_price,
+      row.target_price,
+      row.stop_price,
+      row.exit_price,
+      row.committed,
+      row.capital,
+      row.gross_pnl,
+      row.net_pnl,
+      row.pnl,
+      row.opened_at,
+      row.closed_at,
+      row.transaction_time,
+      row.payload_json,
+      row.updated_at
+    ).run();
+  }
+}
+
+async function loadUnifiedTransactionPayloadD1(env, tradeMode, source) {
+  await ensureTradeTransactionsTable(env);
+  const normalizedMode = normalizeTradeMode(tradeMode);
+  await seedUnifiedTransactionsFromLegacyTable(env, normalizedMode);
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM ${TRADE_TRANSACTION_TABLE}
+    WHERE trade_mode = ?
+    ORDER BY transaction_time DESC
+  `).bind(normalizedMode).all();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source,
+    storage: "d1",
+    tradeMode: normalizedMode,
+    transactions: getResults(result)
+      .map((row) => parseStoredJson(row.payload_json))
+      .filter(Boolean)
+      .map((entry) => ({ ...entry, tradeMode: normalizeTradeMode(entry.tradeMode, normalizedMode) }))
+  };
+}
+
+async function seedUnifiedTransactionsFromLegacyTable(env, tradeMode) {
+  const normalizedMode = normalizeTradeMode(tradeMode);
+  const legacyTable = normalizedMode === REAL_TRADE_MODE ? "actual_transactions" : "paper_transactions";
+  const existing = await env.DB.prepare(`
+    SELECT COUNT(*) AS count
+    FROM ${TRADE_TRANSACTION_TABLE}
+    WHERE trade_mode = ?
+  `).bind(normalizedMode).first();
+
+  if (Number(existing?.count || 0) > 0) return;
+
+  try {
+    const legacy = await env.DB.prepare(`
+      SELECT payload_json
+      FROM ${legacyTable}
+      ORDER BY transaction_time DESC
+    `).all();
+    const entries = getResults(legacy)
+      .map((row) => parseStoredJson(row.payload_json))
+      .filter(Boolean)
+      .map((entry) => ({ ...entry, tradeMode: normalizedMode }));
+
+    if (entries.length) {
+      await upsertUnifiedTransactionRows(env, entries, normalizedMode);
+    }
+  } catch (error) {
+    // Legacy tables may not exist in fresh D1 environments.
+  }
+}
+
+async function replaceUnifiedTransactionsD1(env, tradeMode, transactions = []) {
+  await ensureTradeTransactionsTable(env);
+  const normalizedMode = normalizeTradeMode(tradeMode);
+  await env.DB.prepare(`DELETE FROM ${TRADE_TRANSACTION_TABLE} WHERE trade_mode = ?`).bind(normalizedMode).run();
+  await upsertUnifiedTransactionRows(env, transactions, normalizedMode);
+}
+
 async function ensureOpenBrainEventsTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS open_brain_events (
@@ -982,6 +1146,51 @@ async function loadOpenBrainEventsD1(env, limit = OPEN_BRAIN_EVENT_LIMIT) {
       };
     })
   };
+}
+
+async function ensureTradeTransactionsTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS ${TRADE_TRANSACTION_TABLE} (
+      transaction_key TEXT PRIMARY KEY,
+      trade_mode TEXT NOT NULL DEFAULT 'P',
+      trade_id TEXT,
+      user_email TEXT,
+      commodity TEXT,
+      commodity_name TEXT,
+      action TEXT,
+      side TEXT,
+      step INTEGER,
+      contract TEXT,
+      price REAL,
+      entry_price REAL,
+      target_entry_price REAL,
+      target_price REAL,
+      stop_price REAL,
+      exit_price REAL,
+      committed REAL,
+      capital REAL,
+      gross_pnl REAL,
+      net_pnl REAL,
+      pnl REAL,
+      opened_at TEXT,
+      closed_at TEXT,
+      transaction_time TEXT NOT NULL,
+      payload_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_time
+    ON ${TRADE_TRANSACTION_TABLE} (trade_mode, transaction_time DESC)
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_user
+    ON ${TRADE_TRANSACTION_TABLE} (trade_mode, user_email, transaction_time DESC)
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_commodity
+    ON ${TRADE_TRANSACTION_TABLE} (trade_mode, commodity, transaction_time DESC)
+  `).run();
 }
 
 async function recordOpenBrainServerEvent(env, type, summary, metadata = {}) {
@@ -2486,7 +2695,7 @@ async function runPaperTradingScheduler(env, options = {}) {
 
   const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
   const users = Array.isArray(settings.users) ? settings.users : [];
-  const payload = await loadTransactionPayloadD1(env, "paper_transactions", PAPER_LEDGER_SOURCE);
+  const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
   const transactions = payload.transactions || [];
 
   try {
@@ -2687,7 +2896,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     }
 
     const mergedTransactions = mergeTransactions(payload.transactions || [], transactions);
-    await replaceTransactionsD1(env, "paper_transactions", mergedTransactions);
+    await replaceUnifiedTransactionsD1(env, PAPER_TRADE_MODE, mergedTransactions);
     await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
       ...settings,
       users,
@@ -2963,6 +3172,70 @@ async function handleD1TransactionLedger(env, request, table, source, origin) {
   }, 200, origin);
 }
 
+async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source, origin) {
+  const normalizedMode = normalizeTradeMode(tradeMode);
+  if (request.method === "GET") {
+    const payload = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
+    return jsonResponse(payload, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const current = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
+  const cleanupOnly = body.mode === "cleanup";
+
+  if (cleanupOnly) {
+    const compacted = compactPayload(current);
+    await replaceUnifiedTransactionsD1(env, normalizedMode, compacted.transactions);
+    const saved = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
+
+    return jsonResponse({
+      commit: null,
+      backup: null,
+      storage: "d1",
+      tradeMode: normalizedMode,
+      cleaned: true,
+      removed: compacted.removed || 0,
+      merged: saved.transactions.length,
+      transactions: saved.transactions
+    }, 200, origin);
+  }
+
+  const incoming = Array.isArray(body.transactions) ? body.transactions : [];
+  const taggedIncoming = incoming.map((entry) => ({ ...entry, tradeMode: normalizeTradeMode(entry.tradeMode, normalizedMode) }));
+  const mergedTransactions = mergeTransactions(current.transactions, taggedIncoming);
+  if (transactionSetsMatch(current.transactions, mergedTransactions)) {
+    return jsonResponse({
+      commit: null,
+      backup: null,
+      storage: "d1",
+      tradeMode: normalizedMode,
+      unchanged: true,
+      cleaned: false,
+      removed: 0,
+      merged: current.transactions.length,
+      transactions: current.transactions
+    }, 200, origin);
+  }
+
+  await upsertUnifiedTransactionRows(env, mergedTransactions, normalizedMode);
+  const saved = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
+
+  return jsonResponse({
+    commit: null,
+    backup: null,
+    storage: "d1",
+    tradeMode: normalizedMode,
+    cleaned: false,
+    removed: 0,
+    merged: saved.transactions.length,
+    transactions: saved.transactions
+  }, 200, origin);
+}
+
 async function handleSettingsRoute(env, request, origin) {
   if (hasRuntimeStore(env)) {
     return handleD1Settings(env, request, origin);
@@ -3046,7 +3319,7 @@ async function handleAdvisoriesRoute(env, request, origin) {
 
 async function handlePaperLedgerRoute(env, request, origin) {
   if (hasRuntimeStore(env)) {
-    return handleD1TransactionLedger(env, request, "paper_transactions", PAPER_LEDGER_SOURCE, origin);
+    return handleD1UnifiedTransactionLedger(env, request, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE, origin);
   }
 
   if (request.method === "GET") {
@@ -3102,7 +3375,7 @@ async function handlePaperLedgerRoute(env, request, origin) {
 
 async function handleActualTradesRoute(env, request, origin) {
   if (hasRuntimeStore(env)) {
-    return handleD1TransactionLedger(env, request, "actual_transactions", ACTUAL_LEDGER_SOURCE, origin);
+    return handleD1UnifiedTransactionLedger(env, request, REAL_TRADE_MODE, ACTUAL_LEDGER_SOURCE, origin);
   }
 
   if (request.method === "GET") {

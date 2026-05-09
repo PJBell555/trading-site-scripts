@@ -188,6 +188,7 @@ const liveTotalPlEl = document.querySelector("#live-total-pl");
 const liveFilteredPlEl = document.querySelector("#live-filtered-pl");
 const liveTradeCountEl = document.querySelector("#live-trade-count");
 const liveLedgerStatusEl = document.querySelector("#live-ledger-status");
+const refreshLiveLedgerEl = document.querySelector("#refresh-live-ledger");
 const liveAgentSelectEl = document.querySelector("#live-agent-select");
 const liveChannelSelectEl = document.querySelector("#live-channel-select");
 const advisoryHistoryStatusEl = document.querySelector("#advisory-history-status");
@@ -333,7 +334,7 @@ const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_WS_STALE_MS = 180000;
 const PAPER_EXIT_PRICE_STALE_MS = 180000;
-const DEFAULT_HISTORY_API_URL = "https://trading-site-runtime.peter-bell54.workers.dev";
+const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const UNAVAILABLE_TEXT = "Not available";
 const PRICE_TICK_WINDOW_MS = 10 * 60 * 1000;
 const MICRO_PREDICTOR_MIN_TICKS = 6;
@@ -356,6 +357,8 @@ const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
 const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
+const PAPER_TRADE_MODE = "P";
+const REAL_TRADE_MODE = "R";
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
 const ADVISORY_HISTORY_LOCAL_KEY = "comhedge-advisory-history-v1";
@@ -483,7 +486,7 @@ const SKILL_SYSTEM_DETAILS = {
     title: "D1 Learning Store",
     subtitle: "Runtime memory for trades, advisories, predictions, token usage, and scheduler runs.",
     sections: [
-      ["Tables", "paper_transactions, actual_transactions, advisory_snapshots, micro_predictions, token_usage, runtime_documents, and paper_scheduler_runs."],
+      ["Tables", "trade_transactions with P/R tags, advisory_snapshots, micro_predictions, token_usage, runtime_documents, and paper_scheduler_runs."],
       ["Why It Exists", "D1 keeps runtime records out of GitHub, removes commit races, and gives every browser the same shared truth."],
       ["Data Quality", "Rows keep payload_json plus indexed columns, so the UI can render rich detail while queries stay efficient."],
       ["What Users Can Tune", "Retention windows, cleanup rules, per-user scheduler settings, and what metrics are surfaced in dashboards."]
@@ -6954,9 +6957,13 @@ function normalizeTransactionEntry(entry) {
   const openedAt = entry.openedAt ? getTransactionDate(entry.openedAt) : null;
   const closedAt = entry.closedAt ? getTransactionDate(entry.closedAt) : null;
   const userEmail = normalizeEmail(entry.userEmail || entry.profileEmail || entry.accountEmail || LEGACY_LEDGER_USER_EMAIL);
+  const tradeMode = String(entry.tradeMode || entry.trade_mode || PAPER_TRADE_MODE).toUpperCase() === REAL_TRADE_MODE
+    ? REAL_TRADE_MODE
+    : PAPER_TRADE_MODE;
 
   return {
     ...entry,
+    tradeMode,
     commodity,
     commodityName: entry.commodityName || commodities.find(({ id }) => id === commodity)?.name,
     userEmail,
@@ -6964,6 +6971,14 @@ function normalizeTransactionEntry(entry) {
     openedAt,
     closedAt
   };
+}
+
+function isPaperTradeEntry(entry) {
+  return String(entry?.tradeMode || PAPER_TRADE_MODE).toUpperCase() !== REAL_TRADE_MODE;
+}
+
+function isRealTradeEntry(entry) {
+  return String(entry?.tradeMode || "").toUpperCase() === REAL_TRADE_MODE;
 }
 
 function isTransactionForCurrentUser(entry) {
@@ -7001,10 +7016,16 @@ function getCommodityName(commodity) {
 function normalizeLiveTradeEntry(entry) {
   const commodity = entry.commodity || getCommodityFromContract(entry.contract) || commoditySelect.value || "oil";
   const time = getTransactionDate(entry.time);
+  const action = entry.action || "OPEN";
+  const entryPrice = parseOptionalNumber(entry.entryPrice ?? entry.price);
+  const exitPrice = parseOptionalNumber(entry.exitPrice ?? entry.actualExit);
+  const tradeValue = parseOptionalNumber(entry.tradeValue ?? entry.capital ?? entry.committed);
+  const pnl = parseOptionalNumber(entry.netPnl ?? entry.pnl) || 0;
 
   return {
     id: entry.id || `live-${Date.now()}`,
     time,
+    tradeMode: REAL_TRADE_MODE,
     userEmail: normalizeEmail(entry.userEmail || getCurrentLedgerEmail()),
     userName: entry.userName || getCurrentUserProfile()?.name || "",
     commodity,
@@ -7012,18 +7033,22 @@ function normalizeLiveTradeEntry(entry) {
     contract: entry.contract || marketConfig[commodity]?.ticker || "",
     orderId: entry.orderId || "",
     side: entry.side === "short" ? "short" : "long",
-    action: entry.action || "OPEN",
+    action,
     orderType: entry.orderType || "market",
     contracts: parseOptionalNumber(entry.contracts),
-    tradeValue: parseOptionalNumber(entry.tradeValue),
-    entryPrice: parseOptionalNumber(entry.entryPrice),
+    tradeValue,
+    entryPrice,
+    price: parseOptionalNumber(entry.price) || entryPrice || exitPrice,
+    exitPrice,
     limitPrice: parseOptionalNumber(entry.limitPrice),
     stopPrice: parseOptionalNumber(entry.stopPrice),
     targetPrice: parseOptionalNumber(entry.targetPrice),
     timeInForce: entry.timeInForce || "GTC",
     status: entry.status || "Submitted",
     fees: parseOptionalNumber(entry.fees),
-    pnl: parseOptionalNumber(entry.pnl) || 0,
+    netPnl: pnl,
+    pnl,
+    capital: tradeValue,
     agent: entry.agent || liveAgentSelectEl?.value || "Manual only",
     channel: entry.channel || liveChannelSelectEl?.value || "Manual",
     notes: entry.notes || ""
@@ -7038,11 +7063,63 @@ function loadLiveTradeLedger() {
     liveTradeLedger.splice(0, liveTradeLedger.length);
   }
   renderLiveTradeLedger();
+  loadSharedLiveTradeLedger();
 }
 
-function saveLiveTradeLedger() {
+async function loadSharedLiveTradeLedger() {
+  if (!hasHistoryBackend()) {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = "Real ledger local only; backend URL unavailable";
+    return false;
+  }
+
+  try {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = "Loading real ledger from D1";
+    const response = await fetchWithTimeout(`${getActualTradesUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("real ledger unavailable");
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    liveTradeLedger.splice(0, liveTradeLedger.length, ...entries.map(normalizeLiveTradeEntry).filter(isRealTradeEntry));
+    window.localStorage.setItem(LIVE_TRADE_LEDGER_KEY, JSON.stringify(liveTradeLedger));
+    renderLiveTradeLedger();
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `D1 real ledger loaded ${liveTradeLedger.length} row${liveTradeLedger.length === 1 ? "" : "s"}`;
+    return true;
+  } catch (error) {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = "D1 real ledger unavailable; showing local records";
+    return false;
+  }
+}
+
+async function saveLiveTradeLedger() {
   window.localStorage.setItem(LIVE_TRADE_LEDGER_KEY, JSON.stringify(liveTradeLedger));
-  if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `Local live ledger saved ${liveTradeLedger.length} rows`;
+  if (!hasHistoryBackend()) {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `Local real ledger saved ${liveTradeLedger.length} rows`;
+    return false;
+  }
+
+  try {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = "Saving real ledger to D1";
+    const response = await fetchWithTimeout(getActualTradesUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        generatedAt: new Date().toISOString(),
+        source: "cloudflare-d1-real-trade-ledger",
+        tradeMode: REAL_TRADE_MODE,
+        transactions: liveTradeLedger.map((trade) => ({ ...trade, tradeMode: REAL_TRADE_MODE }))
+      })
+    });
+    if (!response.ok) throw new Error("real ledger save failed");
+    const data = await response.json();
+    const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    liveTradeLedger.splice(0, liveTradeLedger.length, ...entries.map(normalizeLiveTradeEntry).filter(isRealTradeEntry));
+    window.localStorage.setItem(LIVE_TRADE_LEDGER_KEY, JSON.stringify(liveTradeLedger));
+    renderLiveTradeLedger();
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = `D1 real ledger saved ${liveTradeLedger.length} row${liveTradeLedger.length === 1 ? "" : "s"}`;
+    return true;
+  } catch (error) {
+    if (liveLedgerStatusEl) liveLedgerStatusEl.textContent = "D1 save failed; real ledger kept local";
+    return false;
+  }
 }
 
 function getLiveTradeTargetOrExitPrice(trade) {
@@ -7079,10 +7156,10 @@ function renderLiveTradeLedger() {
   if (liveTradeSummaryEl) {
     liveTradeSummaryEl.textContent = scopedTrades.length
       ? `Showing ${scopedTrades.length} live trade record${scopedTrades.length === 1 ? "" : "s"} for ${getCurrentUserProfile()?.name || getCurrentLedgerEmail()}. Committed ${formatMoney(committed)}.`
-      : "No live trades recorded. This ledger will be separate from paper trade history.";
+      : "No real trades recorded. Real records use the shared D1 ledger with an R tag.";
   }
-  if (liveLedgerStatusEl && !liveLedgerStatusEl.textContent.includes("saved")) {
-    liveLedgerStatusEl.textContent = "Live ledger local only";
+  if (liveLedgerStatusEl && !/(saved|D1|Loading|unavailable)/i.test(liveLedgerStatusEl.textContent)) {
+    liveLedgerStatusEl.textContent = "Real ledger ready";
   }
 
   if (!scopedTrades.length) {
@@ -7090,7 +7167,7 @@ function renderLiveTradeLedger() {
     const cell = document.createElement("td");
     liveTradeHistoryEl.append(buildQueuedLiveTradeRow());
     cell.colSpan = 10;
-    cell.textContent = "No live trades recorded yet. Use the Coinbase mirror entry form above to capture actual trade details.";
+    cell.textContent = "No real trades recorded yet. Use the Coinbase mirror entry form above to save an R-tagged transaction.";
     row.append(cell);
     liveTradeHistoryEl.append(row);
     return;
@@ -7144,7 +7221,7 @@ function renderLiveTradeLedger() {
   });
 }
 
-function addLiveTradeFromForm(event) {
+async function addLiveTradeFromForm(event) {
   event.preventDefault();
   const formData = new FormData(liveTradeFormEl);
   const commodity = formData.get("commodity") || commoditySelect.value || "oil";
@@ -7176,15 +7253,15 @@ function addLiveTradeFromForm(event) {
   });
 
   liveTradeLedger.unshift(trade);
-  saveLiveTradeLedger();
   renderLiveTradeLedger();
+  await saveLiveTradeLedger();
   liveTradeFormEl.reset();
   const contractInput = document.querySelector("#live-trade-contract");
   if (contractInput) contractInput.value = marketConfig[commoditySelect.value]?.ticker || "";
 }
 
 function getUserScopedTransactions() {
-  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
   const deduped = getDedupedPaperCloseEntries(source);
   const userScoped = hasCurrentUserProfile()
     ? deduped.filter((entry) => isTransactionForCurrentUser(entry))
@@ -7194,7 +7271,7 @@ function getUserScopedTransactions() {
 }
 
 function getAllTransactionsForLifecycleChecks() {
-  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
   return getDedupedPaperCloseEntries(source);
 }
 
@@ -7237,7 +7314,7 @@ async function loadLocalMockTransactionHistory() {
 }
 
 function getRawPaperLedgerEntries() {
-  const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
+  const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
   return getDedupedPaperCloseEntries(source);
 }
 
@@ -7283,9 +7360,10 @@ async function loadBundledTransactionHistory() {
 
 function getTransactionKey(entry) {
   if (entry.sharedKey) return entry.sharedKey;
+  const modePrefix = isRealTradeEntry(entry) ? `${REAL_TRADE_MODE}|` : "";
 
   return [
-    entry.tradeId || entry.id || "trade",
+    `${modePrefix}${entry.tradeId || entry.id || "trade"}`,
     entry.action || "action",
     entry.contract || "contract",
     getTransactionDate(entry.time).toISOString(),
@@ -7339,7 +7417,7 @@ function mergeTransactionHistory(entries, options = {}) {
   const existing = new Map(transactionHistory.map((entry) => [getTransactionKey(entry), entry]));
   let added = 0;
 
-  entries.map(normalizeTransactionEntry).forEach((entry) => {
+  entries.map(normalizeTransactionEntry).filter(isPaperTradeEntry).forEach((entry) => {
     const sharedKey = getTransactionKey(entry);
     if (existing.has(sharedKey)) return;
 
@@ -7360,7 +7438,7 @@ function mergeTransactionHistory(entries, options = {}) {
 function getMergedTransactionEntries(incomingEntries = []) {
   const byKey = new Map();
 
-  [...incomingEntries, ...transactionHistory].map(normalizeTransactionEntry).forEach((entry) => {
+  [...incomingEntries, ...transactionHistory].map(normalizeTransactionEntry).filter(isPaperTradeEntry).forEach((entry) => {
     const sharedKey = getTransactionKey(entry);
     byKey.set(sharedKey, { ...entry, sharedKey });
   });
@@ -7759,8 +7837,11 @@ function getSharedHistoryPayload() {
 
   return {
     generatedAt: new Date().toISOString(),
-    source: "github-master-paper-trading-ledger",
+    source: "cloudflare-d1-paper-trading-ledger",
+    tradeMode: PAPER_TRADE_MODE,
     transactions: transactionHistory
+      .filter(isPaperTradeEntry)
+      .map((entry) => ({ ...entry, tradeMode: PAPER_TRADE_MODE }))
   };
 }
 
@@ -7816,6 +7897,10 @@ function getCoinbaseSandboxOrderUrl() {
 
 function getSharedSettingsUrl() {
   return `${getHistoryApiUrl()}/settings`;
+}
+
+function getActualTradesUrl() {
+  return `${getHistoryApiUrl()}/actual-trades`;
 }
 
 function getCoinbaseOrderId(orderResult) {
@@ -9352,6 +9437,7 @@ async function recordTransaction(entry) {
   const transaction = normalizeTransactionEntry({
     id: nextTransactionId,
     time: new Date(),
+    tradeMode: PAPER_TRADE_MODE,
     userEmail: getCurrentLedgerEmail(),
     userName: getCurrentUserProfile()?.name || "",
     ...entry
@@ -11248,6 +11334,7 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
   renderLeaderBoard();
 });
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
+refreshLiveLedgerEl?.addEventListener("click", () => loadSharedLiveTradeLedger());
 paperEquityInputEl.readOnly = true;
 paperEquityInputEl.setAttribute("aria-readonly", "true");
 paperRiskInputEl.addEventListener("change", updatePaperRiskSetting);
