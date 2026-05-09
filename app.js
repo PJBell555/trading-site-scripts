@@ -97,6 +97,7 @@ const strategyEditTitleEl = document.querySelector("#strategy-edit-title");
 const strategyEditMetaEl = document.querySelector("#strategy-edit-meta");
 const strategyEditSummaryEl = document.querySelector("#strategy-edit-summary");
 const strategyEditNoteEl = document.querySelector("#strategy-edit-note");
+const strategyReferenceButtonEl = document.querySelector("#strategy-reference-button");
 const strategyEnginePanelEl = document.querySelector("#strategy-engine-panel");
 const strategyHistoryPanelEl = document.querySelector("#strategy-history-panel");
 const tokenCostsRefreshEl = document.querySelector("#token-costs-refresh");
@@ -2484,6 +2485,7 @@ function normalizeStrategyHistoryEntry(entry = {}) {
     changedByName: String(entry.changedByName || "").trim(),
     changedByEmail: normalizeEmail(entry.changedByEmail || ""),
     summary: String(entry.summary || "Strategy updated").trim(),
+    detail: String(entry.detail || "").trim(),
     before: normalizeUserStrategy(entry.before || {}),
     after: normalizeUserStrategy(entry.after || {})
   };
@@ -2494,6 +2496,135 @@ function normalizeStrategyHistory(history = []) {
     .map(normalizeStrategyHistoryEntry)
     .sort((a, b) => getTransactionDate(b.changedAt) - getTransactionDate(a.changedAt))
     .slice(0, 50);
+}
+
+function recordUserStrategyChange(user, before, after, actor = getCurrentUserProfile()) {
+  if (!user) return false;
+  const normalizedBefore = normalizeUserStrategy(before);
+  const normalizedAfter = normalizeUserStrategy(after);
+  const changed = JSON.stringify(normalizedBefore) !== JSON.stringify(normalizedAfter);
+  if (!changed) return false;
+  const changedAt = new Date().toISOString();
+  user.strategyHistory = normalizeStrategyHistory([
+    {
+      id: `strategy-change-${Date.now()}`,
+      changedAt,
+      changedByName: actor?.name || "Unknown user",
+      changedByEmail: actor?.email || getCurrentAccessEmail(),
+      summary: getStrategyChangeSummary(normalizedBefore, normalizedAfter),
+      before: normalizedBefore,
+      after: normalizedAfter
+    },
+    ...(user.strategyHistory || [])
+  ]);
+  user.strategy = normalizedAfter;
+  return true;
+}
+
+const STRATEGY_HISTORY_FIELDS = [
+  ["name", "Strategy name"],
+  ["type", "Strategy type"],
+  ["description", "Strategy definition"],
+  ["martingaleSteps", "Martingale max steps"],
+  ["karpathyLoop", "Karpathy loop"],
+  ["skillsAccess", "Skills access"],
+  ["openBrainAccess", "Open Brain access"],
+  ["skillFocus", "Skill focus"],
+  ["openBrainMemory", "Open Brain instruction"],
+  ["regimeAware", "Regime-aware Martingale"],
+  ["flatMaxMartingaleSteps", "Flat/mixed step cap"],
+  ["flatSizeMultiplier", "Flat/mixed size multiplier"],
+  ["flatThresholdBoost", "Flat/mixed threshold boost"],
+  ["flatMinEdgePercent", "Flat/mixed minimum edge"],
+  ["flatMinVolatilityBps", "Flat/mixed minimum volatility"],
+  ["trendingMinEdgePercent", "Trending minimum edge"],
+  ["trendingMinVolatilityBps", "Trending minimum volatility"]
+];
+
+function formatStrategyFieldValue(key, value) {
+  if (typeof value === "boolean") return value ? "On" : "Off";
+  if (key.toLowerCase().includes("percent")) return `${value}%`;
+  if (key.toLowerCase().includes("volatility")) return `${formatNumberInput(value, 2)} bps`;
+  if (key === "flatSizeMultiplier") return `${formatNumberInput(value, 2)}x`;
+  return String(value ?? "");
+}
+
+function getStrategyDiffRows(before = {}, after = {}) {
+  const normalizedBefore = normalizeUserStrategy(before);
+  const normalizedAfter = normalizeUserStrategy(after);
+  return STRATEGY_HISTORY_FIELDS
+    .map(([key, label]) => ({
+      key,
+      label,
+      before: formatStrategyFieldValue(key, normalizedBefore[key]),
+      after: formatStrategyFieldValue(key, normalizedAfter[key])
+    }))
+    .filter((row) => row.before !== row.after);
+}
+
+function getRegimeAwareSeedBefore(strategy = getCurrentUserStrategy()) {
+  return normalizeUserStrategy({
+    ...strategy,
+    description: "Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.",
+    regimeAware: false,
+    flatMaxMartingaleSteps: strategy.martingaleSteps,
+    flatSizeMultiplier: 1,
+    flatThresholdBoost: 0,
+    flatMinEdgePercent: 50,
+    flatMinVolatilityBps: 0,
+    trendingMinEdgePercent: 50,
+    trendingMinVolatilityBps: 0
+  });
+}
+
+const STRATEGY_BASELINE_TEXT = "Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.";
+const STRATEGY_REGIME_REFINEMENT_TEXT = "Refinement 5/9/2026: Regime-aware Martingale for Oil. Use the 4-step Martingale structure only when oil is trading with clear directional confirmation and real volatility. When the market is flat, mixed, or choppy, reduce Martingale aggressiveness instead of disabling it entirely. Flat / mixed regime: treat 1-minute edge near 50% as a wait condition, not a strong trade. Require sustained trend confirmation, VWAP reclaim, and improving 10s/30s momentum before increasing size. Reduce Martingale step size and/or cap the number of recovery steps. Do not let Martingale amplify weak C-grade setups. Volatile / trending regime: restore fuller Martingale sizing only when price, tape, and momentum are aligned. Allow the recovery sequence to work when there is genuine directional movement. Keep the Karpathy loop active so it can adjust advisory thresholds from closed-trade outcomes. Coach logic: the Karpathy loop should adjust thresholds, not force more trades. Martingale should respond to market regime, not stay fixed. The default in uncertainty should be smaller size, fewer recovery steps, and more confirmation.";
+
+function ensureStrategySeedHistory(user, strategy = getCurrentUserStrategy()) {
+  const existing = normalizeStrategyHistory(user?.strategyHistory);
+  if (!user || existing.length || strategy.regimeAware === false) return existing;
+  const now = Date.now();
+  const baseline = normalizeUserStrategy({
+    ...strategy,
+    description: STRATEGY_BASELINE_TEXT,
+    regimeAware: false,
+    flatMaxMartingaleSteps: strategy.martingaleSteps,
+    flatSizeMultiplier: 1,
+    flatThresholdBoost: 0,
+    flatMinEdgePercent: 50,
+    flatMinVolatilityBps: 0,
+    trendingMinEdgePercent: 50,
+    trendingMinVolatilityBps: 0
+  });
+  const refinement = normalizeUserStrategy({
+    ...strategy,
+    description: `${STRATEGY_BASELINE_TEXT} ${STRATEGY_REGIME_REFINEMENT_TEXT}`
+  });
+  user.strategy = refinement;
+  user.strategyHistory = normalizeStrategyHistory([
+    {
+      id: "strategy-change-0002-regime-aware-oil",
+      changedAt: new Date(now).toISOString(),
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: "Refinement 5/9/2026: Regime-aware Martingale for Oil",
+      detail: STRATEGY_REGIME_REFINEMENT_TEXT,
+      before: baseline,
+      after: refinement
+    },
+    {
+      id: "strategy-change-0001-baseline",
+      changedAt: new Date(now - 60000).toISOString(),
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: "Baseline strategy recorded",
+      detail: STRATEGY_BASELINE_TEXT,
+      before: normalizeUserStrategy({ ...baseline, description: "No prior strategy baseline recorded." }),
+      after: baseline
+    }
+  ]);
+  saveUserRoster();
+  return normalizeStrategyHistory(user.strategyHistory);
 }
 
 function getStrategyChangeSummary(before, after) {
@@ -3611,24 +3742,8 @@ function saveUserStrategySettings(user, container) {
     trendingMinVolatilityBps: container.querySelector("[data-strategy-field='trendingMinVolatilityBps']")?.value
   });
 
-  const changed = JSON.stringify(before) !== JSON.stringify(strategy);
-  if (changed) {
-    const actor = getCurrentUserProfile();
-    const changedAt = new Date().toISOString();
-    user.strategyHistory = normalizeStrategyHistory([
-      {
-        id: `strategy-change-${Date.now()}`,
-        changedAt,
-        changedByName: actor?.name || "Unknown user",
-        changedByEmail: actor?.email || getCurrentAccessEmail(),
-        summary: getStrategyChangeSummary(before, strategy),
-        before,
-        after: strategy
-      },
-      ...(user.strategyHistory || [])
-    ]);
-  }
-  user.strategy = strategy;
+  const changed = recordUserStrategyChange(user, before, strategy);
+  if (!changed) user.strategy = strategy;
   saveUserRoster();
   saveSharedSettings();
   renderCurrentUserStrategy();
@@ -3723,25 +3838,54 @@ function renderCurrentUserStrategy() {
 
 function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
   return [
-    ["Strategy definition text", "Saved as notes; does not execute by itself"],
-    ["Martingale max steps", `${strategy.martingaleSteps}`],
-    ["Karpathy loop", strategy.karpathyLoop ? "Adjusts thresholds from evaluated outcomes" : "Off"],
-    ["Regime-aware Martingale", strategy.regimeAware ? "On" : "Off"],
-    ["Flat/mixed step cap", `${strategy.flatMaxMartingaleSteps}`],
-    ["Flat/mixed size multiplier", `${formatNumberInput(strategy.flatSizeMultiplier, 2)}x`],
-    ["Flat/mixed threshold boost", `+${strategy.flatThresholdBoost}`],
-    ["Flat/mixed minimum edge", `${strategy.flatMinEdgePercent}%`],
-    ["Flat/mixed minimum volatility", `${formatNumberInput(strategy.flatMinVolatilityBps, 2)} bps`],
-    ["Trending minimum edge", `${strategy.trendingMinEdgePercent}%`],
-    ["Trending minimum volatility", `${formatNumberInput(strategy.trendingMinVolatilityBps, 2)} bps`],
-    ["Skills context", strategy.skillsAccess ? strategy.skillFocus : "Disabled"],
-    ["Open Brain context", strategy.openBrainAccess ? "Enabled" : "Disabled"]
+    { key: "strategyText", label: "Strategy definition text", value: "Saved as notes; does not execute by itself", type: "static" },
+    { key: "martingaleEnabled", label: "Martingale recovery", value: String(strategy.type || "").includes("martingale"), type: "checkbox", on: "On", off: "Off" },
+    { key: "martingaleSteps", label: "Martingale max steps", value: strategy.martingaleSteps, type: "number", min: 1, max: 8, step: 1 },
+    { key: "karpathyLoop", label: "Karpathy loop", value: strategy.karpathyLoop, type: "checkbox", on: "Adjusts thresholds from evaluated outcomes", off: "Off" },
+    { key: "regimeAware", label: "Regime-aware Martingale", value: strategy.regimeAware, type: "checkbox", on: "On", off: "Off" },
+    { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
+    { key: "flatSizeMultiplier", label: "Flat/mixed size multiplier", value: strategy.flatSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x" },
+    { key: "flatThresholdBoost", label: "Flat/mixed threshold boost", value: strategy.flatThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+" },
+    { key: "flatMinEdgePercent", label: "Flat/mixed minimum edge", value: strategy.flatMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%" },
+    { key: "flatMinVolatilityBps", label: "Flat/mixed minimum volatility", value: strategy.flatMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps" },
+    { key: "trendingMinEdgePercent", label: "Trending minimum edge", value: strategy.trendingMinEdgePercent, type: "number", min: 50, max: 85, step: 1, suffix: "%" },
+    { key: "trendingMinVolatilityBps", label: "Trending minimum volatility", value: strategy.trendingMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps" },
+    { key: "skillsAccess", label: "Skills context", value: strategy.skillsAccess, type: "checkbox", on: strategy.skillFocus, off: "Disabled" },
+    { key: "openBrainAccess", label: "Open Brain context", value: strategy.openBrainAccess, type: "checkbox", on: "Enabled", off: "Disabled" }
   ];
 }
 
+function getStrategyRuleDisplay(rule) {
+  if (rule.type === "checkbox") return rule.value ? rule.on : rule.off;
+  if (rule.type === "number") return `${rule.prefix || ""}${formatNumberInput(rule.value, Number(rule.step) < 1 ? 2 : 0)}${rule.suffix || ""}`;
+  return rule.value;
+}
+
+function saveStrategyEngineField(key, rawValue) {
+  const user = getCurrentUserProfile();
+  if (!user) return;
+  const before = normalizeUserStrategy(user.strategy);
+  const patch = key === "martingaleEnabled"
+    ? { type: rawValue ? "martingale-karpathy" : "fixed-risk" }
+    : { [key]: rawValue };
+  const next = normalizeUserStrategy({
+    ...before,
+    ...patch
+  });
+  const changed = recordUserStrategyChange(user, before, next);
+  if (!changed) return;
+  saveUserRoster();
+  saveSharedSettings();
+  calculateSignal();
+  renderCurrentUserStrategy();
+  renderUserManagement();
+}
+
 function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = getCurrentUserStrategy()) {
+  const history = ensureStrategySeedHistory(user, strategy);
+  const currentStrategy = normalizeUserStrategy(user?.strategy || strategy);
   if (strategyEnginePanelEl) {
-    const rows = getStrategyEngineRules(strategy);
+    const rows = getStrategyEngineRules(currentStrategy);
     strategyEnginePanelEl.innerHTML = `
       <div class="strategy-engine-head">
         <div>
@@ -3751,34 +3895,69 @@ function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = ge
         <span class="strategy-prose-status">Text is notes only</span>
       </div>
       <div class="strategy-engine-grid">
-        ${rows.map(([label, value]) => `
+        ${rows.map((rule) => `
           <div class="strategy-engine-rule">
-            <span>${escapeHtml(label)}</span>
-            <strong>${escapeHtml(value)}</strong>
+            <span>${escapeHtml(rule.label)}</span>
+            ${rule.type === "checkbox" ? `
+              <label class="strategy-engine-toggle">
+                <input data-strategy-engine-field="${escapeHtml(rule.key)}" type="checkbox"${rule.value ? " checked" : ""}>
+                <strong>${escapeHtml(getStrategyRuleDisplay(rule))}</strong>
+              </label>
+            ` : rule.type === "number" ? `
+              <label class="strategy-engine-input">
+                <input data-strategy-engine-field="${escapeHtml(rule.key)}" type="number" min="${rule.min}" max="${rule.max}" step="${rule.step}" value="${escapeHtml(formatNumberInput(rule.value, Number(rule.step) < 1 ? 2 : 0))}">
+                <strong>${escapeHtml(`${rule.prefix || ""}${rule.suffix || ""}`.trim())}</strong>
+              </label>
+            ` : `
+              <strong>${escapeHtml(getStrategyRuleDisplay(rule))}</strong>
+            `}
           </div>
         `).join("")}
       </div>
       <p class="strategy-engine-note">Further refinements change trading only when saved into these structured fields or implemented as new executable rules.</p>
     `;
+    strategyEnginePanelEl.querySelectorAll("[data-strategy-engine-field]").forEach((input) => {
+      input.addEventListener("change", () => {
+        const value = input.type === "checkbox" ? input.checked : input.value;
+        saveStrategyEngineField(input.dataset.strategyEngineField, value);
+      });
+    });
   }
 
   if (strategyHistoryPanelEl) {
-    const history = normalizeStrategyHistory(user?.strategyHistory);
+    const chronological = [...history].sort((a, b) => getTransactionDate(a.changedAt) - getTransactionDate(b.changedAt));
     strategyHistoryPanelEl.innerHTML = `
       <div class="strategy-engine-head">
         <div>
           <span class="strategy-card-kicker">Update log</span>
-          <h4>Recent strategy changes</h4>
+          <h4>Strategy change history</h4>
         </div>
       </div>
-      ${history.length ? `
+      ${chronological.length ? `
         <div class="strategy-history-list">
-          ${history.slice(0, 5).map((entry) => `
-            <div class="strategy-history-item">
-              <strong>${escapeHtml(entry.summary)}</strong>
-              <span>${formatTradeTime(entry.changedAt)} by ${escapeHtml(entry.changedByName || entry.changedByEmail || "Unknown user")}</span>
-            </div>
-          `).join("")}
+          ${chronological.map((entry, index) => {
+            const diffRows = getStrategyDiffRows(entry.before, entry.after);
+            const performance = summarizeClosedTradePerformanceSince(entry.changedAt);
+            return `
+              <details class="strategy-history-item">
+                <summary>
+                  <strong>Strategy change #${index + 1}: ${escapeHtml(entry.summary)}</strong>
+                  <span>${formatTradeTime(entry.changedAt)} by ${escapeHtml(entry.changedByName || entry.changedByEmail || "Unknown user")} / ${formatPerformanceSummary(performance)}</span>
+                </summary>
+                ${entry.detail ? `<p>${escapeHtml(entry.detail)}</p>` : ""}
+                ${diffRows.length ? `
+                  <div class="strategy-diff-grid">
+                    ${diffRows.map((row) => `
+                      <div>
+                        <span>${escapeHtml(row.label)}</span>
+                        <strong>${escapeHtml(row.before)} -> ${escapeHtml(row.after)}</strong>
+                      </div>
+                    `).join("")}
+                  </div>
+                ` : `<p>No structured field changes recorded.</p>`}
+              </details>
+            `;
+          }).join("")}
         </div>
       ` : `<p class="strategy-engine-note">No strategy updates logged yet.</p>`}
     `;
@@ -10827,6 +11006,9 @@ skillSearchInputEl?.addEventListener("input", () => {
 });
 strategyEditorEl?.addEventListener("submit", saveStrategyEditor);
 strategyEditorCancelEl?.addEventListener("click", closeStrategyEditor);
+strategyReferenceButtonEl?.addEventListener("click", () => {
+  strategyEnginePanelEl?.scrollIntoView({ behavior: "smooth", block: "start" });
+});
 document.querySelector(".strategy-add-button")?.addEventListener("click", () => openStrategyEditor());
 document.querySelectorAll("[data-strategy-edit]").forEach((button) => {
   button.addEventListener("click", () => openStrategyEditor(button.dataset.strategyEdit));

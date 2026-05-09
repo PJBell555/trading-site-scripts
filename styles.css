@@ -2263,6 +2263,55 @@ body {
   overflow-wrap: anywhere;
 }
 
+.strategy-engine-toggle,
+.strategy-engine-input {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+}
+
+.strategy-engine-toggle input {
+  height: 18px;
+  width: 18px;
+}
+
+.strategy-engine-input input {
+  background: #081225;
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 6px;
+  color: #f8fafc;
+  max-width: 120px;
+  padding: 7px 8px;
+}
+
+.strategy-history-item summary {
+  cursor: pointer;
+  display: grid;
+  gap: 5px;
+}
+
+.strategy-history-item p {
+  color: #cbd5e1;
+  line-height: 1.55;
+  margin: 10px 0 0;
+}
+
+.strategy-diff-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 10px;
+}
+
+.strategy-diff-grid div {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(148, 163, 184, 0.14);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  padding: 9px 10px;
+}
+
 .strategy-engine-note {
   margin: 0;
 }
@@ -4132,6 +4181,7 @@ textarea::placeholder {
   .trade-system-detail-grid,
   .strategy-card-grid,
   .strategy-engine-grid,
+  .strategy-diff-grid,
   .skills-workspace {
     grid-template-columns: 1fr;
   }
