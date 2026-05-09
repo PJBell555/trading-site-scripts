@@ -1169,6 +1169,12 @@ body {
   grid-column: 1 / -1;
 }
 
+.profile-field-hint {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
 .profile-strategy-history {
   border-top: 1px solid rgba(148, 163, 184, 0.16);
   display: grid;
@@ -2190,6 +2196,80 @@ body {
   color: #dbeafe;
   margin-top: 12px;
   padding: 12px 14px;
+}
+
+.strategy-engine-panel,
+.strategy-history-panel {
+  background: rgba(15, 23, 42, 0.72);
+  border: 1px solid rgba(96, 165, 250, 0.22);
+  border-radius: 8px;
+  display: grid;
+  gap: 14px;
+  margin-top: 14px;
+  padding: 14px;
+}
+
+.strategy-engine-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+
+.strategy-engine-head h4 {
+  color: #f8fafc;
+  font-size: 1rem;
+  margin: 4px 0 0;
+}
+
+.strategy-prose-status {
+  background: rgba(245, 158, 11, 0.14);
+  border: 1px solid rgba(245, 158, 11, 0.28);
+  border-radius: 999px;
+  color: #fde68a;
+  font-size: 0.78rem;
+  font-weight: 900;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.strategy-engine-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.strategy-engine-rule,
+.strategy-history-item {
+  background: rgba(96, 165, 250, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.16);
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px 12px;
+}
+
+.strategy-engine-rule span,
+.strategy-history-item span,
+.strategy-engine-note {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.strategy-engine-rule strong,
+.strategy-history-item strong {
+  color: #f8fafc;
+  overflow-wrap: anywhere;
+}
+
+.strategy-engine-note {
+  margin: 0;
+}
+
+.strategy-history-list {
+  display: grid;
+  gap: 10px;
 }
 
 .karpathy-coach-panel {
@@ -4051,6 +4131,7 @@ textarea::placeholder {
   .roadmap,
   .trade-system-detail-grid,
   .strategy-card-grid,
+  .strategy-engine-grid,
   .skills-workspace {
     grid-template-columns: 1fr;
   }

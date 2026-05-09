@@ -97,6 +97,8 @@ const strategyEditTitleEl = document.querySelector("#strategy-edit-title");
 const strategyEditMetaEl = document.querySelector("#strategy-edit-meta");
 const strategyEditSummaryEl = document.querySelector("#strategy-edit-summary");
 const strategyEditNoteEl = document.querySelector("#strategy-edit-note");
+const strategyEnginePanelEl = document.querySelector("#strategy-engine-panel");
+const strategyHistoryPanelEl = document.querySelector("#strategy-history-panel");
 const tokenCostsRefreshEl = document.querySelector("#token-costs-refresh");
 const tokenCostsStatusEl = document.querySelector("#token-costs-status");
 const tokenRefreshHoursEl = document.querySelector("#token-llm-refresh-hours");
@@ -3716,6 +3718,71 @@ function renderCurrentUserStrategy() {
     copy.textContent = `${strategy.description} ${access}.`;
   }
   renderAdvisoryAdoptedSystems(strategy);
+  renderStrategyEnginePanel(user, strategy);
+}
+
+function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
+  return [
+    ["Strategy definition text", "Saved as notes; does not execute by itself"],
+    ["Martingale max steps", `${strategy.martingaleSteps}`],
+    ["Karpathy loop", strategy.karpathyLoop ? "Adjusts thresholds from evaluated outcomes" : "Off"],
+    ["Regime-aware Martingale", strategy.regimeAware ? "On" : "Off"],
+    ["Flat/mixed step cap", `${strategy.flatMaxMartingaleSteps}`],
+    ["Flat/mixed size multiplier", `${formatNumberInput(strategy.flatSizeMultiplier, 2)}x`],
+    ["Flat/mixed threshold boost", `+${strategy.flatThresholdBoost}`],
+    ["Flat/mixed minimum edge", `${strategy.flatMinEdgePercent}%`],
+    ["Flat/mixed minimum volatility", `${formatNumberInput(strategy.flatMinVolatilityBps, 2)} bps`],
+    ["Trending minimum edge", `${strategy.trendingMinEdgePercent}%`],
+    ["Trending minimum volatility", `${formatNumberInput(strategy.trendingMinVolatilityBps, 2)} bps`],
+    ["Skills context", strategy.skillsAccess ? strategy.skillFocus : "Disabled"],
+    ["Open Brain context", strategy.openBrainAccess ? "Enabled" : "Disabled"]
+  ];
+}
+
+function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = getCurrentUserStrategy()) {
+  if (strategyEnginePanelEl) {
+    const rows = getStrategyEngineRules(strategy);
+    strategyEnginePanelEl.innerHTML = `
+      <div class="strategy-engine-head">
+        <div>
+          <span class="strategy-card-kicker">Trading engine reads</span>
+          <h4>Executable rules now active</h4>
+        </div>
+        <span class="strategy-prose-status">Text is notes only</span>
+      </div>
+      <div class="strategy-engine-grid">
+        ${rows.map(([label, value]) => `
+          <div class="strategy-engine-rule">
+            <span>${escapeHtml(label)}</span>
+            <strong>${escapeHtml(value)}</strong>
+          </div>
+        `).join("")}
+      </div>
+      <p class="strategy-engine-note">Further refinements change trading only when saved into these structured fields or implemented as new executable rules.</p>
+    `;
+  }
+
+  if (strategyHistoryPanelEl) {
+    const history = normalizeStrategyHistory(user?.strategyHistory);
+    strategyHistoryPanelEl.innerHTML = `
+      <div class="strategy-engine-head">
+        <div>
+          <span class="strategy-card-kicker">Update log</span>
+          <h4>Recent strategy changes</h4>
+        </div>
+      </div>
+      ${history.length ? `
+        <div class="strategy-history-list">
+          ${history.slice(0, 5).map((entry) => `
+            <div class="strategy-history-item">
+              <strong>${escapeHtml(entry.summary)}</strong>
+              <span>${formatTradeTime(entry.changedAt)} by ${escapeHtml(entry.changedByName || entry.changedByEmail || "Unknown user")}</span>
+            </div>
+          `).join("")}
+        </div>
+      ` : `<p class="strategy-engine-note">No strategy updates logged yet.</p>`}
+    `;
+  }
 }
 
 function getBuiltInStrategyStartedAt() {
@@ -4126,7 +4193,7 @@ function createUserProfilePanel(user) {
         <input data-strategy-field="trendingMinVolatilityBps" type="number" min="0" max="20" step="0.1" value="${formatNumberInput(strategy.trendingMinVolatilityBps, 2)}">
       </label>
       <label class="profile-strategy-wide">
-        Strategy definition
+        Strategy definition <span class="profile-field-hint">notes only until mapped to executable fields</span>
         <textarea data-strategy-field="description" rows="3">${escapeHtml(strategy.description)}</textarea>
       </label>
       <label class="profile-strategy-wide">
