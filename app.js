@@ -629,6 +629,7 @@ let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
 let nextBackendAdvisorySyncAt = 0;
 let nextBackendMicroPredictionSyncAt = 0;
+let nextBackendOpenBrainSyncAt = 0;
 let backendHistoryDirty = false;
 let backendHistorySaveTimer = null;
 let lastBackendHistorySaveAttemptAt = 0;
@@ -859,7 +860,79 @@ function saveOpenBrainMemory() {
   window.localStorage.setItem(OPEN_BRAIN_MEMORY_KEY, JSON.stringify(openBrainMemory.slice(0, 250)));
 }
 
-function recordOpenBrainEvent(type, summary, metadata = {}) {
+function mergeOpenBrainEvents(incoming = []) {
+  const byId = new Map();
+  [...openBrainMemory, ...incoming].forEach((event) => {
+    if (!event) return;
+    const id = event.id || `memory-${event.time || Date.now()}-${event.type || "event"}-${event.summary || ""}`;
+    byId.set(id, { ...event, id });
+  });
+  openBrainMemory.splice(
+    0,
+    openBrainMemory.length,
+    ...Array.from(byId.values())
+      .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
+      .slice(0, 500)
+  );
+  saveOpenBrainMemory();
+}
+
+function getOpenBrainApiUrl() {
+  return `${getHistoryApiUrl()}/open-brain`;
+}
+
+async function saveOpenBrainEventsToBackend(events = openBrainMemory, { silent = false } = {}) {
+  if (!hasHistoryBackend() || !events.length) return false;
+  if (isBackendBackoffActive(nextBackendOpenBrainSyncAt)) return false;
+
+  try {
+    if (!silent) openBrainStatusEl.textContent = "Saving Open Brain to D1";
+    const response = await fetchWithTimeout(getOpenBrainApiUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ events, limit: 500 })
+    });
+    if (!response.ok) throw new Error("Open Brain backend save failed");
+    const data = await response.json();
+    mergeOpenBrainEvents(Array.isArray(data?.events) ? data.events : []);
+    nextBackendOpenBrainSyncAt = 0;
+    if (!silent) openBrainStatusEl.textContent = `D1 memory saved ${Number(data?.stored || 0)} event${Number(data?.stored || 0) === 1 ? "" : "s"}`;
+    renderOpenBrainMemory();
+    return true;
+  } catch (error) {
+    nextBackendOpenBrainSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    if (!silent) openBrainStatusEl.textContent = `Local memory active; ${getBackendBackoffText(nextBackendOpenBrainSyncAt)}`;
+    return false;
+  }
+}
+
+async function loadOpenBrainEventsFromBackend({ manual = false } = {}) {
+  if (!hasHistoryBackend()) {
+    renderOpenBrainMemory();
+    return false;
+  }
+  if (!manual && isBackendBackoffActive(nextBackendOpenBrainSyncAt)) return false;
+
+  try {
+    openBrainStatusEl.textContent = "Loading D1 memory";
+    const response = await fetchWithTimeout(`${getOpenBrainApiUrl()}?limit=500&ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("Open Brain backend unavailable");
+    const data = await response.json();
+    mergeOpenBrainEvents(Array.isArray(data?.events) ? data.events : []);
+    nextBackendOpenBrainSyncAt = 0;
+    openBrainStatusEl.textContent = `D1 memory synced ${openBrainMemory.length} event${openBrainMemory.length === 1 ? "" : "s"}`;
+    if (openBrainMemory.length) saveOpenBrainEventsToBackend(openBrainMemory, { silent: true });
+    renderOpenBrainMemory();
+    return true;
+  } catch (error) {
+    nextBackendOpenBrainSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    openBrainStatusEl.textContent = `Local memory active; ${getBackendBackoffText(nextBackendOpenBrainSyncAt)}`;
+    renderOpenBrainMemory();
+    return false;
+  }
+}
+
+function recordOpenBrainEvent(type, summary, metadata = {}, options = {}) {
   const event = {
     id: `memory-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     time: new Date().toISOString(),
@@ -872,12 +945,17 @@ function recordOpenBrainEvent(type, summary, metadata = {}) {
   openBrainMemory.unshift(event);
   saveOpenBrainMemory();
   renderOpenBrainMemory();
+  if (options.sync !== false) {
+    saveOpenBrainEventsToBackend([event], { silent: true });
+  }
   return event;
 }
 
 function renderOpenBrainMemory() {
   openBrainEventCountEl.textContent = String(openBrainMemory.length);
-  openBrainStatusEl.textContent = openBrainEndpointEl.value ? "Endpoint saved" : "Local memory ready";
+  if (!openBrainStatusEl.textContent || openBrainStatusEl.textContent === "Local memory ready" || openBrainStatusEl.textContent === "Endpoint saved") {
+    openBrainStatusEl.textContent = hasHistoryBackend() ? "D1 memory ready" : "Local memory ready";
+  }
   openBrainMemoryTableEl.innerHTML = "";
 
   if (!openBrainMemory.length) {
@@ -9149,11 +9227,13 @@ async function initializeBackendState() {
   const settingsLoad = loadSharedSettings();
   const advisoryLoad = loadSharedAdvisoryHistory();
   const microPredictionLoad = loadSharedMicroPredictions();
+  const openBrainLoad = loadOpenBrainEventsFromBackend();
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
     advisoryLoad,
-    microPredictionLoad
+    microPredictionLoad,
+    openBrainLoad
   ]);
 
   calculateSignal();
@@ -11117,7 +11197,7 @@ tokenRefreshHoursEl?.addEventListener("change", () => {
 });
 saveOpenBrainEndpointEl.addEventListener("click", () => {
   window.localStorage.setItem(OPEN_BRAIN_ENDPOINT_KEY, openBrainEndpointEl.value.trim());
-  renderOpenBrainMemory();
+  loadOpenBrainEventsFromBackend({ manual: true });
 });
 captureOpenBrainAdvisoryEl.addEventListener("click", () => {
   const event = captureCurrentAdvisoryMemory("manual");

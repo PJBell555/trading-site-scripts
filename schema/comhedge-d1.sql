@@ -194,3 +194,29 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
 
 CREATE INDEX IF NOT EXISTS idx_price_snapshots_updated
   ON price_snapshots (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS open_brain_events (
+  event_key TEXT PRIMARY KEY,
+  event_time TEXT NOT NULL,
+  event_type TEXT NOT NULL,
+  summary TEXT NOT NULL,
+  user_email TEXT,
+  user_name TEXT,
+  commodity TEXT,
+  source TEXT,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_open_brain_events_time
+  ON open_brain_events (event_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_open_brain_events_type
+  ON open_brain_events (event_type, event_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_open_brain_events_user
+  ON open_brain_events (user_email, event_time DESC);
+
+CREATE INDEX IF NOT EXISTS idx_open_brain_events_commodity
+  ON open_brain_events (commodity, event_time DESC);

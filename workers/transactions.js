@@ -16,6 +16,7 @@ const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 100000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
 const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
+const OPEN_BRAIN_EVENT_LIMIT = 500;
 const DEFAULT_MARKET_CALENDAR = {
   overnightRiskMode: "accept",
   marketTimeZone: "America/New_York",
@@ -672,6 +673,49 @@ function integerOrNull(value) {
   return Number.isFinite(number) ? Math.round(number) : null;
 }
 
+function getOpenBrainEventKey(entry = {}) {
+  if (entry.id) return String(entry.id);
+  if (entry.eventKey) return String(entry.eventKey);
+  return [
+    entry.type || entry.eventType || "memory",
+    entry.time || entry.eventTime || new Date().toISOString(),
+    entry.summary || "",
+    entry.metadata?.tradeId || entry.tradeId || ""
+  ].join("|");
+}
+
+function normalizeOpenBrainEvent(entry = {}) {
+  const metadata = entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
+  const tags = Array.isArray(entry.tags) ? entry.tags : Array.isArray(metadata.tags) ? metadata.tags : [];
+  const eventTime = textOrNull(firstPresent(entry.time, entry.eventTime, metadata.time, new Date().toISOString()));
+  const eventType = textOrNull(firstPresent(entry.type, entry.eventType, metadata.type, "memory"));
+  const summary = textOrNull(firstPresent(entry.summary, metadata.summary, "Memory event"));
+  const eventKey = getOpenBrainEventKey({ ...entry, time: eventTime, type: eventType, summary });
+  const payload = {
+    ...entry,
+    id: eventKey,
+    time: eventTime,
+    type: eventType,
+    summary,
+    tags,
+    metadata
+  };
+
+  return {
+    event_key: eventKey,
+    event_time: eventTime,
+    event_type: eventType,
+    summary,
+    user_email: textOrNull(firstPresent(entry.userEmail, entry.email, metadata.userEmail, metadata.email)),
+    user_name: textOrNull(firstPresent(entry.userName, entry.name, metadata.userName, metadata.name)),
+    commodity: textOrNull(firstPresent(entry.commodity, metadata.commodity)),
+    source: textOrNull(firstPresent(entry.source, metadata.source)),
+    tags_json: JSON.stringify(tags),
+    metadata_json: JSON.stringify({ ...metadata, payload }),
+    updated_at: new Date().toISOString()
+  };
+}
+
 function getEntryTime(entry = {}) {
   return textOrNull(firstPresent(
     entry.time,
@@ -835,6 +879,123 @@ async function replaceTransactionsD1(env, table, transactions = []) {
   assertTransactionTable(table);
   await env.DB.prepare(`DELETE FROM ${table}`).run();
   await upsertTransactionRows(env, table, transactions);
+}
+
+async function ensureOpenBrainEventsTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS open_brain_events (
+      event_key TEXT PRIMARY KEY,
+      event_time TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      summary TEXT NOT NULL,
+      user_email TEXT,
+      user_name TEXT,
+      commodity TEXT,
+      source TEXT,
+      tags_json TEXT NOT NULL DEFAULT '[]',
+      metadata_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_open_brain_events_time ON open_brain_events (event_time DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_open_brain_events_type ON open_brain_events (event_type, event_time DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_open_brain_events_user ON open_brain_events (user_email, event_time DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_open_brain_events_commodity ON open_brain_events (commodity, event_time DESC)`).run();
+}
+
+async function upsertOpenBrainEventsD1(env, events = []) {
+  if (!events.length) return 0;
+  await ensureOpenBrainEventsTable(env);
+  let stored = 0;
+  for (const event of events) {
+    const row = normalizeOpenBrainEvent(event);
+    await env.DB.prepare(`
+      INSERT INTO open_brain_events (
+        event_key,
+        event_time,
+        event_type,
+        summary,
+        user_email,
+        user_name,
+        commodity,
+        source,
+        tags_json,
+        metadata_json,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(event_key) DO UPDATE SET
+        event_time = excluded.event_time,
+        event_type = excluded.event_type,
+        summary = excluded.summary,
+        user_email = excluded.user_email,
+        user_name = excluded.user_name,
+        commodity = excluded.commodity,
+        source = excluded.source,
+        tags_json = excluded.tags_json,
+        metadata_json = excluded.metadata_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      row.event_key,
+      row.event_time,
+      row.event_type,
+      row.summary,
+      row.user_email,
+      row.user_name,
+      row.commodity,
+      row.source,
+      row.tags_json,
+      row.metadata_json,
+      row.updated_at
+    ).run();
+    stored += 1;
+  }
+  return stored;
+}
+
+async function loadOpenBrainEventsD1(env, limit = OPEN_BRAIN_EVENT_LIMIT) {
+  await ensureOpenBrainEventsTable(env);
+  const boundedLimit = clamp(Math.round(Number(limit) || OPEN_BRAIN_EVENT_LIMIT), 1, 2000);
+  const result = await env.DB.prepare(`
+    SELECT event_key, event_time, event_type, summary, user_email, user_name, commodity, source, tags_json, metadata_json
+    FROM open_brain_events
+    ORDER BY event_time DESC
+    LIMIT ?
+  `).bind(boundedLimit).all();
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-open-brain-events",
+    events: getResults(result).map((row) => {
+      const metadata = parseStoredJson(row.metadata_json, {});
+      const payload = metadata?.payload && typeof metadata.payload === "object" ? metadata.payload : {};
+      return {
+        ...payload,
+        id: row.event_key,
+        time: row.event_time,
+        type: row.event_type,
+        summary: row.summary,
+        userEmail: row.user_email || payload.userEmail || "",
+        userName: row.user_name || payload.userName || "",
+        commodity: row.commodity || payload.commodity || "",
+        source: row.source || payload.source || "",
+        tags: parseStoredJson(row.tags_json, payload.tags || []),
+        metadata
+      };
+    })
+  };
+}
+
+async function recordOpenBrainServerEvent(env, type, summary, metadata = {}) {
+  if (!hasRuntimeStore(env)) return null;
+  const event = {
+    id: metadata.id || `srv-memory-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    time: metadata.time || new Date().toISOString(),
+    type,
+    summary,
+    tags: metadata.tags || [],
+    metadata
+  };
+  await upsertOpenBrainEventsD1(env, [event]);
+  return event;
 }
 
 function normalizeD1AdvisorySnapshot(entry = {}) {
@@ -2385,6 +2546,25 @@ async function runPaperTradingScheduler(env, options = {}) {
             note: closeReason
           });
           transactions.push(close);
+          await recordOpenBrainServerEvent(
+            env,
+            "paper-trade",
+            `${close.action} ${close.contract} at ${price.price.toFixed(2)} with net P/L ${Number(close.pnl || 0).toFixed(2)}`,
+            {
+              id: `memory-${getTransactionKey(close)}`,
+              source: "cloudflare-paper-scheduler",
+              tradeId: close.tradeId,
+              userEmail: email,
+              userName: user.name || "",
+              commodity,
+              action: close.action,
+              side: close.side,
+              step: close.step,
+              price: close.price,
+              pnl: close.pnl,
+              tags: ["paper-trade", commodity, close.side, close.action]
+            }
+          );
           run.closedTrades += 1;
           activeOpenCount = Math.max(0, activeOpenCount - 1);
           lastDecision = `${commodity}: closed ${openTrade.side} at ${price.price}`;
@@ -2474,6 +2654,25 @@ async function runPaperTradingScheduler(env, options = {}) {
           note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps`
         });
         transactions.push(open);
+        await recordOpenBrainServerEvent(
+          env,
+          "paper-trade",
+          `${open.action} ${open.contract} at ${price.price.toFixed(2)} with net P/L 0.00`,
+          {
+            id: `memory-${getTransactionKey(open)}`,
+            source: "cloudflare-paper-scheduler",
+            tradeId: open.tradeId,
+            userEmail: email,
+            userName: user.name || "",
+            commodity,
+            action: open.action,
+            side: open.side,
+            step: open.step,
+            price: open.price,
+            pnl: 0,
+            tags: ["paper-trade", commodity, open.side, open.action]
+          }
+        );
         run.openedTrades += 1;
         activeOpenCount += 1;
         lastDecision = `${commodity}: opened ${signal.side} at ${price.price}`;
@@ -2666,6 +2865,36 @@ async function handleMicroPredictionsRoute(env, request, origin) {
   return jsonResponse({
     ...payload,
     added
+  }, 200, origin);
+}
+
+async function handleOpenBrainRoute(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({
+      generatedAt: new Date().toISOString(),
+      source: "d1-not-configured",
+      events: []
+    }, request.method === "GET" ? 200 : 503, origin);
+  }
+
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const payload = await loadOpenBrainEventsD1(env, url.searchParams.get("limit") || OPEN_BRAIN_EVENT_LIMIT);
+    return jsonResponse({ ...payload, storage: "d1" }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const incoming = Array.isArray(body.events) ? body.events : body.event ? [body.event] : [];
+  const stored = await upsertOpenBrainEventsD1(env, incoming);
+  const payload = await loadOpenBrainEventsD1(env, body.limit || OPEN_BRAIN_EVENT_LIMIT);
+  return jsonResponse({
+    ...payload,
+    storage: "d1",
+    stored
   }, 200, origin);
 }
 
@@ -3033,6 +3262,10 @@ export default {
 
       if (url.pathname === "/prices") {
         return handlePriceSnapshotsRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/open-brain") {
+        return handleOpenBrainRoute(env, request, origin);
       }
 
       if (url.pathname === "/actual-trades") {
