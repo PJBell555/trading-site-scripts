@@ -273,6 +273,37 @@ body {
   min-width: 1120px;
 }
 
+.leaderboard-user-trigger,
+.leaderboard-trades-trigger {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+}
+
+.leaderboard-user-trigger {
+  width: 100%;
+}
+
+.leaderboard-user-trigger:hover strong,
+.leaderboard-user-trigger:focus-visible strong,
+.leaderboard-trades-trigger:hover,
+.leaderboard-trades-trigger:focus-visible {
+  color: #93c5fd;
+  text-decoration: underline;
+}
+
+.leaderboard-user-detail-panel {
+  margin-top: 14px;
+}
+
+.leaderboard-detail-table {
+  min-width: 980px;
+}
+
 .rank-badge {
   align-items: center;
   background: rgba(59, 130, 246, 0.16);

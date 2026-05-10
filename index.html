@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-user-strategy-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-leaderboard-drilldown-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -183,6 +183,16 @@
             <tbody id="leaderboard-body"></tbody>
           </table>
         </div>
+        <section class="user-inline-detail-panel leaderboard-user-detail-panel" id="leaderboard-user-detail-panel" hidden>
+          <div class="user-inline-detail-head">
+            <div>
+              <span class="stat-label">Leader board profile</span>
+              <strong id="leaderboard-user-detail-title">No user selected</strong>
+            </div>
+            <button class="filter-button" type="button" id="leaderboard-user-detail-close">Close</button>
+          </div>
+          <div class="user-inline-detail-body" id="leaderboard-user-detail-body"></div>
+        </section>
       </section>
     </section>
 
@@ -1704,6 +1714,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-user-strategy-1"></script>
+  <script src="./app.js?v=comhedge-leaderboard-drilldown-1"></script>
 </body>
 </html>

@@ -49,6 +49,10 @@ const leaderboardRankControlsEl = document.querySelector("#leaderboard-rank-cont
 const leaderboardRankLabelEl = document.querySelector("#leaderboard-rank-label");
 const leaderboardPeriodControlsEl = document.querySelector("#leaderboard-period-controls");
 const leaderboardPeriodLabelEl = document.querySelector("#leaderboard-period-label");
+const leaderboardUserDetailPanelEl = document.querySelector("#leaderboard-user-detail-panel");
+const leaderboardUserDetailTitleEl = document.querySelector("#leaderboard-user-detail-title");
+const leaderboardUserDetailBodyEl = document.querySelector("#leaderboard-user-detail-body");
+const leaderboardUserDetailCloseEl = document.querySelector("#leaderboard-user-detail-close");
 const featureRequestStatusEl = document.querySelector("#feature-request-status");
 const featureTypeFiltersEl = document.querySelector("#feature-type-filters");
 const featureNewButtonEl = document.querySelector("#feature-new-button");
@@ -614,6 +618,8 @@ let userSearchQuery = "";
 let userListFilter = "all";
 let expandedUserEmail = "";
 let editingUserEmail = "";
+let expandedLeaderBoardUserEmail = "";
+let leaderBoardDetailMode = "profile";
 let activeSection = "home";
 let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
@@ -3433,6 +3439,132 @@ function renderLeaderBoardPeriodControls() {
   });
 }
 
+function closeLeaderBoardUserDetail() {
+  expandedLeaderBoardUserEmail = "";
+  leaderBoardDetailMode = "profile";
+  if (leaderboardUserDetailPanelEl) leaderboardUserDetailPanelEl.hidden = true;
+  if (leaderboardUserDetailBodyEl) leaderboardUserDetailBodyEl.innerHTML = "";
+}
+
+function getLeaderBoardSelectedUser() {
+  return userRoster.find((user) => normalizeEmail(user.email) === expandedLeaderBoardUserEmail) || null;
+}
+
+function appendLeaderBoardTradeCell(row, value, className = "") {
+  const cell = document.createElement("td");
+  if (className) cell.className = className;
+  cell.textContent = value;
+  row.append(cell);
+}
+
+function createLeaderBoardTradeHistoryPanel(user) {
+  const entries = getUserLeaderBoardEntries(user)
+    .slice()
+    .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
+  const wrap = document.createElement("div");
+  const summary = document.createElement("div");
+  const tableWrap = document.createElement("div");
+  const table = document.createElement("table");
+  const thead = document.createElement("thead");
+  const tbody = document.createElement("tbody");
+  const closedPnl = entries.filter(isClosingTransaction).reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const openTrades = getUserOpenPaperTrades(user, entries);
+  const openedCount = entries.filter(isOpeningTransaction).length;
+  const closedCount = entries.filter(isClosingTransaction).length;
+
+  wrap.className = "leaderboard-trade-detail";
+  summary.className = "ledger-totals";
+  summary.innerHTML = `
+    <div><span class="stat-label">Period</span><strong>${escapeHtml(LEADERBOARD_PERIOD_OPTIONS[leaderboardPeriodMode]?.label || "All Time")}</strong></div>
+    <div><span class="stat-label">Closed P/L</span><strong class="${closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(closedPnl)}</strong></div>
+    <div><span class="stat-label">Opened / closed</span><strong>${openedCount} / ${closedCount}</strong></div>
+    <div><span class="stat-label">Open trades</span><strong>${openTrades.length}</strong></div>
+  `;
+
+  tableWrap.className = "history-wrap";
+  table.className = "history-table leaderboard-detail-table";
+  thead.innerHTML = `
+    <tr>
+      <th>Time</th>
+      <th>Action</th>
+      <th>Side</th>
+      <th>Step</th>
+      <th>Contract</th>
+      <th>Entry</th>
+      <th>Exit</th>
+      <th>Target</th>
+      <th>Stop</th>
+      <th>Net P/L</th>
+    </tr>
+  `;
+
+  if (!entries.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 10;
+    cell.textContent = "No paper trades for this leaderboard time window.";
+    row.append(cell);
+    tbody.append(row);
+  } else {
+    entries.slice(0, 75).forEach((entry) => {
+      const row = document.createElement("tr");
+      const pnl = getDisplayPnl(entry);
+      const detail = getEntryDetail(entry);
+      appendLeaderBoardTradeCell(row, formatTradeTime(entry.time));
+      appendLeaderBoardTradeCell(row, entry.action || "Trade");
+      appendLeaderBoardTradeCell(row, entry.side ? formatSide(entry.side) : "-");
+      appendLeaderBoardTradeCell(row, entry.step ? `#${entry.step}` : "-");
+      appendLeaderBoardTradeCell(row, entry.contract || "-");
+      appendLeaderBoardTradeCell(row, Number.isFinite(detail.entryPrice) ? formatPrice(detail.entryPrice) : getTransactionEntryPriceDisplay(entry));
+      appendLeaderBoardTradeCell(row, Number.isFinite(detail.exitPrice) ? formatPrice(detail.exitPrice) : isClosingTransaction(entry) ? formatOptionalMoney(entry.price) : "Open");
+      appendLeaderBoardTradeCell(row, Number.isFinite(detail.targetPrice) ? formatPrice(detail.targetPrice) : UNAVAILABLE_TEXT);
+      appendLeaderBoardTradeCell(row, Number.isFinite(detail.stopPrice) ? formatPrice(detail.stopPrice) : UNAVAILABLE_TEXT);
+      appendLeaderBoardTradeCell(row, isClosingTransaction(entry) ? formatSignedMoney(pnl) : "$0.00", pnl >= 0 ? "gain" : "loss");
+      tbody.append(row);
+    });
+  }
+
+  table.append(thead, tbody);
+  tableWrap.append(table);
+  wrap.append(summary, tableWrap);
+  return wrap;
+}
+
+function renderLeaderBoardUserDetail() {
+  if (!leaderboardUserDetailPanelEl || !leaderboardUserDetailTitleEl || !leaderboardUserDetailBodyEl) return;
+  const user = getLeaderBoardSelectedUser();
+  leaderboardUserDetailBodyEl.innerHTML = "";
+
+  if (!user) {
+    closeLeaderBoardUserDetail();
+    return;
+  }
+
+  const suffix = leaderBoardDetailMode === "trades" ? "trades" : "profile";
+  leaderboardUserDetailTitleEl.textContent = `${user.name || "Unnamed user"} / ${user.email || "-"} / ${suffix}`;
+  try {
+    leaderboardUserDetailBodyEl.append(
+      leaderBoardDetailMode === "trades"
+        ? createLeaderBoardTradeHistoryPanel(user)
+        : createUserProfilePanel(user)
+    );
+  } catch (error) {
+    console.error("Leader board detail render failed", error);
+    const fallback = document.createElement("div");
+    fallback.className = "user-profile-render-error";
+    fallback.textContent = `Detail could not render: ${error?.message || "unknown error"}`;
+    leaderboardUserDetailBodyEl.append(fallback);
+  }
+  leaderboardUserDetailPanelEl.hidden = false;
+}
+
+function openLeaderBoardUserDetail(user, mode = "profile") {
+  expandedLeaderBoardUserEmail = normalizeEmail(user?.email);
+  leaderBoardDetailMode = mode === "trades" ? "trades" : "profile";
+  renderLeaderBoardUserDetail();
+  leaderboardUserDetailPanelEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 function getCumulativePnlSeries(user) {
   let total = 0;
   const cutoff = getLeaderBoardPeriodCutoff();
@@ -3604,14 +3736,16 @@ function renderLeaderBoard() {
     const rankCell = document.createElement("td");
     const rank = document.createElement("span");
     const userCell = document.createElement("td");
-    const profile = document.createElement("div");
+    const profile = document.createElement("button");
     const name = document.createElement("strong");
     const email = document.createElement("span");
 
     rank.className = "rank-badge";
     rank.textContent = String(rankByEmail.get(normalizeEmail(entry.email)) || "-");
     rankCell.append(rank);
-    profile.className = "user-profile";
+    profile.type = "button";
+    profile.className = "user-profile leaderboard-user-trigger";
+    profile.setAttribute("aria-label", `Open ${entry.name} profile`);
     name.textContent = entry.name;
     email.textContent = entry.email;
     profile.append(createUserAvatar(entry.user), name, email);
@@ -3621,7 +3755,15 @@ function renderLeaderBoard() {
       note.textContent = entry.groupNote;
       profile.append(note);
     }
+    profile.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "profile"));
     userCell.append(profile);
+
+    const tradeButton = document.createElement("button");
+    tradeButton.type = "button";
+    tradeButton.className = "leaderboard-trades-trigger";
+    tradeButton.textContent = `${entry.tradeCount} opened / ${entry.closedCount} closed`;
+    tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
+    tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
     [
       rankCell,
@@ -3634,7 +3776,7 @@ function renderLeaderBoard() {
         value: Number.isFinite(entry.expectancy) ? formatSignedMoney(entry.expectancy) : "-",
         className: Number.isFinite(entry.expectancy) ? (entry.expectancy >= 0 ? "gain" : "loss") : ""
       },
-      { value: `${entry.tradeCount} opened / ${entry.closedCount} closed` },
+      tradeButton,
       { value: entry.schedulerSummary },
       { value: entry.lastTradeTime ? formatRelativeDate(entry.lastTradeTime) : "No trades" }
     ].forEach((item) => {
@@ -3650,6 +3792,7 @@ function renderLeaderBoard() {
     leaderboardBodyEl.append(row);
   });
   drawLeaderBoardChart(rankedRows);
+  if (expandedLeaderBoardUserEmail) renderLeaderBoardUserDetail();
 }
 
 function getCurrentProfileStartCapital() {
@@ -11527,6 +11670,7 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
   saveLeaderBoardPeriodMode();
   renderLeaderBoard();
 });
+leaderboardUserDetailCloseEl?.addEventListener("click", closeLeaderBoardUserDetail);
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 refreshLiveLedgerEl?.addEventListener("click", () => loadSharedLiveTradeLedger());
 paperEquityInputEl.readOnly = true;
