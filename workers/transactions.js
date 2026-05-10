@@ -1937,6 +1937,11 @@ function normalizeCommodityIds(ids = ["oil"], fallback = ["oil"]) {
   return Array.isArray(fallback) ? fallback.filter((id) => SERVER_COMMODITIES[id]) : [];
 }
 
+function normalizeServerCommodityId(id) {
+  const normalized = String(id || "").trim().toLowerCase();
+  return SERVER_COMMODITIES[normalized] ? normalized : "";
+}
+
 function normalizeMarketTime(value, fallback) {
   const raw = String(value || "").trim();
   return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback;
@@ -2018,6 +2023,12 @@ function getOpenPaperTradesForUser(transactions = [], userEmail) {
       }
     });
   return Array.from(active.values());
+}
+
+function getEnabledCommodityOpenTrades(openTrades = [], enabledCommodities = []) {
+  const enabled = new Set((Array.isArray(enabledCommodities) ? enabledCommodities : []).map(normalizeServerCommodityId).filter(Boolean));
+  if (!enabled.size) return openTrades;
+  return openTrades.filter((trade) => enabled.has(normalizeServerCommodityId(trade.commodity)));
 }
 
 function shouldUseExclusiveMartingale(user = {}) {
@@ -2712,7 +2723,8 @@ async function runPaperTradingScheduler(env, options = {}) {
 
       run.evaluatedUsers += 1;
       const openTrades = getOpenPaperTradesForUser(transactions, email);
-      let activeOpenCount = openTrades.length;
+      const enabledOpenTrades = getEnabledCommodityOpenTrades(openTrades, schedulerSettings.commodities);
+      let activeOpenCount = enabledOpenTrades.length;
       const strategySettings = getServerStrategySettings(user);
       const exclusiveMartingale = shouldUseExclusiveMartingale(user);
       let lastDecision = "No eligible commodities evaluated";
@@ -2802,9 +2814,10 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
 
-        const hasCommodityOpen = getOpenPaperTradesForUser(transactions, email).some((trade) => trade.commodity === commodity);
+        const latestEnabledOpenTrades = getEnabledCommodityOpenTrades(getOpenPaperTradesForUser(transactions, email), schedulerSettings.commodities);
+        const hasCommodityOpen = latestEnabledOpenTrades.some((trade) => normalizeServerCommodityId(trade.commodity) === commodity);
         if (hasCommodityOpen) continue;
-        if (exclusiveMartingale && getOpenPaperTradesForUser(transactions, email).length > 0) {
+        if (exclusiveMartingale && latestEnabledOpenTrades.length > 0) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: martingale sequence already has an open trade`;
           continue;
         }

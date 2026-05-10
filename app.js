@@ -9879,8 +9879,12 @@ function getCurrentUserActivePaperTrades() {
   return Array.from(active.values());
 }
 
+function getCurrentUserEnabledActivePaperTrades() {
+  return getCurrentUserActivePaperTrades().filter((trade) => userCanTradeCommodity(trade.commodity));
+}
+
 function getBlockingOpenPaperTradeForNewEntry(commodity) {
-  const activeTrades = getCurrentUserActivePaperTrades();
+  const activeTrades = getCurrentUserEnabledActivePaperTrades();
   const sameCommodity = activeTrades.find((trade) => trade.commodity === commodity);
   if (sameCommodity) return sameCommodity;
 
