@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-pr-ledger-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-user-strategy-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -1520,6 +1520,28 @@
             </table>
           </div>
         </div>
+        <div class="paper-ledger comparison-ledger">
+          <h2>Paper vs Real comparison</h2>
+          <div class="ledger-totals" aria-label="Paper versus real totals">
+            <div>
+              <span class="stat-label">Paper closed P/L</span>
+              <strong id="compare-paper-pnl">$0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Real closed P/L</span>
+              <strong id="compare-real-pnl">$0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Difference</span>
+              <strong id="compare-difference">$0.00</strong>
+            </div>
+            <div>
+              <span class="stat-label">Records</span>
+              <strong id="compare-records">0 P / 0 R</strong>
+            </div>
+          </div>
+          <div class="edge-breakdown" id="paper-real-breakdown" aria-label="Paper versus real breakdown"></div>
+        </div>
       </section>
 
       <section class="band advisory-lab" data-app-section="advisories">
@@ -1682,6 +1704,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-pr-ledger-1"></script>
+  <script src="./app.js?v=comhedge-user-strategy-1"></script>
 </body>
 </html>

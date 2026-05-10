@@ -627,7 +627,7 @@ body {
 .user-stat-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(220px, 420px);
 }
 
 .user-stat-card {
@@ -1236,20 +1236,13 @@ body {
 }
 
 .profile-commodity-row {
-  align-items: center;
+  align-items: stretch;
   background: var(--panel-soft);
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 8px;
   display: grid;
   gap: 14px;
-  grid-template-columns:
-    minmax(120px, 0.8fr)
-    minmax(132px, 0.8fr)
-    minmax(130px, 0.8fr)
-    repeat(4, minmax(108px, 0.65fr))
-    minmax(160px, 1fr)
-    minmax(120px, 0.65fr)
-    minmax(120px, 0.65fr);
+  grid-template-columns: repeat(2, minmax(180px, 1fr));
   padding: 12px 14px;
 }
 
@@ -1267,6 +1260,7 @@ body {
   align-items: center;
   display: flex;
   gap: 10px;
+  grid-column: 1 / -1;
 }
 
 .profile-commodity-name input {
@@ -1283,6 +1277,17 @@ body {
   gap: 10px;
   min-height: 40px;
   padding: 8px 10px;
+}
+
+.profile-copy-strategy {
+  background: rgba(37, 99, 235, 0.08);
+  border: 1px solid rgba(96, 165, 250, 0.18);
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  margin: 14px 28px 0;
+  padding: 12px;
 }
 
 .profile-commodity-paper-field input {

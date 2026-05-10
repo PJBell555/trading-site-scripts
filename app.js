@@ -191,6 +191,11 @@ const liveLedgerStatusEl = document.querySelector("#live-ledger-status");
 const refreshLiveLedgerEl = document.querySelector("#refresh-live-ledger");
 const liveAgentSelectEl = document.querySelector("#live-agent-select");
 const liveChannelSelectEl = document.querySelector("#live-channel-select");
+const comparePaperPnlEl = document.querySelector("#compare-paper-pnl");
+const compareRealPnlEl = document.querySelector("#compare-real-pnl");
+const compareDifferenceEl = document.querySelector("#compare-difference");
+const compareRecordsEl = document.querySelector("#compare-records");
+const paperRealBreakdownEl = document.querySelector("#paper-real-breakdown");
 const advisoryHistoryStatusEl = document.querySelector("#advisory-history-status");
 const advisoryCommodityFiltersEl = document.querySelector("#advisory-commodity-filters");
 const advisoryPeriodFiltersEl = document.querySelector("#advisory-period-filters");
@@ -359,6 +364,8 @@ const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const PAPER_TRADE_MODE = "P";
 const REAL_TRADE_MODE = "R";
+const DEFAULT_NON_EXEMPT_USER_EQUITY = 1000;
+const OIL_ONLY_COMMODITIES = ["oil"];
 const ADVISORY_SCORE_THRESHOLD_KEY = "atlas-advisory-score-threshold";
 const MANUAL_CONVICTION_OVERRIDES_KEY = "comhedge-manual-conviction-overrides-v1";
 const ADVISORY_HISTORY_LOCAL_KEY = "comhedge-advisory-history-v1";
@@ -2279,6 +2286,37 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function isProtectedAccountBalanceUser(user = {}) {
+  const email = normalizeEmail(user.email);
+  const name = String(user.name || "").trim().toLowerCase();
+  return email === "peter@pjbell.com" || name === "peter bell" || name === "christopher roberts";
+}
+
+function getDefaultUserEquity(user = {}, fallback = PAPER_START_EQUITY) {
+  const value = Number(user.paperBaseEquity ?? fallback);
+  if (isProtectedAccountBalanceUser(user)) {
+    return Number.isFinite(value) ? Math.max(0, value) : PAPER_START_EQUITY;
+  }
+  return DEFAULT_NON_EXEMPT_USER_EQUITY;
+}
+
+function buildOilOnlyAllocations(startCapital) {
+  return commodities.reduce((allocations, { id }) => {
+    allocations[id] = { startCapital: id === "oil" ? Math.max(0, Number(startCapital) || 0) : 0 };
+    return allocations;
+  }, {});
+}
+
+function normalizeOilOnlyPaperTrading(settings = {}, fallback = {}, riskPct = PAPER_DEFAULT_RISK_PCT) {
+  const normalized = normalizeServerPaperTrading(settings, fallback);
+  return {
+    ...normalized,
+    enabled: true,
+    commodities: OIL_ONLY_COMMODITIES.slice(),
+    riskPct: Number.isFinite(Number(normalized.riskPct)) ? normalized.riskPct : riskPct
+  };
+}
+
 function formatNumberInput(value, decimals = 2) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "";
@@ -2368,22 +2406,25 @@ function findRegisteredUserByEmail(email) {
 function normalizeUserRecord(user, fallback = {}) {
   const email = normalizeEmail(user?.email || fallback.email);
   if (!email) return null;
-  const profileEquity = Number(user?.paperBaseEquity ?? fallback.paperBaseEquity ?? PAPER_START_EQUITY);
+  const profileIdentity = {
+    name: user?.name || fallback.name || "",
+    email,
+    paperBaseEquity: user?.paperBaseEquity ?? fallback.paperBaseEquity
+  };
+  const profileEquity = getDefaultUserEquity(profileIdentity, fallback.paperBaseEquity ?? PAPER_START_EQUITY);
   const profileRiskPct = Number(user?.paperRiskPct ?? fallback.paperRiskPct ?? PAPER_DEFAULT_RISK_PCT);
   const avatarDataUrl = String(user?.avatarDataUrl || fallback.avatarDataUrl || "");
   const sessionHistory = Array.isArray(user?.sessionHistory)
     ? user.sessionHistory
     : Array.isArray(fallback.sessionHistory) ? fallback.sessionHistory : [];
-  const commoditiesForUser = normalizeCommodityIds(user?.commodities ?? fallback.commodities);
+  const commoditiesForUser = OIL_ONLY_COMMODITIES.slice();
   const commodityAllocations = normalizeCommodityAllocations(
-    user?.commodityAllocations ?? fallback.commodityAllocations,
+    buildOilOnlyAllocations(profileEquity),
     commoditiesForUser,
     profileEquity
   );
   const commodityTradeTerms = normalizeCommodityTradeTermsMap(user?.commodityTradeTerms ?? fallback.commodityTradeTerms);
-  const defaultServerPaperTrading = ["peter@pjbell.com", "ai4ses@gmail.com"].includes(email)
-    ? { enabled: true, commodities: ["oil"], riskPct: profileRiskPct, maxOpenTrades: 1, entryThreshold: PAPER_MIN_CONVICTION }
-    : {};
+  const defaultServerPaperTrading = { enabled: true, commodities: OIL_ONLY_COMMODITIES, riskPct: profileRiskPct, maxOpenTrades: 1, entryThreshold: PAPER_MIN_CONVICTION };
 
   return {
     id: user?.id || fallback.id || `user-${email.replace(/[^a-z0-9]+/g, "-")}`,
@@ -2401,7 +2442,7 @@ function normalizeUserRecord(user, fallback = {}) {
     strategy: normalizeUserStrategy(user?.strategy ?? fallback.strategy),
     strategyHistory: normalizeStrategyHistory(user?.strategyHistory ?? fallback.strategyHistory),
     brokerAccount: normalizeBrokerAccount(user?.brokerAccount ?? fallback.brokerAccount),
-    paperTrading: normalizeServerPaperTrading(user?.paperTrading ?? defaultServerPaperTrading, fallback.paperTrading),
+    paperTrading: normalizeOilOnlyPaperTrading(user?.paperTrading ?? defaultServerPaperTrading, fallback.paperTrading, profileRiskPct),
     sessionHistory: sessionHistory
       .filter((session) => session && session.time)
       .slice(0, 25),
@@ -2430,11 +2471,22 @@ function loadUserRoster() {
     });
 
     userRoster.splice(0, userRoster.length, ...Array.from(usersByEmail.values()));
+    applyUserAccountDefaults();
     saveUserRoster();
   } catch (error) {
     userRoster.splice(0, userRoster.length, ...getDefaultUsers().map((user) => normalizeUserRecord(user)).filter(Boolean));
+    applyUserAccountDefaults();
     saveUserRoster();
   }
+}
+
+function applyUserAccountDefaults() {
+  userRoster.forEach((user) => {
+    user.paperBaseEquity = getDefaultUserEquity(user, user.paperBaseEquity);
+    user.commodities = OIL_ONLY_COMMODITIES.slice();
+    user.commodityAllocations = normalizeCommodityAllocations(buildOilOnlyAllocations(user.paperBaseEquity), OIL_ONLY_COMMODITIES, user.paperBaseEquity);
+    user.paperTrading = normalizeOilOnlyPaperTrading(user.paperTrading, {}, user.paperRiskPct);
+  });
 }
 
 function getCurrentAccessEmail() {
@@ -2871,16 +2923,17 @@ function saveCurrentUserPaperSettings() {
 
 function getSharedUserProfilesPayload() {
   return userRoster.reduce((profiles, user) => {
+    const paperBaseEquity = getDefaultUserEquity(user, user.paperBaseEquity);
     const profile = {
-      paperBaseEquity: Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : PAPER_START_EQUITY,
+      paperBaseEquity,
       paperRiskPct: Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_DEFAULT_RISK_PCT,
-      commodities: normalizeSavedCommodityIds(user.commodities),
-      commodityAllocations: normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity),
+      commodities: OIL_ONLY_COMMODITIES.slice(),
+      commodityAllocations: normalizeCommodityAllocations(buildOilOnlyAllocations(paperBaseEquity), OIL_ONLY_COMMODITIES, paperBaseEquity),
       commodityTradeTerms: normalizeCommodityTradeTermsMap(user.commodityTradeTerms),
       strategy: normalizeUserStrategy(user.strategy),
       strategyHistory: normalizeStrategyHistory(user.strategyHistory),
       brokerAccount: normalizeBrokerAccount(user.brokerAccount),
-      paperTrading: normalizeServerPaperTrading(user.paperTrading)
+      paperTrading: normalizeOilOnlyPaperTrading(user.paperTrading, {}, user.paperRiskPct)
     };
     if (String(user.avatarDataUrl || "").startsWith("data:image/")) {
       profile.avatarDataUrl = user.avatarDataUrl;
@@ -2913,25 +2966,21 @@ function mergeUserRecords(existing, incoming) {
       : incoming.createdAt,
     lastActiveAt: incomingLastActive > existingLastActive ? incoming.lastActiveAt : existing.lastActiveAt,
     sessions: Math.max(Number(existing.sessions) || 0, Number(incoming.sessions) || 0),
-    paperBaseEquity: Number.isFinite(Number(incoming.paperBaseEquity))
-      ? Number(incoming.paperBaseEquity)
-      : existing.paperBaseEquity,
+    paperBaseEquity: getDefaultUserEquity(incoming, existing.paperBaseEquity),
     paperRiskPct: Number.isFinite(Number(incoming.paperRiskPct))
       ? Number(incoming.paperRiskPct)
       : existing.paperRiskPct,
-    commodities: Array.isArray(incoming.commodities)
-      ? normalizeSavedCommodityIds(incoming.commodities)
-      : normalizeCommodityIds(existing.commodities),
+    commodities: OIL_ONLY_COMMODITIES.slice(),
     commodityAllocations: normalizeCommodityAllocations(
-      incoming.commodityAllocations || existing.commodityAllocations,
-      Array.isArray(incoming.commodities) ? incoming.commodities : existing.commodities,
-      Number.isFinite(Number(incoming.paperBaseEquity)) ? incoming.paperBaseEquity : existing.paperBaseEquity
+      buildOilOnlyAllocations(getDefaultUserEquity(incoming, existing.paperBaseEquity)),
+      OIL_ONLY_COMMODITIES,
+      getDefaultUserEquity(incoming, existing.paperBaseEquity)
     ),
     commodityTradeTerms: normalizeCommodityTradeTermsMap(incoming.commodityTradeTerms || existing.commodityTradeTerms),
     strategy: normalizeUserStrategy(incoming.strategy || existing.strategy),
     strategyHistory: normalizeStrategyHistory([...(incoming.strategyHistory || []), ...(existing.strategyHistory || [])]),
     brokerAccount: normalizeBrokerAccount(incoming.brokerAccount || existing.brokerAccount),
-    paperTrading: normalizeServerPaperTrading(incoming.paperTrading, existing.paperTrading),
+    paperTrading: normalizeOilOnlyPaperTrading(incoming.paperTrading, existing.paperTrading, incoming.paperRiskPct ?? existing.paperRiskPct),
     avatarDataUrl: incoming.avatarDataUrl || existing.avatarDataUrl || "",
     sessionHistory: Array.from(sessionsByKey.values())
       .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time))
@@ -2981,7 +3030,7 @@ function mergeSharedUserProfiles(profiles) {
     const profileEquity = Number(profile.paperBaseEquity);
     const profileRiskPct = Number(profile.paperRiskPct);
     if (Number.isFinite(profileEquity)) {
-      user.paperBaseEquity = Math.max(0, profileEquity);
+      user.paperBaseEquity = getDefaultUserEquity({ ...user, paperBaseEquity: profileEquity }, user.paperBaseEquity);
       changed = true;
     }
     if (Number.isFinite(profileRiskPct)) {
@@ -2989,14 +3038,14 @@ function mergeSharedUserProfiles(profiles) {
       changed = true;
     }
     if (Array.isArray(profile.commodities)) {
-      const nextCommodities = normalizeSavedCommodityIds(profile.commodities);
+      const nextCommodities = OIL_ONLY_COMMODITIES.slice();
       if (JSON.stringify(nextCommodities) !== JSON.stringify(normalizeCommodityIds(user.commodities))) {
         user.commodities = nextCommodities;
         changed = true;
       }
     }
     if (profile.commodityAllocations && typeof profile.commodityAllocations === "object") {
-      const nextAllocations = normalizeCommodityAllocations(profile.commodityAllocations, user.commodities, user.paperBaseEquity);
+      const nextAllocations = normalizeCommodityAllocations(buildOilOnlyAllocations(user.paperBaseEquity), OIL_ONLY_COMMODITIES, user.paperBaseEquity);
       if (JSON.stringify(nextAllocations) !== JSON.stringify(normalizeCommodityAllocations(user.commodityAllocations, user.commodities, user.paperBaseEquity))) {
         user.commodityAllocations = nextAllocations;
         changed = true;
@@ -3031,7 +3080,7 @@ function mergeSharedUserProfiles(profiles) {
       }
     }
     if (profile.paperTrading && typeof profile.paperTrading === "object") {
-      const nextPaperTrading = normalizeServerPaperTrading(profile.paperTrading, user.paperTrading);
+      const nextPaperTrading = normalizeOilOnlyPaperTrading(profile.paperTrading, user.paperTrading, user.paperRiskPct);
       if (JSON.stringify(nextPaperTrading) !== JSON.stringify(normalizeServerPaperTrading(user.paperTrading))) {
         user.paperTrading = nextPaperTrading;
         changed = true;
@@ -3858,6 +3907,41 @@ function saveUserStrategySettings(user, container) {
     : `${user.name || user.email} strategy saved`;
 }
 
+function copyStrategyFromUser(targetUser, sourceEmail, container) {
+  const sourceUser = userRoster.find((candidate) => normalizeEmail(candidate.email) === normalizeEmail(sourceEmail));
+  if (!targetUser || !sourceUser || normalizeEmail(sourceUser.email) === normalizeEmail(targetUser.email)) {
+    userManagementStatusEl.textContent = "Choose another user to copy from";
+    return;
+  }
+
+  const before = normalizeUserStrategy(targetUser.strategy);
+  const copied = normalizeUserStrategy(sourceUser.strategy);
+  const changed = JSON.stringify(before) !== JSON.stringify(copied);
+  targetUser.strategy = copied;
+  if (!changed) {
+    userManagementStatusEl.textContent = `${targetUser.name || targetUser.email} already uses that strategy`;
+    return;
+  }
+  targetUser.strategyHistory = normalizeStrategyHistory([
+    {
+      id: `strategy-copy-${Date.now()}`,
+      changedAt: new Date().toISOString(),
+      changedByName: getCurrentUserProfile()?.name || "Admin",
+      changedByEmail: getCurrentLedgerEmail(),
+      summary: `Copied strategy from ${sourceUser.name || sourceUser.email}`,
+      detail: `Copied strategy settings from ${sourceUser.name || sourceUser.email} into ${targetUser.name || targetUser.email}.`,
+      before,
+      after: copied
+    },
+    ...(targetUser.strategyHistory || [])
+  ]);
+  saveUserRoster();
+  saveSharedSettings();
+  renderCurrentUserStrategy();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${targetUser.name || targetUser.email} copied strategy from ${sourceUser.name || sourceUser.email}`;
+}
+
 function saveUserBrokerAccountSettings(user, container) {
   user.brokerAccount = normalizeBrokerAccount({
     provider: container.querySelector("[data-broker-field='provider']")?.value,
@@ -4503,9 +4587,23 @@ function createUserProfilePanel(user) {
 
   const strategy = normalizeUserStrategy(user.strategy);
   const strategyHistory = normalizeStrategyHistory(user.strategyHistory);
+  const strategyCopyOptions = userRoster
+    .filter((candidate) => normalizeEmail(candidate.email) !== normalizeEmail(user.email))
+    .map((candidate) => `<option value="${escapeHtml(candidate.email)}">${escapeHtml(candidate.name || candidate.email)} / ${escapeHtml(candidate.email)}</option>`)
+    .join("");
   strategyCard.className = "user-profile-subcard profile-strategy-card";
   strategyCard.innerHTML = `
     <h3>Strategy, Skills, and Open Brain</h3>
+    <div class="profile-copy-strategy">
+      <label>
+        Copy another user's strategy
+        <select data-strategy-copy-source>
+          <option value="">Choose user...</option>
+          ${strategyCopyOptions}
+        </select>
+      </label>
+      <button class="filter-button" type="button" data-copy-strategy>Copy strategy</button>
+    </div>
     <div class="profile-strategy-grid">
       <label>
         Strategy name
@@ -4617,6 +4715,9 @@ function createUserProfilePanel(user) {
   strategySave.className = "filter-button profile-commodity-save";
   strategySave.textContent = "Save strategy";
   strategySave.addEventListener("click", () => saveUserStrategySettings(user, strategyCard));
+  strategyCard.querySelector("[data-copy-strategy]")?.addEventListener("click", () => {
+    copyStrategyFromUser(user, strategyCard.querySelector("[data-strategy-copy-source]")?.value, strategyCard);
+  });
   strategyCard.append(strategySave);
 
   const brokerAccount = normalizeBrokerAccount(user.brokerAccount);
@@ -5350,11 +5451,13 @@ function addUser(name, email) {
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
     sessions: 0,
-    paperBaseEquity: PAPER_START_EQUITY,
+    paperBaseEquity: DEFAULT_NON_EXEMPT_USER_EQUITY,
     paperRiskPct: PAPER_DEFAULT_RISK_PCT,
+    commodities: OIL_ONLY_COMMODITIES.slice(),
+    commodityAllocations: buildOilOnlyAllocations(DEFAULT_NON_EXEMPT_USER_EQUITY),
     paperTrading: {
-      enabled: false,
-      commodities: []
+      enabled: true,
+      commodities: OIL_ONLY_COMMODITIES.slice()
     },
     enabled: true
   });
@@ -7141,14 +7244,77 @@ function appendLiveTradeDetail(parent, label, value) {
   parent.append(item);
 }
 
+function isLiveClosingTrade(trade) {
+  const action = String(trade?.action || "").toUpperCase();
+  return action.includes("CLOSE") || action.includes("EXIT") || action.includes("COVER") || Number(trade?.pnl) !== 0;
+}
+
+function getScopedLiveTradeEntries() {
+  return liveTradeLedger.filter((trade) => trade.userEmail === getCurrentLedgerEmail());
+}
+
+function summarizePnlBySide(entries, getPnl) {
+  return entries.reduce((summary, entry) => {
+    const side = String(entry.side || "").toLowerCase() === "short" ? "short" : "long";
+    summary[side].count += 1;
+    summary[side].pnl += Number(getPnl(entry)) || 0;
+    return summary;
+  }, {
+    long: { count: 0, pnl: 0 },
+    short: { count: 0, pnl: 0 }
+  });
+}
+
+function renderPaperRealComparison() {
+  if (!comparePaperPnlEl || !compareRealPnlEl || !compareDifferenceEl || !compareRecordsEl || !paperRealBreakdownEl) return;
+
+  const paperClosed = getUserScopedTransactions().filter(isClosingTransaction);
+  const realClosed = getScopedLiveTradeEntries().filter(isLiveClosingTrade);
+  const paperPnl = paperClosed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const realPnl = realClosed.reduce((total, trade) => total + (Number(trade.pnl) || 0), 0);
+  const difference = realPnl - paperPnl;
+  const paperBySide = summarizePnlBySide(paperClosed, getDisplayPnl);
+  const realBySide = summarizePnlBySide(realClosed, (trade) => Number(trade.pnl) || 0);
+
+  comparePaperPnlEl.textContent = formatSignedMoney(paperPnl);
+  compareRealPnlEl.textContent = formatSignedMoney(realPnl);
+  compareDifferenceEl.textContent = formatSignedMoney(difference);
+  compareRecordsEl.textContent = `${paperClosed.length} P / ${realClosed.length} R`;
+
+  [
+    [comparePaperPnlEl, paperPnl],
+    [compareRealPnlEl, realPnl],
+    [compareDifferenceEl, difference]
+  ].forEach(([el, value]) => {
+    el.classList.toggle("positive", value > 0);
+    el.classList.toggle("negative", value < 0);
+  });
+
+  paperRealBreakdownEl.innerHTML = ["long", "short"].map((side) => {
+    const paper = paperBySide[side];
+    const real = realBySide[side];
+    return `
+      <div class="edge-breakdown-row">
+        <span>${side === "long" ? "Long" : "Short"}</span>
+        <strong>${formatSignedMoney(paper.pnl)} P / ${formatSignedMoney(real.pnl)} R</strong>
+        <span>${paper.count} paper close${paper.count === 1 ? "" : "s"} / ${real.count} real close${real.count === 1 ? "" : "s"}</span>
+      </div>
+    `;
+  }).join("");
+}
+
 function renderLiveTradeLedger() {
-  if (!liveTradeHistoryEl) return;
+  if (!liveTradeHistoryEl) {
+    renderPaperRealComparison();
+    return;
+  }
 
   renderUserContextWithAvatar(liveUserContextEl, getLiveUserContextText());
   liveTradeHistoryEl.innerHTML = "";
-  const scopedTrades = liveTradeLedger.filter((trade) => trade.userEmail === getCurrentLedgerEmail());
+  const scopedTrades = getScopedLiveTradeEntries();
   const totalPl = scopedTrades.reduce((total, trade) => total + (Number(trade.pnl) || 0), 0);
   const committed = scopedTrades.reduce((total, trade) => total + (Number(trade.tradeValue) || 0), 0);
+  renderPaperRealComparison();
 
   renderPnlWithCapital(liveTotalPlEl, totalPl);
   renderPnlWithCapital(liveFilteredPlEl, totalPl);
@@ -7225,6 +7391,33 @@ async function addLiveTradeFromForm(event) {
   event.preventDefault();
   const formData = new FormData(liveTradeFormEl);
   const commodity = formData.get("commodity") || commoditySelect.value || "oil";
+  const action = String(formData.get("action") || "").trim();
+  const side = String(formData.get("side") || "").trim();
+  const contract = String(formData.get("contract") || marketConfig[commodity]?.ticker || "").trim();
+  const contracts = Number(formData.get("contracts"));
+  const entryPrice = Number(formData.get("entryPrice"));
+  const limitPrice = Number(formData.get("limitPrice"));
+  const exitPrice = Number(formData.get("exitPrice"));
+  const targetPrice = Number(formData.get("targetPrice"));
+  const stopPrice = Number(formData.get("stopPrice"));
+  const isClose = /close|cover|exit/i.test(action);
+  const hasTradePrice = isClose
+    ? Number.isFinite(exitPrice) || Number.isFinite(entryPrice) || Number.isFinite(limitPrice)
+    : Number.isFinite(entryPrice) || Number.isFinite(limitPrice);
+
+  if (!contract || !side || !action || !Number.isFinite(contracts) || contracts <= 0 || !hasTradePrice) {
+    if (liveLedgerStatusEl) {
+      liveLedgerStatusEl.textContent = "Real trade needs contract, side, action, contracts, and an entry/exit price";
+    }
+    return;
+  }
+  if (!isClose && (!Number.isFinite(targetPrice) || !Number.isFinite(stopPrice))) {
+    if (liveLedgerStatusEl) {
+      liveLedgerStatusEl.textContent = "Opening real trades need target and stop prices";
+    }
+    return;
+  }
+
   const trade = normalizeLiveTradeEntry({
     id: `live-${Date.now()}`,
     time: new Date().toISOString(),
@@ -7232,10 +7425,10 @@ async function addLiveTradeFromForm(event) {
     userName: getCurrentUserProfile()?.name || "",
     commodity,
     commodityName: getCommodityName(commodity),
-    contract: String(formData.get("contract") || marketConfig[commodity]?.ticker || "").trim(),
+    contract,
     orderId: String(formData.get("orderId") || "").trim(),
-    side: formData.get("side"),
-    action: formData.get("action"),
+    side,
+    action,
     orderType: formData.get("orderType"),
     contracts: formData.get("contracts"),
     tradeValue: formData.get("tradeValue"),
@@ -10400,6 +10593,7 @@ function renderTransactionDetail(entry) {
 }
 
 function renderPaperTrading(commodity, signal, tradePlan) {
+  renderPaperRealComparison();
   const scopedTransactions = getUserScopedTransactions();
   const openTrade = getOpenPaperTrade(commodity);
   const openTrades = Array.from(openPaperTrades.values())

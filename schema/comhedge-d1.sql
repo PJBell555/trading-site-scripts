@@ -258,3 +258,14 @@ CREATE INDEX IF NOT EXISTS idx_open_brain_events_user
 
 CREATE INDEX IF NOT EXISTS idx_open_brain_events_commodity
   ON open_brain_events (commodity, event_time DESC);
+
+CREATE TABLE IF NOT EXISTS user_strategy_records (
+  user_email TEXT PRIMARY KEY,
+  user_name TEXT,
+  strategy_json TEXT NOT NULL DEFAULT '{}',
+  strategy_history_json TEXT NOT NULL DEFAULT '[]',
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_strategy_records_updated
+  ON user_strategy_records (updated_at DESC);

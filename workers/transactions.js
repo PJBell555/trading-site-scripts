@@ -2983,12 +2983,109 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
   };
 }
 
+async function ensureUserStrategyRecordsTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS user_strategy_records (
+      user_email TEXT PRIMARY KEY,
+      user_name TEXT,
+      strategy_json TEXT NOT NULL DEFAULT '{}',
+      strategy_history_json TEXT NOT NULL DEFAULT '[]',
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_user_strategy_records_updated
+    ON user_strategy_records (updated_at DESC)
+  `).run();
+}
+
+async function upsertUserStrategyRecordsD1(env, settings = {}) {
+  await ensureUserStrategyRecordsTable(env);
+  const profiles = settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+    ? settings.userProfiles
+    : {};
+  const usersByEmail = new Map((Array.isArray(settings.users) ? settings.users : []).map((user) => [
+    normalizeEmail(user.email),
+    user
+  ]));
+  const emails = new Set([
+    ...Object.keys(profiles).map(normalizeEmail),
+    ...usersByEmail.keys()
+  ]);
+  const now = new Date().toISOString();
+
+  for (const email of emails) {
+    if (!email) continue;
+    const profile = profiles[email] || {};
+    const user = usersByEmail.get(email) || {};
+    const strategy = profile.strategy || user.strategy;
+    const strategyHistory = Array.isArray(profile.strategyHistory)
+      ? profile.strategyHistory
+      : Array.isArray(user.strategyHistory) ? user.strategyHistory : [];
+    if (!strategy && !strategyHistory.length) continue;
+
+    await env.DB.prepare(`
+      INSERT INTO user_strategy_records (user_email, user_name, strategy_json, strategy_history_json, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(user_email) DO UPDATE SET
+        user_name = excluded.user_name,
+        strategy_json = excluded.strategy_json,
+        strategy_history_json = excluded.strategy_history_json,
+        updated_at = excluded.updated_at
+    `).bind(
+      email,
+      user.name || profile.name || "",
+      JSON.stringify(strategy || {}),
+      JSON.stringify(strategyHistory),
+      now
+    ).run();
+  }
+}
+
+async function mergeUserStrategyRecordsD1(env, settings = {}) {
+  await ensureUserStrategyRecordsTable(env);
+  const result = await env.DB.prepare(`
+    SELECT user_email, user_name, strategy_json, strategy_history_json, updated_at
+    FROM user_strategy_records
+  `).all();
+  const profiles = {
+    ...(settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles) ? settings.userProfiles : {})
+  };
+  const strategyRecords = {};
+
+  getResults(result).forEach((row) => {
+    const email = normalizeEmail(row.user_email);
+    if (!email) return;
+    const strategy = parseStoredJson(row.strategy_json, {});
+    const strategyHistory = parseStoredJson(row.strategy_history_json, []);
+    profiles[email] = {
+      ...(profiles[email] || {}),
+      strategy,
+      strategyHistory
+    };
+    strategyRecords[email] = {
+      userEmail: email,
+      userName: row.user_name || "",
+      strategy,
+      strategyHistory,
+      updatedAt: row.updated_at
+    };
+  });
+
+  return {
+    ...settings,
+    userProfiles: profiles,
+    userStrategyRecords: strategyRecords
+  };
+}
+
 async function handleD1Settings(env, request, origin) {
   if (request.method === "GET") {
     const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const enrichedSettings = await mergeUserStrategyRecordsD1(env, settings);
     return jsonResponse({
       ...defaultSettingsPayload(),
-      ...settings,
+      ...enrichedSettings,
       source: "cloudflare-d1-shared-settings",
       storage: "d1"
     }, 200, origin);
@@ -3002,6 +3099,7 @@ async function handleD1Settings(env, request, origin) {
   const current = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
   const settings = mergeSettingsPayload(current, body);
   await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, settings);
+  await upsertUserStrategyRecordsD1(env, settings);
 
   return jsonResponse({
     commit: null,
