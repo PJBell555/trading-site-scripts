@@ -5258,7 +5258,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     ? `Waiting ${signal.conviction}/${tradePlan.entryThreshold}`
     : signalSide
     ? `${signalSide === "short" ? "Sell short" : "Buy"} queued`
-    : "Waiting for signal";
+    : "Waiting for advisory";
   const queuedPrice = signalSide === "short" ? tradePlan.entryPrice : tradePlan.buyPrice;
 
   const nextRowTooltip = "Preview of the next planned trade. This row stays here until a real trade opens, then it's replaced by an Open (O) row.";
@@ -10789,7 +10789,9 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   } else if (signalSide && signal.conviction >= tradePlan.learnedThreshold) {
     paperStatusEl.textContent = isCoinbaseSandboxEnabled() ? `Sandbox ready to ${signalSide}` : `Ready to ${signalSide}`;
   } else {
-    paperStatusEl.textContent = `Waiting for signal > ${tradePlan.learnedThreshold}`;
+    paperStatusEl.textContent = signalSide
+      ? `Waiting for advisory > ${tradePlan.learnedThreshold}`
+      : "Waiting for advisory";
   }
 
   if (openTrade) {
