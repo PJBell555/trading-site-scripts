@@ -314,6 +314,39 @@ const opinionPromptLabels = {
   macro: "Macro Cross-Check"
 };
 
+const DEFAULT_SECOND_OPINION_ANALYST_SKILLS = [
+  {
+    id: "technician",
+    name: "Master Technician Analysis",
+    body: "Review price trend, VWAP behavior, momentum, support, resistance, and setup quality. Confirm only when the technical structure supports the main advisory.",
+    tags: ["analyst", "second-opinion", "technical"],
+    adoptAdvisory: false,
+    adoptOpinion: true,
+    createdAt: "2026-05-10T00:00:00.000Z",
+    updatedAt: "2026-05-10T00:00:00.000Z"
+  },
+  {
+    id: "risk-manager",
+    name: "Risk Manager Challenge",
+    body: "Challenge the advisory from a capital-preservation view. Look for weak conviction, poor reward/risk, unstable direction, overnight gap risk, and conditions where waiting is better than forcing a trade.",
+    tags: ["analyst", "second-opinion", "risk"],
+    adoptAdvisory: false,
+    adoptOpinion: true,
+    createdAt: "2026-05-10T00:00:00.000Z",
+    updatedAt: "2026-05-10T00:00:00.000Z"
+  },
+  {
+    id: "macro",
+    name: "Macro Cross-Check",
+    body: "Cross-check the commodity call against dollar pressure, inventory context, rates, geopolitics, energy headlines, and broad risk tone before confirming the advisory.",
+    tags: ["analyst", "second-opinion", "macro"],
+    adoptAdvisory: false,
+    adoptOpinion: true,
+    createdAt: "2026-05-10T00:00:00.000Z",
+    updatedAt: "2026-05-10T00:00:00.000Z"
+  }
+];
+
 const latestPrices = new Map();
 const latestPriceTimes = new Map();
 const latestPriceSources = new Map();
@@ -572,6 +605,7 @@ const SKILL_SYSTEM_DETAILS = {
 };
 const CUSTOM_SKILLS_KEY = "comhedge-custom-skills-v1";
 const DEFAULT_CUSTOM_SKILLS = [
+  ...DEFAULT_SECOND_OPINION_ANALYST_SKILLS,
   {
     id: "skill-short-bias-confirmation",
     name: "Require Short Bias Confirmation",
@@ -1240,13 +1274,29 @@ function formatPerformanceSummary(summary) {
   return `${formatSignedMoney(summary.netPnl)} / ${summary.closedCount} closed / ${winRate} win / ${expectancy} expectancy`;
 }
 
+function mergeDefaultCustomSkills(rows) {
+  const normalizedRows = (Array.isArray(rows) ? rows : []).map(normalizeCustomSkill).filter(Boolean);
+  const existingIds = new Set(normalizedRows.map((skill) => skill.id));
+  DEFAULT_CUSTOM_SKILLS.forEach((skill) => {
+    if (!existingIds.has(skill.id)) {
+      normalizedRows.push(normalizeCustomSkill(skill));
+      existingIds.add(skill.id);
+    }
+  });
+  return normalizedRows;
+}
+
 function loadCustomSkills() {
   try {
     const stored = JSON.parse(window.localStorage.getItem(CUSTOM_SKILLS_KEY) || "null");
     const rows = Array.isArray(stored) ? stored : DEFAULT_CUSTOM_SKILLS;
-    customSkills.splice(0, customSkills.length, ...rows.map(normalizeCustomSkill).filter(Boolean));
+    customSkills.splice(0, customSkills.length, ...mergeDefaultCustomSkills(rows));
+    saveCustomSkills();
+    syncSecondOpinionPromptSettings();
   } catch (error) {
-    customSkills.splice(0, customSkills.length, ...DEFAULT_CUSTOM_SKILLS.map(normalizeCustomSkill).filter(Boolean));
+    customSkills.splice(0, customSkills.length, ...mergeDefaultCustomSkills(DEFAULT_CUSTOM_SKILLS));
+    saveCustomSkills();
+    syncSecondOpinionPromptSettings();
   }
 }
 
@@ -1257,6 +1307,21 @@ function saveCustomSkills() {
 function getAdoptedSkills(target = "advisory") {
   const key = target === "opinion" ? "adoptOpinion" : "adoptAdvisory";
   return customSkills.filter((skill) => skill[key]);
+}
+
+function getAdoptedOpinionAnalysts() {
+  return getAdoptedSkills("opinion");
+}
+
+function syncSecondOpinionPromptSettings(options = {}) {
+  const promptIds = getAdoptedOpinionAnalysts().map((skill) => skill.id);
+  sharedModelSettings.secondOpinionPrompts = promptIds.length ? promptIds : ["technician"];
+  if (options.persist) saveModelSettings();
+}
+
+function getOpinionPromptLabel(promptId) {
+  const skill = customSkills.find((candidate) => candidate.id === promptId);
+  return skill?.name || opinionPromptLabels[promptId] || promptId;
 }
 
 function getAdoptedSkillSummary(target = "advisory", limit = 3) {
@@ -1445,8 +1510,10 @@ function saveCustomSkillFromForm(event) {
   }
   activeCustomSkillId = next.id;
   saveCustomSkills();
+  syncSecondOpinionPromptSettings({ persist: true });
   resetSkillEditor();
   renderSkillsWorkspace();
+  renderSecondOpinionControls();
   calculateSignal();
 }
 
@@ -1464,7 +1531,9 @@ function toggleCustomSkillAdoption(skillId, target) {
   skill.updatedAt = now;
   activeCustomSkillId = skill.id;
   saveCustomSkills();
+  syncSecondOpinionPromptSettings({ persist: true });
   renderSkillsWorkspace();
+  renderSecondOpinionControls();
   calculateSignal();
 }
 
@@ -1474,8 +1543,10 @@ function deleteCustomSkill(skillId) {
   customSkills.splice(index, 1);
   if (activeCustomSkillId === skillId) activeCustomSkillId = "";
   saveCustomSkills();
+  syncSecondOpinionPromptSettings({ persist: true });
   resetSkillEditor();
   renderSkillsWorkspace();
+  renderSecondOpinionControls();
   calculateSignal();
 }
 
@@ -1589,9 +1660,12 @@ function getSelectedSecondOpinionModels() {
 }
 
 function getSelectedSecondOpinionPrompts() {
-  const selected = Array.from(secondOpinionPromptsEl.querySelectorAll("input[type='checkbox']:checked"))
+  const selected = getAdoptedOpinionAnalysts().map((skill) => skill.id);
+  if (selected.length) return selected;
+  if (!secondOpinionPromptsEl) return ["technician"];
+  const selectedInputs = Array.from(secondOpinionPromptsEl.querySelectorAll("input[type='checkbox']:checked"))
     .map((input) => input.value);
-  return selected.length ? selected : ["technician"];
+  return selectedInputs.length ? selectedInputs : ["technician"];
 }
 
 function normalizeModelSettings(settings = {}) {
@@ -1629,6 +1703,7 @@ function applyModelSettings(settings = sharedModelSettings) {
 }
 
 function getSharedModelSettingsPayload() {
+  syncSecondOpinionPromptSettings();
   return normalizeModelSettings({
     ...sharedModelSettings,
     primaryModelId,
@@ -1879,7 +1954,6 @@ function renderPrimaryModelSelector() {
 
 function renderSecondOpinionControls() {
   const selectedModels = new Set(sharedModelSettings.secondOpinionModels || ["perplexity", "gemini", "claude"]);
-  const selectedPrompts = new Set(sharedModelSettings.secondOpinionPrompts || ["technician"]);
 
   secondOpinionModelsEl.innerHTML = "";
   advisoryModels
@@ -1901,11 +1975,49 @@ function renderSecondOpinionControls() {
       secondOpinionModelsEl.append(label);
     });
 
-  secondOpinionPromptsEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
-    input.checked = selectedPrompts.has(input.value);
-  });
+  if (secondOpinionPromptsEl) {
+    renderSecondOpinionAnalystSkills();
+  }
 
   updateSecondOpinionRunState();
+}
+
+function renderSecondOpinionAnalystSkills() {
+  if (!secondOpinionPromptsEl) return;
+  const analysts = getAdoptedOpinionAnalysts();
+  secondOpinionPromptsEl.innerHTML = "";
+
+  if (!analysts.length) {
+    const empty = document.createElement("div");
+    const strong = document.createElement("strong");
+    const span = document.createElement("span");
+    empty.className = "second-opinion-analyst-empty";
+    strong.textContent = "No analyst skills adopted";
+    span.textContent = "Adopt skills into second opinions from the Skills screen.";
+    empty.append(strong, span);
+    secondOpinionPromptsEl.append(empty);
+    return;
+  }
+
+  analysts.forEach((skill) => {
+    const button = document.createElement("button");
+    const label = document.createElement("span");
+    const name = document.createElement("strong");
+    const detail = document.createElement("span");
+    button.className = "model-choice second-opinion-analyst-choice";
+    button.type = "button";
+    button.dataset.skillId = skill.id;
+    label.className = "model-badge";
+    label.textContent = "S";
+    name.textContent = skill.name;
+    detail.textContent = "Adopted Skill - click to edit";
+    button.append(label, name, detail);
+    button.addEventListener("click", () => {
+      selectCustomSkill(skill.id);
+      setActiveSection("skills");
+    });
+    secondOpinionPromptsEl.append(button);
+  });
 }
 
 function updateSecondOpinionRunState() {
@@ -2384,7 +2496,7 @@ function renderSecondOpinionResults(modelIds, options = {}) {
     const scoreEl = document.createElement("strong");
     const meta = document.createElement("span");
     const list = document.createElement("ul");
-    const promptText = promptIds.map((id) => opinionPromptLabels[id]).join(", ");
+    const promptText = promptIds.map(getOpinionPromptLabel).join(", ");
     const directionText = tone === "long" ? "leans long" : tone === "short" ? "leans short" : "would wait";
 
     card.className = "opinion-card";
@@ -8760,6 +8872,9 @@ async function loadSharedSettings(manual = false) {
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
     applyModelSettings(settings.modelSettings || sharedModelSettings);
+    const cloudPromptIds = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []);
+    syncSecondOpinionPromptSettings();
+    const promptSettingsChanged = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []) !== cloudPromptIds;
     if (usersChanged || profilesChanged) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
@@ -8768,6 +8883,7 @@ async function loadSharedSettings(manual = false) {
     renderTokenCosts();
     setCoinbaseSandboxEnabled(true);
     calculateSignal();
+    if (promptSettingsChanged) saveSharedSettings();
     nextBackendSettingsSyncAt = 0;
     return true;
   } catch (error) {

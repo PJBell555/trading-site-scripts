@@ -389,7 +389,7 @@ const CRITIC_MODEL_DEFAULT = "openai/gpt-5-mini";
 const SERVER_DEFAULT_PRIMARY_MODEL_ID = "gpt-5-5";
 const SERVER_DEFAULT_CRITIC_MODEL_ID = "gpt-5-mini";
 const SERVER_SECOND_OPINION_DEFAULT_MODELS = ["perplexity", "gemini", "claude"];
-const SERVER_SECOND_OPINION_DEFAULT_PROMPTS = ["technician"];
+const SERVER_SECOND_OPINION_DEFAULT_PROMPTS = ["technician", "risk-manager", "macro"];
 const SERVER_SECOND_OPINION_MODELS = {
   "sonnet-4.6": { name: "Sonnet 4.6", tilt: -1 },
   "haiku-4.5": { name: "Haiku 4.5", tilt: 0 },

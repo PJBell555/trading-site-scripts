@@ -445,25 +445,12 @@
           <div class="model-choice-grid" id="second-opinion-models"></div>
         </div>
         <div>
-          <span class="stat-label">Character prompts</span>
-          <div class="prompt-choice-grid" id="second-opinion-prompts">
-            <label class="model-choice">
-              <input type="checkbox" value="technician" checked>
-              <span>Master Technician Analysis</span>
-            </label>
-            <label class="model-choice">
-              <input type="checkbox" value="risk-manager">
-              <span>Risk Manager Challenge</span>
-            </label>
-            <label class="model-choice">
-              <input type="checkbox" value="macro">
-              <span>Macro Cross-Check</span>
-            </label>
-          </div>
+          <span class="stat-label">Analyst skills</span>
+          <div class="prompt-choice-grid" id="second-opinion-prompts"></div>
         </div>
       </div>
       <div class="second-opinion-note">
-        Model and prompt selections are saved in Cloudflare and used by the paper-trading scheduler. The influence cards below show the deterministic second-opinion scores currently affecting the trade gate.
+        Model selections are saved in Cloudflare. Analyst prompts are adopted and edited from Skills, then used by the paper-trading scheduler. The influence cards below show the deterministic second-opinion scores currently affecting the trade gate.
       </div>
       <div class="second-opinion-results-head">
         <span class="stat-label" id="second-opinion-results-label">Influence values (0 opinions)</span>
@@ -1730,6 +1717,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-instability-strip-1"></script>
+  <script src="./app.js?v=comhedge-analyst-skills-1"></script>
 </body>
 </html>
