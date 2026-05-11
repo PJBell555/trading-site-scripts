@@ -1819,6 +1819,7 @@ function defaultSettingsPayload() {
     source: "cloudflare-github-shared-settings",
     coinbaseSandboxEnabled: false,
     modelSettings: normalizeServerModelSettings(),
+    appState: {},
     users: [],
     userProfiles: {}
   };
@@ -2135,7 +2136,7 @@ function getServerStrategySettings(user = {}) {
     type: String(strategy.type || "martingale-karpathy"),
     martingaleSteps: clamp(Math.round(Number(strategy.martingaleSteps) || 4), 1, 8),
     karpathyLoop: strategy.karpathyLoop !== false,
-    karpathyAutoApply: strategy.karpathyAutoApply === true,
+    karpathyAutoApply: strategy.karpathyAutoApply !== false,
     regimeAware: strategy.regimeAware !== false,
     flatMaxMartingaleSteps: clamp(Math.round(Number(strategy.flatMaxMartingaleSteps) || 2), 1, 8),
     flatSizeMultiplier: clamp(Number(strategy.flatSizeMultiplier) || 0.5, 0.1, 1),
@@ -3457,6 +3458,12 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
       ...(current.modelSettings && typeof current.modelSettings === "object" ? current.modelSettings : {}),
       ...(incoming.modelSettings && typeof incoming.modelSettings === "object" ? incoming.modelSettings : {})
     }),
+    appState: incoming.appState && typeof incoming.appState === "object" && !Array.isArray(incoming.appState)
+      ? {
+        ...(current.appState && typeof current.appState === "object" && !Array.isArray(current.appState) ? current.appState : {}),
+        ...incoming.appState
+      }
+      : current.appState || {},
     userProfiles: incoming.userProfiles && typeof incoming.userProfiles === "object" && !Array.isArray(incoming.userProfiles)
       ? mergeUserProfiles(current.userProfiles || {}, incoming.userProfiles)
       : current.userProfiles || {}
@@ -3907,6 +3914,16 @@ async function handleSettingsRoute(env, request, origin) {
     generatedAt: new Date().toISOString(),
     source: "cloudflare-github-shared-settings",
     coinbaseSandboxEnabled: Boolean(body.coinbaseSandboxEnabled),
+    modelSettings: normalizeServerModelSettings({
+      ...(payload.modelSettings && typeof payload.modelSettings === "object" ? payload.modelSettings : {}),
+      ...(body.modelSettings && typeof body.modelSettings === "object" ? body.modelSettings : {})
+    }),
+    appState: body.appState && typeof body.appState === "object" && !Array.isArray(body.appState)
+      ? {
+        ...(payload.appState && typeof payload.appState === "object" && !Array.isArray(payload.appState) ? payload.appState : {}),
+        ...body.appState
+      }
+      : payload.appState || {},
     users: Array.isArray(body.users) ? body.users : payload.users || [],
     userProfiles: body.userProfiles && typeof body.userProfiles === "object" && !Array.isArray(body.userProfiles)
       ? mergeUserProfiles(payload.userProfiles || {}, body.userProfiles)

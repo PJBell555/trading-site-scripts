@@ -414,6 +414,7 @@ const OPEN_BRAIN_ENDPOINT_KEY = "atlas-open-brain-endpoint";
 const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
+const KARPATHY_AUTO_APPLY_MIGRATION_KEY = "comhedge-karpathy-auto-apply-migration-v1";
 const PAPER_TRADE_MODE = "P";
 const REAL_TRADE_MODE = "R";
 const DEFAULT_NON_EXEMPT_USER_EQUITY = 1000;
@@ -491,7 +492,7 @@ const DEFAULT_USER_STRATEGY = {
   karpathyCoachText: KARPATHY_OIL_COACH_TEXT,
   karpathyFlatSelectivity: true,
   karpathyConfirmationGate: true,
-  karpathyAutoApply: false,
+  karpathyAutoApply: true,
   karpathyRecommendation: null,
   advisoryOutcomeLearner: true,
   skillsAccess: true,
@@ -708,6 +709,8 @@ let llmInFlight = false;
 let llmAutoCommodityKey = null;
 let advisoryScoreThreshold = DEFAULT_ADVISORY_SCORE_THRESHOLD;
 let advisoryScoreThresholdIsManual = false;
+let manualConvictionOverrides = {};
+let strategyEdits = {};
 let backendSyncInFlight = false;
 let backendHistoryWriteInFlight = false;
 let backendSettingsSyncInFlight = false;
@@ -1316,6 +1319,23 @@ function saveCustomSkills() {
   window.localStorage.setItem(CUSTOM_SKILLS_KEY, JSON.stringify(customSkills));
 }
 
+function saveCustomSkillsShared() {
+  saveCustomSkills();
+  saveSharedSettings();
+}
+
+function applySharedCustomSkills(rows) {
+  if (!Array.isArray(rows)) return false;
+  const next = mergeDefaultCustomSkills(rows);
+  const changed = JSON.stringify(next) !== JSON.stringify(customSkills);
+  if (changed) {
+    customSkills.splice(0, customSkills.length, ...next);
+    saveCustomSkills();
+    syncSecondOpinionPromptSettings();
+  }
+  return changed;
+}
+
 function getAdoptedSkills(target = "advisory") {
   const key = target === "opinion" ? "adoptOpinion" : "adoptAdvisory";
   return customSkills.filter((skill) => skill[key]);
@@ -1521,7 +1541,7 @@ function saveCustomSkillFromForm(event) {
     customSkills.unshift(next);
   }
   activeCustomSkillId = next.id;
-  saveCustomSkills();
+  saveCustomSkillsShared();
   syncSecondOpinionPromptSettings({ persist: true });
   resetSkillEditor();
   renderSkillsWorkspace();
@@ -1542,7 +1562,7 @@ function toggleCustomSkillAdoption(skillId, target) {
   }
   skill.updatedAt = now;
   activeCustomSkillId = skill.id;
-  saveCustomSkills();
+  saveCustomSkillsShared();
   syncSecondOpinionPromptSettings({ persist: true });
   renderSkillsWorkspace();
   renderSecondOpinionControls();
@@ -1554,7 +1574,7 @@ function deleteCustomSkill(skillId) {
   if (index < 0) return;
   customSkills.splice(index, 1);
   if (activeCustomSkillId === skillId) activeCustomSkillId = "";
-  saveCustomSkills();
+  saveCustomSkillsShared();
   syncSecondOpinionPromptSettings({ persist: true });
   resetSkillEditor();
   renderSkillsWorkspace();
@@ -1743,17 +1763,84 @@ function loadModelSettings() {
   }
 }
 
+function applySharedAppState(appState = {}) {
+  if (!appState || typeof appState !== "object" || Array.isArray(appState)) return false;
+  let changed = false;
+
+  if (appState.manualConvictionOverrides && typeof appState.manualConvictionOverrides === "object" && !Array.isArray(appState.manualConvictionOverrides)) {
+    manualConvictionOverrides = Object.entries(appState.manualConvictionOverrides).reduce((overrides, [commodity, value]) => {
+      const score = Number(value);
+      if (Number.isFinite(score)) overrides[commodity] = clamp(Math.round(score), 0, 100);
+      return overrides;
+    }, {});
+    window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(manualConvictionOverrides));
+    changed = true;
+  }
+
+  if (appState.advisoryScoreThreshold && typeof appState.advisoryScoreThreshold === "object") {
+    const score = Number(appState.advisoryScoreThreshold.value);
+    advisoryScoreThresholdIsManual = appState.advisoryScoreThreshold.isManual === true;
+    advisoryScoreThreshold = Number.isFinite(score)
+      ? clamp(Math.round(score), 0, 100)
+      : DEFAULT_ADVISORY_SCORE_THRESHOLD;
+    if (advisoryScoreThresholdEl) advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
+    if (accuracyThresholdDisplayEl) accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+    window.localStorage.setItem(ADVISORY_SCORE_THRESHOLD_KEY, String(advisoryScoreThreshold));
+    changed = true;
+  }
+
+  if (appState.strategyEdits && typeof appState.strategyEdits === "object" && !Array.isArray(appState.strategyEdits)) {
+    strategyEdits = appState.strategyEdits;
+    window.localStorage.setItem(STRATEGY_EDITS_KEY, JSON.stringify(strategyEdits));
+    changed = true;
+  }
+
+  if (Array.isArray(appState.customStrategies)) {
+    changed = applySharedCustomStrategies(appState.customStrategies) || changed;
+  }
+
+  if (Array.isArray(appState.customSkills)) {
+    changed = applySharedCustomSkills(appState.customSkills) || changed;
+  }
+
+  return changed;
+}
+
+function getSharedAppStatePayload() {
+  return {
+    manualConvictionOverrides: getManualConvictionOverrides(),
+    advisoryScoreThreshold: {
+      value: advisoryScoreThreshold,
+      isManual: advisoryScoreThresholdIsManual
+    },
+    strategyEdits: loadStrategyEdits(),
+    customStrategies,
+    customSkills
+  };
+}
+
 function loadStrategyEdits() {
+  if (strategyEdits && typeof strategyEdits === "object" && !Array.isArray(strategyEdits)) {
+    return strategyEdits;
+  }
   try {
     const stored = JSON.parse(window.localStorage.getItem(STRATEGY_EDITS_KEY) || "{}");
-    return stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    strategyEdits = stored && typeof stored === "object" && !Array.isArray(stored) ? stored : {};
+    return strategyEdits;
   } catch (error) {
-    return {};
+    strategyEdits = {};
+    return strategyEdits;
   }
 }
 
 function saveStrategyEdits(edits) {
-  window.localStorage.setItem(STRATEGY_EDITS_KEY, JSON.stringify(edits));
+  strategyEdits = edits && typeof edits === "object" && !Array.isArray(edits) ? edits : {};
+  window.localStorage.setItem(STRATEGY_EDITS_KEY, JSON.stringify(strategyEdits));
+}
+
+function saveStrategyEditsShared(edits) {
+  saveStrategyEdits(edits);
+  saveSharedSettings();
 }
 
 function loadCustomStrategies() {
@@ -1767,6 +1854,22 @@ function loadCustomStrategies() {
 
 function saveCustomStrategies() {
   window.localStorage.setItem(CUSTOM_STRATEGIES_KEY, JSON.stringify(customStrategies));
+}
+
+function saveCustomStrategiesShared() {
+  saveCustomStrategies();
+  saveSharedSettings();
+}
+
+function applySharedCustomStrategies(rows) {
+  if (!Array.isArray(rows)) return false;
+  const next = rows.map(normalizeCustomStrategy).filter(Boolean);
+  const changed = JSON.stringify(next) !== JSON.stringify(customStrategies);
+  if (changed) {
+    customStrategies.splice(0, customStrategies.length, ...next);
+    saveCustomStrategies();
+  }
+  return changed;
 }
 
 function normalizeCustomStrategy(strategy = {}) {
@@ -1870,7 +1973,7 @@ function saveStrategyEditor(event) {
   };
   if (!strategyKey) {
     customStrategies.unshift(normalizeCustomStrategy(values));
-    saveCustomStrategies();
+    saveCustomStrategiesShared();
     renderCustomStrategies();
     closeStrategyEditor();
     return;
@@ -1889,7 +1992,7 @@ function saveStrategyEditor(event) {
   }
   const edits = loadStrategyEdits();
   edits[strategyKey] = values;
-  saveStrategyEdits(edits);
+  saveStrategyEditsShared(edits);
   updateStrategyCard(strategyKey, values);
   closeStrategyEditor();
 }
@@ -1940,7 +2043,7 @@ function renderCustomStrategies() {
       const index = customStrategies.findIndex((candidate) => candidate.key === strategy.key);
       if (index >= 0) {
         customStrategies.splice(index, 1);
-        saveCustomStrategies();
+        saveCustomStrategiesShared();
         renderCustomStrategies();
       }
     });
@@ -2862,6 +2965,37 @@ function applyUserAccountDefaults() {
     user.commodityAllocations = normalizeCommodityAllocations(buildOilOnlyAllocations(user.paperBaseEquity), OIL_ONLY_COMMODITIES, user.paperBaseEquity);
     user.paperTrading = normalizeOilOnlyPaperTrading(user.paperTrading, {}, user.paperRiskPct);
   });
+}
+
+function migrateKarpathyAutoApplyForAllUsers() {
+  let alreadyApplied = false;
+  try {
+    alreadyApplied = window.localStorage.getItem(KARPATHY_AUTO_APPLY_MIGRATION_KEY) === "true";
+  } catch (_error) {
+    alreadyApplied = false;
+  }
+  if (alreadyApplied) return false;
+
+  let changed = false;
+  userRoster.forEach((user) => {
+    const strategy = normalizeUserStrategy(user.strategy);
+    if (strategy.karpathyAutoApply !== true) changed = true;
+    user.strategy = {
+      ...strategy,
+      karpathyAutoApply: true
+    };
+  });
+
+  try {
+    window.localStorage.setItem(KARPATHY_AUTO_APPLY_MIGRATION_KEY, "true");
+  } catch (_error) {
+    // Migration state is also persisted to Cloudflare through user strategies.
+  }
+
+  if (changed) {
+    saveUserRoster();
+  }
+  return changed;
 }
 
 function getCurrentAccessEmail() {
@@ -4673,7 +4807,7 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "karpathyLoop", label: "Karpathy loop", value: strategy.karpathyLoop, type: "checkbox", on: "Adjusts thresholds from evaluated outcomes", off: "Off" },
     { key: "karpathyFlatSelectivity", label: "Karpathy flat selectivity", value: strategy.karpathyFlatSelectivity, type: "checkbox", on: "More selective in flat/mixed markets", off: "Off" },
     { key: "karpathyConfirmationGate", label: "Karpathy confirmation gate", value: strategy.karpathyConfirmationGate, type: "checkbox", on: "Requires structure + momentum confirmation", off: "Off" },
-    { key: "karpathyAutoApply", label: "Karpathy auto-apply", value: strategy.karpathyAutoApply, type: "checkbox", on: "Cloudflare may apply recommended threshold changes", off: "Recommendation only", help: "When off, the Cloudflare scheduler records coach recommendations but does not change this user's trading threshold. When on, the scheduler can update the paper-trading entry threshold from closed-trade outcomes." },
+    { key: "karpathyAutoApply", label: "Karpathy auto-apply threshold changes", value: strategy.karpathyAutoApply, type: "checkbox", on: "Cloudflare may apply recommended threshold changes", off: "Recommendation only", help: "When off, the Cloudflare scheduler records coach recommendations but does not change this user's trading threshold. When on, the scheduler can update the paper-trading entry threshold from closed-trade outcomes." },
     { key: "advisoryOutcomeLearner", label: "Advisory outcome learner", value: strategy.advisoryOutcomeLearner, type: "checkbox", on: "Learns long/short/wait from forecast outcomes", off: "Off" },
     { key: "regimeAware", label: "Regime-aware Martingale", value: strategy.regimeAware, type: "checkbox", on: "On", off: "Off" },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
@@ -5353,16 +5487,16 @@ function createUserProfilePanel(user) {
         Karpathy loop enabled
       </label>
       <label class="profile-toggle-row">
+        <input data-strategy-field="karpathyAutoApply" type="checkbox"${strategy.karpathyAutoApply ? " checked" : ""} title="When off, Cloudflare records Karpathy recommendations only. When on, Cloudflare can apply the recommended paper-trading threshold to this account.">
+        Karpathy auto-apply threshold changes <span class="profile-field-hint" title="Recommendation-only is safer while sample sizes are small. Auto-apply lets Cloudflare update the entry threshold from closed-trade outcomes.">Cloudflare can tune the entry threshold</span>
+      </label>
+      <label class="profile-toggle-row">
         <input data-strategy-field="karpathyFlatSelectivity" type="checkbox"${strategy.karpathyFlatSelectivity ? " checked" : ""}>
         Karpathy flat selectivity
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="karpathyConfirmationGate" type="checkbox"${strategy.karpathyConfirmationGate ? " checked" : ""}>
         Karpathy confirmation gate
-      </label>
-      <label class="profile-toggle-row">
-        <input data-strategy-field="karpathyAutoApply" type="checkbox"${strategy.karpathyAutoApply ? " checked" : ""} title="When off, Cloudflare records Karpathy recommendations only. When on, Cloudflare can apply the recommended paper-trading threshold to this account.">
-        Karpathy auto-apply <span class="profile-field-hint" title="Recommendation-only is safer while sample sizes are small. Auto-apply lets Cloudflare update the entry threshold from closed-trade outcomes.">recommend or apply threshold changes</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="advisoryOutcomeLearner" type="checkbox"${strategy.advisoryOutcomeLearner ? " checked" : ""}>
@@ -6648,10 +6782,13 @@ function readBaseSignals() {
 }
 
 function getManualConvictionOverrides() {
+  if (manualConvictionOverrides && Object.keys(manualConvictionOverrides).length) return manualConvictionOverrides;
   try {
     const parsed = JSON.parse(window.localStorage.getItem(MANUAL_CONVICTION_OVERRIDES_KEY) || "{}");
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    manualConvictionOverrides = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+    return manualConvictionOverrides;
   } catch (error) {
+    manualConvictionOverrides = {};
     return {};
   }
 }
@@ -6665,7 +6802,9 @@ function setManualConvictionOverride(commodity, value) {
   const overrides = getManualConvictionOverrides();
   if (value === null || value === "") {
     delete overrides[commodity];
+    manualConvictionOverrides = overrides;
     window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(overrides));
+    saveSharedSettings();
     return;
   }
   const score = Number(value);
@@ -6674,7 +6813,9 @@ function setManualConvictionOverride(commodity, value) {
   } else {
     delete overrides[commodity];
   }
+  manualConvictionOverrides = overrides;
   window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(overrides));
+  saveSharedSettings();
 }
 
 function recordManualConvictionOverrideChange(commodity, before, after) {
@@ -9106,14 +9247,17 @@ async function loadSharedSettings(manual = false) {
     const settings = await response.json();
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
+    const appStateChanged = applySharedAppState(settings.appState);
     applyModelSettings(settings.modelSettings || sharedModelSettings);
     const cloudPromptIds = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []);
     syncSecondOpinionPromptSettings();
     const promptSettingsChanged = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []) !== cloudPromptIds;
-    if (usersChanged || profilesChanged) {
+    if (usersChanged || profilesChanged || appStateChanged) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
       renderLeaderBoard();
+      renderSkillsWorkspace();
+      applySavedStrategyEdits();
     }
     renderTokenCosts();
     setCoinbaseSandboxEnabled(true);
@@ -9144,6 +9288,7 @@ async function saveSharedSettings() {
       body: JSON.stringify({
         coinbaseSandboxEnabled: isCoinbaseSandboxEnabled(),
         modelSettings: sharedModelSettings,
+        appState: getSharedAppStatePayload(),
         users: getSharedUsersPayload(),
         userProfiles: getSharedUserProfilesPayload()
       })
@@ -9820,6 +9965,7 @@ function saveAdvisoryScoreThreshold() {
     ? clamp(Math.round(value), 0, 100)
     : DEFAULT_ADVISORY_SCORE_THRESHOLD;
   window.localStorage.setItem(ADVISORY_SCORE_THRESHOLD_KEY, String(advisoryScoreThreshold));
+  saveSharedSettings();
   advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
   accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
   if (lastPrimarySignal && lastTradePlan) {
@@ -12739,6 +12885,8 @@ function initializeApp() {
   loadAdvisoryScoreThreshold();
   loadFeatureRequests();
   loadLiveTradeLedger();
+  const migratedKarpathyAutoApply = migrateKarpathyAutoApplyForAllUsers();
+  if (migratedKarpathyAutoApply) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
   const liveContractInput = document.querySelector("#live-trade-contract");
   if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;
