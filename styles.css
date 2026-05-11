@@ -2595,9 +2595,11 @@ body {
   border-radius: 8px;
   color: #fff;
   display: inline-grid;
-  min-width: 52px;
-  padding: 10px;
+  min-width: 92px;
+  padding: 10px 12px;
   place-items: center;
+  text-align: center;
+  white-space: nowrap;
 }
 
 .opinion-card[data-tone="long"] .opinion-score {

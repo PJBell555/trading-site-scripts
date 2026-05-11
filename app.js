@@ -1919,6 +1919,47 @@ function getLLMScheduleLabel() {
   return `${getLLMScheduleEtHours().map(formatEtHour).join(", ")} ET`;
 }
 
+function getNextLLMScheduleSlot(date = new Date()) {
+  const scheduleHours = getLLMScheduleEtHours();
+  const candidate = new Date(date);
+  candidate.setMinutes(0, 0, 0);
+  candidate.setHours(candidate.getHours() + 1);
+
+  for (let index = 0; index < 72; index += 1) {
+    const eastern = getEasternParts(candidate);
+    if (scheduleHours.includes(eastern.hour)) {
+      return {
+        date: new Date(candidate),
+        label: `${formatEtHour(eastern.hour)} ET`
+      };
+    }
+    candidate.setHours(candidate.getHours() + 1);
+  }
+
+  return null;
+}
+
+function formatDurationUntil(date) {
+  const diffMs = new Date(date).getTime() - Date.now();
+  if (!Number.isFinite(diffMs) || diffMs <= 0) return "due now";
+  const totalMinutes = Math.ceil(diffMs / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours && minutes) return `${hours}h ${minutes}m`;
+  if (hours) return `${hours}h`;
+  return `${minutes}m`;
+}
+
+function getLLMScheduleStatusText(lastRun = null) {
+  const next = getNextLLMScheduleSlot();
+  const schedule = getLLMScheduleLabel();
+  const nextText = next
+    ? `next ${next.label} in ${formatDurationUntil(next.date)}`
+    : `schedule ${schedule}`;
+  if (!lastRun) return `No LLM run yet; ${nextText}`;
+  return `Last LLM run ${lastRun}; ${nextText}`;
+}
+
 function getTokenCostsWindowHours() {
   const activeButton = document.querySelector(".token-window-button[data-active='true']");
   const label = (activeButton?.textContent || "24h").trim().toLowerCase();
@@ -2162,7 +2203,8 @@ function renderSecondOpinionResults(modelIds) {
     titleMeta.textContent = `${model.name} / ${model.style}`;
     title.append(titleStrong, titleMeta);
     scoreEl.className = "opinion-score";
-    scoreEl.textContent = String(score);
+    scoreEl.textContent = `${tone.toUpperCase()} ${score}`;
+    scoreEl.title = `${tone.toUpperCase()} with ${score}/100 conviction`;
     meta.className = "opinion-data";
     meta.textContent = tradePlan.priceReady
       ? `Data: ${formatPrice(tradePlan.livePrice)} via ${tradePlan.priceSource}`
@@ -11640,7 +11682,7 @@ function applyLLMDisplayOverride(commodity) {
 
   if (!haveVerified) {
     if (llmConvictionEl) llmConvictionEl.textContent = UNAVAILABLE_TEXT;
-    if (llmConvictionUpdatedEl) llmConvictionUpdatedEl.textContent = "Scheduled 12 AM, 6 AM, 12 PM, 6 PM ET";
+    if (llmConvictionUpdatedEl) llmConvictionUpdatedEl.textContent = getLLMScheduleStatusText();
     return;
   }
 
@@ -11651,7 +11693,7 @@ function applyLLMDisplayOverride(commodity) {
     llmConvictionEl.textContent = conviction !== null ? `${conviction} / 100` : UNAVAILABLE_TEXT;
   }
   if (llmConvictionUpdatedEl) {
-    llmConvictionUpdatedEl.textContent = `Updated ${lastVerifiedLLMRun.time}`;
+    llmConvictionUpdatedEl.textContent = getLLMScheduleStatusText(lastVerifiedLLMRun.time);
   }
 }
 
