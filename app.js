@@ -3816,7 +3816,7 @@ function getUserLastTradeTime(user, entries = getUserPaperLedgerEntries(user)) {
 function getUserSchedulerSummary(user) {
   const liveStatus = leaderBoardSchedulerStatus.get(normalizeEmail(user?.email));
   if (liveStatus) {
-    const evaluated = liveStatus.lastEvaluationAt ? formatRelativeDate(liveStatus.lastEvaluationAt) : "Never";
+    const evaluated = liveStatus.lastEvaluationAt ? formatRelativeDate(liveStatus.lastEvaluationAt) : "Run seen";
     const decision = liveStatus.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
     return `${evaluated}: ${decision}`;
   }
@@ -3831,9 +3831,9 @@ function getUserSchedulerHint(user) {
   const liveStatus = leaderBoardSchedulerStatus.get(normalizeEmail(user?.email));
   const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
   const status = liveStatus || paperTrading;
-  const evaluated = status.lastEvaluationAt ? formatTradeTime(status.lastEvaluationAt) : "Never evaluated";
+  const evaluated = status.lastEvaluationAt ? formatTradeTime(status.lastEvaluationAt) : "Recent run timestamp";
   const decision = status.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
-  const source = liveStatus ? "Live Cloudflare scheduler status" : "Profile fallback status";
+  const source = liveStatus?.source || (liveStatus ? "Live Cloudflare scheduler status" : "Profile fallback status");
   const loaded = leaderBoardSchedulerLoadedAt ? `Status refreshed ${formatRelativeDate(leaderBoardSchedulerLoadedAt)}.` : "Live scheduler status has not loaded yet.";
 
   return [
@@ -10720,6 +10720,7 @@ async function loadLeaderBoardSchedulerStatus(manual = false) {
       const email = normalizeEmail(user.email);
       if (!email) return;
       leaderBoardSchedulerStatus.set(email, {
+        source: "Live Cloudflare scheduler settings",
         enabled: Boolean(user.enabled),
         commodities: Array.isArray(user.commodities) ? user.commodities : [],
         entryThreshold: user.entryThreshold,
@@ -10728,6 +10729,31 @@ async function loadLeaderBoardSchedulerStatus(manual = false) {
         lastDecision: user.lastDecision
       });
     });
+    const runs = Array.isArray(payload.runs) ? payload.runs : [];
+    runs
+      .slice()
+      .sort((left, right) => getTransactionDate(left.startedAt) - getTransactionDate(right.startedAt))
+      .forEach((run) => {
+        const evaluatedAt = run.finishedAt || run.startedAt || null;
+        (Array.isArray(run.decisions) ? run.decisions : []).forEach((decision) => {
+          const email = normalizeEmail(decision.email);
+          if (!email) return;
+          const existing = leaderBoardSchedulerStatus.get(email) || {};
+          const existingTime = existing.lastEvaluationAt ? getTransactionDate(existing.lastEvaluationAt).getTime() : 0;
+          const runTime = evaluatedAt ? getTransactionDate(evaluatedAt).getTime() : 0;
+          const existingDecision = existing.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
+          const shouldUseRun = !existing.lastEvaluationAt
+            || existingDecision === DEFAULT_SERVER_PAPER_TRADING.lastDecision
+            || (runTime && runTime >= existingTime);
+          if (!shouldUseRun) return;
+          leaderBoardSchedulerStatus.set(email, {
+            ...existing,
+            source: "Recent Cloudflare scheduler run",
+            lastEvaluationAt: evaluatedAt,
+            lastDecision: decision.decision || existingDecision
+          });
+        });
+      });
     leaderBoardSchedulerLoadedAt = Date.now();
     renderLeaderBoard();
     return true;
