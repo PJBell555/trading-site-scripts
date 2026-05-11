@@ -397,6 +397,7 @@ const HIDDEN_PAPER_SWEEP_THROTTLE_MS = 30000;
 const NORMAL_LIVE_PRICE_PAINT_MS = 250;
 const LOW_POWER_LIVE_PRICE_PAINT_MS = 750;
 const HIDDEN_LIVE_PRICE_PAINT_MS = 5000;
+const BROWSER_PAPER_EXECUTION_ENABLED = false;
 const LEADERBOARD_DEFAULT_RANK = "closed-pnl";
 const LEADERBOARD_DEFAULT_PERIOD = "all";
 const LEADERBOARD_RANK_OPTIONS = {
@@ -10418,6 +10419,7 @@ function getPaperExitTrigger(commodity, trade, fallbackPrice = null) {
 }
 
 function queuePaperExitIfTriggered(commodity, trade, fallbackPrice = null) {
+  if (!BROWSER_PAPER_EXECUTION_ENABLED) return false;
   const trigger = getPaperExitTrigger(commodity, trade, fallbackPrice);
   if (!trigger) return false;
   closePaperTrade(commodity, trigger.price, trigger.reason).catch((error) => {
@@ -10428,6 +10430,7 @@ function queuePaperExitIfTriggered(commodity, trade, fallbackPrice = null) {
 
 function executePaperTrading(commodity, commodityMeta, signal, tradePlan, options = {}) {
   reconcilePaperStateFromHistory();
+  if (!BROWSER_PAPER_EXECUTION_ENABLED) return;
 
   const openTrade = getOpenPaperTrade(commodity) || getBlockingOpenPaperTradeForNewEntry(commodity);
   if (openTrade) {
@@ -10451,6 +10454,7 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
 }
 
 async function closeOnlyPaperSweep() {
+  if (!BROWSER_PAPER_EXECUTION_ENABLED) return;
   reconcilePaperStateFromHistory();
   const baseSignals = readBaseSignals();
   const openEntries = Array.from(openPaperTrades.entries());
@@ -10506,7 +10510,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   if (!tradePlan.priceReady) {
     return {
       title: "Waiting for live price",
-      detail: "The paper trader needs Coinbase WebSocket, Coinbase REST, or a valid GitHub snapshot before it can evaluate entries."
+      detail: "The paper trader needs Coinbase WebSocket, Coinbase REST, or a fresh Cloudflare price snapshot before it can evaluate entries."
     };
   }
 
@@ -10563,6 +10567,13 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     return {
       title: "Trade order pending",
       detail: "A sandbox/open or close request is already in flight, so the bot is avoiding duplicate trades."
+    };
+  }
+
+  if (!BROWSER_PAPER_EXECUTION_ENABLED) {
+    return {
+      title: `Cloudflare scheduler ready for ${signalSide}`,
+      detail: `Browser execution is disabled. The Cloudflare Worker scheduler is the source of truth and will apply this advisory, second-opinion gate, market calendar, and Martingale rules from D1. Current price is ${priceText}.${karpathyText}`
     };
   }
 

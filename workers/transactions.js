@@ -347,7 +347,7 @@ async function createCoinbaseSandboxOrder(body = {}) {
 
 function getOpenRouterModel(modelId = "") {
   const models = {
-    "gpt-5-5": "openrouter/auto",
+    "gpt-5-5": "openai/gpt-5.5",
     "gpt-5-4": "openrouter/auto",
     perplexity: "perplexity/sonar",
     gemini: "google/gemini-2.5-flash",
@@ -358,8 +358,22 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
-const ADVISORY_MODEL_DEFAULT = "anthropic/claude-sonnet-4.6";
+const ADVISORY_MODEL_DEFAULT = "openai/gpt-5.5";
 const CRITIC_MODEL_DEFAULT = "openai/gpt-5-mini";
+const SERVER_SECOND_OPINION_DEFAULT_MODELS = ["perplexity", "gemini", "claude"];
+const SERVER_SECOND_OPINION_DEFAULT_PROMPTS = ["technician"];
+const SERVER_SECOND_OPINION_MODELS = {
+  sonnet: { name: "Sonnet 4.6", tilt: -1 },
+  haiku: { name: "Haiku 4.5", tilt: 0 },
+  gpt5mini: { name: "GPT-5-mini", tilt: 0 },
+  "gemini-flash": { name: "Gemini 2.5 Flash", tilt: 1 },
+  "gpt-5-5": { name: "ChatGPT 5.5", tilt: 0 },
+  "gpt-5-4": { name: "ChatGPT 5.4", tilt: -2 },
+  perplexity: { name: "Perplexity", tilt: -4 },
+  gemini: { name: "Gemini", tilt: 3 },
+  claude: { name: "Claude", tilt: -1 },
+  grok: { name: "Grok", tilt: 5 }
+};
 
 const APPROVED_ADVISORY_MODELS = new Set([
   "anthropic/claude-haiku-4.5",
@@ -1962,6 +1976,30 @@ function normalizeMarketCalendarSettings(explicit = {}) {
   };
 }
 
+function normalizeServerSecondOpinionModels(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const normalized = values
+    .map((id) => String(id || "").trim())
+    .filter((id) => SERVER_SECOND_OPINION_MODELS[id]);
+  return normalized.length ? [...new Set(normalized)] : [...SERVER_SECOND_OPINION_DEFAULT_MODELS];
+}
+
+function normalizeServerSecondOpinionPrompts(value) {
+  const values = Array.isArray(value)
+    ? value
+    : typeof value === "string"
+      ? value.split(",")
+      : [];
+  const normalized = values
+    .map((id) => String(id || "").trim())
+    .filter((id) => id);
+  return normalized.length ? [...new Set(normalized)] : [...SERVER_SECOND_OPINION_DEFAULT_PROMPTS];
+}
+
 function getUserPaperSchedulerSettings(user = {}, env) {
   const email = normalizeEmail(user.email);
   const explicit = user.paperTrading && typeof user.paperTrading === "object"
@@ -1981,6 +2019,9 @@ function getUserPaperSchedulerSettings(user = {}, env) {
     maxOpenTrades: clamp(Math.round(Number(explicit.maxOpenTrades ?? PAPER_SCHEDULER_DEFAULT_MAX_OPEN) || PAPER_SCHEDULER_DEFAULT_MAX_OPEN), 1, 10),
     entryThreshold: clamp(Math.round(Number(explicit.entryThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD) || PAPER_SCHEDULER_DEFAULT_THRESHOLD), 1, 100),
     minEvaluationMs: Math.max(60000, Number(explicit.minEvaluationMs) || PAPER_SCHEDULER_MIN_EVALUATION_MS),
+    secondOpinionGateEnabled: explicit.secondOpinionGateEnabled !== false,
+    secondOpinionModels: normalizeServerSecondOpinionModels(explicit.secondOpinionModels),
+    secondOpinionPrompts: normalizeServerSecondOpinionPrompts(explicit.secondOpinionPrompts),
     ...normalizeMarketCalendarSettings(explicit),
     lastEvaluationAt: explicit.lastEvaluationAt || null,
     lastDecision: explicit.lastDecision || "Not evaluated yet"
@@ -2385,6 +2426,102 @@ function getServerSignal(advisory = {}) {
     side: tone === "long" || tone === "short" ? tone : null,
     conviction: Number.isFinite(conviction) ? Math.round(conviction) : 0,
     label: advisory?.label || tone
+  };
+}
+
+function getServerOpinionScore(signal, model, promptIds = []) {
+  const promptTilt = promptIds.reduce((total, promptId) => {
+    if (promptId === "risk-manager") return total - 3;
+    if (promptId === "macro") return total + 1;
+    return total;
+  }, 0);
+  return clamp(Math.round((Number(signal?.conviction) || 0) + (Number(model?.tilt) || 0) + promptTilt), 0, 100);
+}
+
+function getServerOpinionTone(signal, score) {
+  if (score < 48) return "wait";
+  if (signal?.tone === "short") return "short";
+  if (signal?.tone === "long") return "long";
+  return "wait";
+}
+
+function getServerSecondOpinionConsensus(signal, settings = {}) {
+  const enabled = settings.secondOpinionGateEnabled !== false;
+  const side = signal?.side || null;
+  const modelIds = normalizeServerSecondOpinionModels(settings.secondOpinionModels)
+    .filter((modelId) => modelId !== "gpt-5-5");
+  const promptIds = normalizeServerSecondOpinionPrompts(settings.secondOpinionPrompts);
+  const opinions = enabled
+    ? modelIds.map((modelId) => {
+      const model = SERVER_SECOND_OPINION_MODELS[modelId];
+      const score = getServerOpinionScore(signal, model, promptIds);
+      const tone = getServerOpinionTone(signal, score);
+      return { modelId, modelName: model.name, score, tone };
+    })
+    : [];
+  const counts = opinions.reduce((total, opinion) => {
+    total[opinion.tone] = (total[opinion.tone] || 0) + 1;
+    return total;
+  }, { long: 0, short: 0, wait: 0 });
+  const required = opinions.length >= 3 ? Math.max(2, Math.ceil(opinions.length / 2)) : opinions.length;
+  const confirmCount = side ? counts[side] || 0 : 0;
+  const oppositeSide = side === "long" ? "short" : side === "short" ? "long" : null;
+  const oppositeCount = oppositeSide ? counts[oppositeSide] || 0 : 0;
+  const waitCount = counts.wait || 0;
+  let thresholdBoost = 0;
+  let blocksEntry = false;
+  let label = enabled ? "Second opinions neutral" : "Second opinion gate off";
+  let detail = enabled
+    ? "No directional primary advisory for second opinions to gate."
+    : "Server-side second opinion gate is disabled for this account.";
+
+  if (!enabled || !opinions.length) {
+    return {
+      enabled,
+      opinions,
+      counts,
+      required: 0,
+      confirmCount: 0,
+      thresholdBoost: 0,
+      blocksEntry: false,
+      label,
+      detail: enabled ? "No server-side second-opinion models are selected." : detail
+    };
+  }
+
+  if (side) {
+    if (oppositeCount >= required) {
+      blocksEntry = true;
+      thresholdBoost = 10;
+      label = "Second opinions disagree";
+      detail = `${oppositeCount}/${opinions.length} server-side second opinions lean ${oppositeSide}; blocking the ${side} entry.`;
+    } else if (waitCount >= required) {
+      blocksEntry = true;
+      thresholdBoost = 8;
+      label = "Second opinions say wait";
+      detail = `${waitCount}/${opinions.length} server-side second opinions say wait; blocking the ${side} entry.`;
+    } else if (confirmCount < required) {
+      blocksEntry = true;
+      thresholdBoost = 5;
+      label = "Second opinions not confirmed";
+      detail = `${confirmCount}/${opinions.length} server-side second opinions confirm ${side}; need ${required}.`;
+    } else {
+      thresholdBoost = waitCount || oppositeCount ? 3 : 0;
+      label = "Second opinions confirm";
+      detail = `${confirmCount}/${opinions.length} server-side second opinions confirm ${side}.${thresholdBoost ? " Mixed votes add a small threshold buffer." : ""}`;
+    }
+  }
+
+  return {
+    enabled: true,
+    opinions,
+    counts,
+    required,
+    confirmCount,
+    thresholdBoost,
+    blocksEntry,
+    label,
+    detail
   };
 }
 
@@ -2825,9 +2962,22 @@ async function runPaperTradingScheduler(env, options = {}) {
         const signal = getServerSignal(advisory);
         const micro = strategySettings.regimeAware ? await getLatestServerMicroPrediction(env, commodity) : null;
         const regime = getServerRegimeAssessment(signal, micro, strategySettings);
-        const effectiveThreshold = clamp(schedulerSettings.entryThreshold + (regime.enabled ? regime.thresholdBoost : 0), 1, 100);
+        const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
+        const effectiveThreshold = clamp(
+          schedulerSettings.entryThreshold
+            + (regime.enabled ? regime.thresholdBoost : 0)
+            + (secondOpinionConsensus.enabled ? secondOpinionConsensus.thresholdBoost : 0),
+          1,
+          100
+        );
         if (!signal.side || signal.conviction < effectiveThreshold) {
-          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}`;
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
+          run.skippedTrades += 1;
+          continue;
+        }
+
+        if (secondOpinionConsensus.blocksEntry) {
+          lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
           run.skippedTrades += 1;
           continue;
         }
@@ -2873,7 +3023,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
-          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps`
+          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
         await recordOpenBrainServerEvent(
@@ -2958,6 +3108,9 @@ async function handlePaperSchedulerRoute(env, request, origin) {
         dailyReopenTime: scheduler.dailyReopenTime,
         closeBeforeMinutes: scheduler.closeBeforeMinutes,
         marketCalendarNotes: scheduler.marketCalendarNotes,
+        secondOpinionGateEnabled: scheduler.secondOpinionGateEnabled,
+        secondOpinionModels: scheduler.secondOpinionModels,
+        secondOpinionPrompts: scheduler.secondOpinionPrompts,
         lastEvaluationAt: scheduler.lastEvaluationAt,
         lastDecision: scheduler.lastDecision
       };
