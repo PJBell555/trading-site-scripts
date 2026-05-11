@@ -219,6 +219,7 @@ const accuracyAllCallsEl = document.querySelector("#accuracy-all-calls");
 const accuracyAllCountEl = document.querySelector("#accuracy-all-count");
 const accuracyAverageMoveEl = document.querySelector("#accuracy-average-move");
 const accuracyEvaluationWindowEl = document.querySelector("#accuracy-evaluation-window");
+const accuracyCalibrationGridEl = document.querySelector("#accuracy-calibration-grid");
 const accuracyBarsEl = document.querySelector("#accuracy-bars");
 const accuracyOutcomesEl = document.querySelector("#accuracy-outcomes");
 const edgeDashboardStatusEl = document.querySelector("#edge-dashboard-status");
@@ -428,6 +429,13 @@ const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
 const ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES = 8;
 const ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE = 160;
 const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
+const ADVISORY_SCORE_BANDS = [
+  { label: "Below 50", min: 0, max: 49 },
+  { label: "50-54", min: 50, max: 54 },
+  { label: "55-60", min: 55, max: 60 },
+  { label: "61-70", min: 61, max: 70 },
+  { label: "71+", min: 71, max: 100 }
+];
 const KARPATHY_OIL_COACH_TEXT = "Use the Karpathy loop to improve oil trading decisions by learning from closed trade outcomes and forecast accuracy. The advisory model makes the initial long, short, or wait call. The Karpathy loop reviews outcomes after the fact and adjusts thresholds over time. It should make the advisor more selective in flat or mixed markets. It should increase confidence only when market structure, momentum, and confirmation agree. It should not force extra trades or increase size without stronger evidence. Goal: better long/short/wait decisions, fewer weak trades, and smarter behavior in choppy oil markets.";
 const DEFAULT_USER_STRATEGY = {
   name: "Martingale with Karpathy loop",
@@ -671,6 +679,7 @@ let paperDecisionLog = [];
 let lastPaperDecisionLogKey = "";
 let lastPaperDecisionLogAt = 0;
 let lastMicroPredictionKey = "";
+let manualConvictionCommittedBefore = null;
 
 function syncLowPowerModeControls() {
   if (lowPowerModeToggleEl) lowPowerModeToggleEl.checked = lowPowerMode;
@@ -6086,6 +6095,24 @@ function setManualConvictionOverride(commodity, value) {
   window.localStorage.setItem(MANUAL_CONVICTION_OVERRIDES_KEY, JSON.stringify(overrides));
 }
 
+function recordManualConvictionOverrideChange(commodity, before, after) {
+  const beforeText = before === null ? "Auto" : String(before);
+  const afterText = after === null ? "Auto" : String(after);
+  if (beforeText === afterText) return;
+  const commodityName = getCommodityName(commodity);
+  const user = getCurrentUserProfile();
+  recordOpenBrainEvent("advisory-override", `${commodityName} manual conviction override changed from ${beforeText} to ${afterText}`, {
+    userEmail: getCurrentLedgerEmail(),
+    userName: user?.name || "",
+    commodity,
+    commodityName,
+    before,
+    after,
+    note: "Manual conviction override affects advisory conviction and paper-trading entry decisions.",
+    tags: ["advisory", commodity, "manual-override"]
+  });
+}
+
 function renderManualConvictionInput(commodity) {
   if (!inputs.manualConviction) return;
   const override = getManualConvictionOverride(commodity);
@@ -9204,6 +9231,48 @@ function summarizeEvaluations(evaluations, predicate = () => true) {
   };
 }
 
+function renderScoreCalibrationBands(forecastEvaluations) {
+  if (!accuracyCalibrationGridEl) return;
+
+  accuracyCalibrationGridEl.innerHTML = "";
+  ADVISORY_SCORE_BANDS.forEach((band) => {
+    const summary = summarizeEvaluations(forecastEvaluations, (item) => {
+      const score = getAdvisoryLocalConviction(item.entry);
+      return Number.isFinite(score) && score >= band.min && score <= band.max;
+    });
+    const hasSamples = summary.count > 0;
+    const hasUsefulSample = summary.count >= 5;
+    const accuracy = Number.isFinite(summary.accuracy) ? Math.round(summary.accuracy) : 0;
+    const card = document.createElement("div");
+    const label = document.createElement("span");
+    const value = document.createElement("strong");
+    const count = document.createElement("p");
+    const track = document.createElement("div");
+    const fill = document.createElement("i");
+    const note = document.createElement("p");
+
+    card.className = "calibration-card";
+    card.dataset.ready = String(hasUsefulSample);
+    card.dataset.empty = String(!hasSamples);
+    label.className = "stat-label";
+    label.textContent = band.label;
+    value.textContent = hasSamples ? `${accuracy}%` : "No samples";
+    count.textContent = hasSamples
+      ? `${summary.correct} of ${summary.count} forecasts correct`
+      : "No evaluated forecasts in this score band.";
+    track.className = "calibration-track";
+    fill.style.width = hasSamples ? `${Math.max(4, Math.min(100, accuracy))}%` : "0%";
+    track.append(fill);
+    note.textContent = !hasSamples
+      ? "This band has not had enough calls yet."
+      : hasUsefulSample
+        ? "Use this band to see whether conviction is calibrated."
+        : "Small sample: treat this as noise until more calls arrive.";
+    card.append(label, value, count, track, note);
+    accuracyCalibrationGridEl.append(card);
+  });
+}
+
 function renderAccuracyBars(forecastEvaluations, tradeEvaluations) {
   const rows = [
     { id: "long", metric: "forecast", label: "Forecast long", evaluations: forecastEvaluations },
@@ -9429,6 +9498,7 @@ function renderAdvisoryAccuracy(samples) {
   if (accuracyEvaluationWindowEl) {
     accuracyEvaluationWindowEl.textContent = `${forecastSummary.count} forecast calls judged about ${windowMinutes} min later`;
   }
+  renderScoreCalibrationBands(forecastEvaluations);
   renderAccuracyBars(forecastEvaluations, tradeEvaluations);
   renderAccuracyOutcomes(forecastEvaluations, tradeEvaluations);
   renderEdgeDashboard(tradeEvaluations);
@@ -11295,12 +11365,20 @@ function calculateSignal() {
 });
 
 if (inputs.manualConviction) {
+  inputs.manualConviction.addEventListener("focus", () => {
+    manualConvictionCommittedBefore = getManualConvictionOverride(commoditySelect.value);
+  });
   inputs.manualConviction.addEventListener("input", () => {
     setManualConvictionOverride(commoditySelect.value, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
     calculateSignal();
   });
   inputs.manualConviction.addEventListener("change", () => {
-    setManualConvictionOverride(commoditySelect.value, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
+    const commodity = commoditySelect.value;
+    const before = manualConvictionCommittedBefore;
+    setManualConvictionOverride(commodity, inputs.manualConviction.value.trim() === "" ? null : inputs.manualConviction.value);
+    const after = getManualConvictionOverride(commodity);
+    recordManualConvictionOverrideChange(commodity, before, after);
+    manualConvictionCommittedBefore = after;
     calculateSignal();
   });
 }

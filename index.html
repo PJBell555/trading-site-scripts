@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-signal-explanation-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-calibration-bands-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -910,8 +910,8 @@
           </label>
 
           <label>
-            Manual advisory score
-            <input id="manual-conviction" type="number" min="0" max="100" step="1" placeholder="Auto">
+            Manual conviction override
+            <input id="manual-conviction" type="number" min="0" max="100" step="1" placeholder="Auto" title="Blank uses the local heuristic/model score. A number overrides the local advisory conviction baseline for this commodity. The paper trader uses the recalculated conviction, but it still needs a long or short advisory and must clear the active threshold, including regime and Karpathy adjustments.">
             <div class="scale"><span>Blank uses model score</span><span>0-100</span></div>
           </label>
 
@@ -1604,7 +1604,7 @@
               <input id="advisory-score-threshold" type="number" min="0" max="100" step="1" value="60">
             </label>
             <strong id="accuracy-threshold-display">60+</strong>
-            <p>Score is conviction, not historical accuracy.</p>
+            <p>Raising this threshold reduces calls. Accuracy can rise or fall until high-score calls prove themselves historically.</p>
           </div>
           <div class="accuracy-card">
             <span class="stat-label">Forecast accuracy</span>
@@ -1616,6 +1616,16 @@
             <strong id="accuracy-all-calls">-</strong>
             <p id="accuracy-all-count">0 closed trades</p>
           </div>
+        </div>
+        <div class="calibration-panel" aria-label="Advisory score calibration by band">
+          <div class="section-heading calibration-heading">
+            <div>
+              <p class="eyebrow">Calibration</p>
+              <h3>Score bands</h3>
+            </div>
+            <span class="shared-status">Shows whether higher conviction has actually been more accurate.</span>
+          </div>
+          <div class="calibration-grid" id="accuracy-calibration-grid"></div>
         </div>
         <div class="edge-dashboard" aria-label="Trade edge and expectancy dashboard">
           <div class="section-heading edge-dashboard-heading">
