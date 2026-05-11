@@ -122,6 +122,7 @@ const llmRunBtn = document.querySelector("#llm-run-btn");
 const llmStatusEl = document.querySelector("#llm-status");
 const llmVerificationBody = document.querySelector("#llm-verification-body");
 const signalBadge = document.querySelector("#signal-badge");
+const signalExplanationEl = document.querySelector("#signal-explanation");
 const convictionEl = document.querySelector("#conviction");
 const localConvictionUpdatedEl = document.querySelector("#local-conviction-updated");
 const llmConvictionEl = document.querySelector("#llm-conviction");
@@ -6625,6 +6626,33 @@ function getSignalSide(signal) {
   return null;
 }
 
+function getSignalExplanation(signal, tradePlan) {
+  if (!signal || !tradePlan) return "Waiting for advisory data.";
+  const side = getSignalSide(signal);
+  const threshold = Number(tradePlan.entryThreshold);
+  const conviction = Number(signal.conviction);
+  const thresholdSource = tradePlan.entryThresholdSource || "trading";
+  const thresholdText = Number.isFinite(threshold) ? threshold : "the required";
+  const convictionText = Number.isFinite(conviction) ? conviction : "unknown";
+
+  if (!tradePlan.priceReady) {
+    return "Waiting for a fresh Coinbase price before the advisory can become tradable.";
+  }
+  if (!side) {
+    return `Waiting because the advisory is ${signal.label || "Wait"} at ${convictionText} conviction; it needs a long or short call at ${thresholdText}+ before the paper trader can act.`;
+  }
+  if (Number.isFinite(conviction) && Number.isFinite(threshold) && conviction < threshold) {
+    return `Waiting because the ${side} advisory is ${conviction}/${threshold}; the current ${thresholdSource} threshold requires ${threshold}+ conviction before opening a paper trade.`;
+  }
+  if (tradePlan.regime?.enabled && tradePlan.regime.blocksWeakSetup) {
+    return `Waiting because the ${tradePlan.regime.regime} regime marks this as a weak setup; edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`;
+  }
+  if (tradePlan.regime?.enabled && !tradePlan.regime.confirmationOk) {
+    return `Waiting because ${tradePlan.regime.regime} confirmation is incomplete; the strategy requires trend, VWAP, momentum, and volatility to agree.`;
+  }
+  return `${formatSide(side)} is actionable: conviction ${convictionText}/${thresholdText} clears the current ${thresholdSource} threshold.`;
+}
+
 function getBaseRiskCapital() {
   return Math.max(0, paperBaseEquity * (paperRiskPct / 100));
 }
@@ -11189,6 +11217,7 @@ function calculateSignal() {
     : `${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""} scheduled 12 AM, 6 AM, 12 PM, 6 PM ET`;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
+  if (signalExplanationEl) signalExplanationEl.textContent = getSignalExplanation(primarySignal, tradePlan);
   const localBaselineSource = primarySignal.manualOverride === null ? "local heuristic" : "LLM/manual baseline";
   const adjustmentText = primarySignal.karpathyAdjustment
     ? `, Karpathy ${primarySignal.karpathyAdjustment > 0 ? "+" : ""}${primarySignal.karpathyAdjustment}`
