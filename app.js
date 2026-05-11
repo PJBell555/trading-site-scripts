@@ -3982,25 +3982,56 @@ function openLeaderBoardUserDetail(user, mode = "profile") {
   leaderboardUserDetailPanelEl?.scrollIntoView({ behavior: "smooth", block: "nearest" });
 }
 
-function getCumulativePnlSeries(user) {
+function getLeaderBoardDisplayValue(row, mode = leaderboardRankMode) {
+  return getLeaderBoardRankValue(row, mode);
+}
+
+function getLeaderBoardChartValueLabel(mode = leaderboardRankMode) {
+  return LEADERBOARD_RANK_OPTIONS[mode]?.label || LEADERBOARD_RANK_OPTIONS[LEADERBOARD_DEFAULT_RANK].label;
+}
+
+function getCumulativeLeaderBoardSeries(row, mode = leaderboardRankMode) {
+  const user = row.user;
   let total = 0;
+  let opened = 0;
+  let closed = 0;
+  let wins = 0;
   const cutoff = getLeaderBoardPeriodCutoff();
   const points = getUserLeaderBoardEntries(user, cutoff)
     .slice()
     .sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time))
     .map((entry) => {
-      if (isClosingTransaction(entry)) total += getDisplayPnl(entry);
+      if (isOpeningTransaction(entry)) opened += 1;
+      if (isClosingTransaction(entry)) {
+        const pnl = getDisplayPnl(entry);
+        total += pnl;
+        closed += 1;
+        if (pnl > 0) wins += 1;
+      }
+      const metricValue = (() => {
+        if (mode === "trades") return opened;
+        if (mode === "win-rate") return closed ? (wins / closed) * 100 : 0;
+        if (mode === "expectancy") return closed ? total / closed : 0;
+        return total;
+      })();
       return {
         time: getTransactionDate(entry.time).getTime(),
-        value: total
+        value: metricValue
       };
     })
     .filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
 
   if (points.length) {
+    let currentValue = points[points.length - 1].value;
+    if (mode === "total-pnl") currentValue = row.totalPnl;
+    if (mode === "open-pnl") currentValue = row.openPnl;
+    if (mode === "closed-pnl") currentValue = row.closedPnl;
+    if (mode === "trades") currentValue = row.tradeCount;
+    if (mode === "win-rate") currentValue = Number.isFinite(row.winRate) ? row.winRate : currentValue;
+    if (mode === "expectancy") currentValue = Number.isFinite(row.expectancy) ? row.expectancy : currentValue;
     points.push({
       time: Date.now(),
-      value: points[points.length - 1].value
+      value: currentValue
     });
   }
 
@@ -4019,12 +4050,20 @@ function drawLeaderBoardChart(rows) {
   const pad = 42 * scale;
   const chartWidth = width - (pad * 2);
   const chartHeight = height - (pad * 1.7);
-  const topRows = (Array.isArray(rows) ? rows : getRankedLeaderBoardRows())
+  const activeRows = (Array.isArray(rows) ? rows : getRankedLeaderBoardRows())
     .filter((row) => row.tradeCount > 0)
-    .slice(0, 5);
-  const series = topRows.map((row) => ({
+    .filter((row) => Number.isFinite(getLeaderBoardDisplayValue(row, leaderboardRankMode)));
+  const leaders = activeRows.slice(0, 5);
+  const negativeRows = activeRows
+    .filter((row) => getLeaderBoardDisplayValue(row, leaderboardRankMode) < 0)
+    .sort((left, right) => getLeaderBoardDisplayValue(left, leaderboardRankMode) - getLeaderBoardDisplayValue(right, leaderboardRankMode))
+    .slice(0, 3);
+  const chartRows = [...leaders, ...negativeRows]
+    .filter((row, index, all) => all.findIndex((candidate) => normalizeEmail(candidate.email) === normalizeEmail(row.email)) === index)
+    .slice(0, 8);
+  const series = chartRows.map((row) => ({
     row,
-    points: getCumulativePnlSeries(row.user)
+    points: getCumulativeLeaderBoardSeries(row, leaderboardRankMode)
   })).filter((entry) => entry.points.length);
   const allPoints = series.flatMap((entry) => entry.points);
 
@@ -4049,7 +4088,7 @@ function drawLeaderBoardChart(rows) {
   const xFor = (time) => pad + (((time - minTime) / timeRange) * chartWidth);
   const yFor = (value) => pad + (((maxValue - value) / valueRange) * chartHeight);
   const zeroY = yFor(0);
-  const colors = ["#a855f7", "#f59e0b", "#06b6d4", "#22d3a6", "#60a5fa"];
+  const colors = ["#a855f7", "#f59e0b", "#06b6d4", "#22d3a6", "#60a5fa", "#f97316", "#ef4444", "#facc15"];
 
   context.strokeStyle = "rgba(148, 163, 184, 0.18)";
   context.lineWidth = 1 * scale;
@@ -4072,7 +4111,12 @@ function drawLeaderBoardChart(rows) {
   context.font = `700 ${11 * scale}px Aptos, Segoe UI, sans-serif`;
   context.textAlign = "right";
   [maxValue, (maxValue + minValue) / 2, minValue].forEach((value) => {
-    context.fillText(formatSignedMoney(value), pad - (8 * scale), yFor(value) + (4 * scale));
+    const label = leaderboardRankMode === "trades"
+      ? String(Math.round(value))
+      : leaderboardRankMode === "win-rate"
+        ? formatPercent(value)
+        : formatSignedMoney(value);
+    context.fillText(label, pad - (8 * scale), yFor(value) + (4 * scale));
   });
 
   series.forEach(({ row, points }, index) => {
@@ -4098,13 +4142,20 @@ function drawLeaderBoardChart(rows) {
 
   context.textAlign = "left";
   series.forEach(({ row }, index) => {
-    const x = pad + (index * 145 * scale);
+    const x = pad + ((index % 4) * 175 * scale);
+    const yOffset = Math.floor(index / 4) * 15 * scale;
     const y = height - (18 * scale);
     context.fillStyle = colors[index % colors.length];
-    context.fillRect(x, y - (9 * scale), 9 * scale, 9 * scale);
+    context.fillRect(x, y - yOffset - (9 * scale), 9 * scale, 9 * scale);
     context.fillStyle = "#cfe4ff";
     context.font = `800 ${11 * scale}px Aptos, Segoe UI, sans-serif`;
-    context.fillText(`${row.name.split(" ")[0] || row.email} ${formatSignedMoney(row.totalPnl)}`, x + (15 * scale), y);
+    const metric = getLeaderBoardDisplayValue(row, leaderboardRankMode);
+    const value = leaderboardRankMode === "trades"
+      ? String(metric)
+      : leaderboardRankMode === "win-rate"
+        ? formatPercent(metric)
+        : formatSignedMoney(metric);
+    context.fillText(`${row.name.split(" ")[0] || row.email} ${value}`, x + (15 * scale), y - yOffset);
   });
 }
 
@@ -4118,6 +4169,7 @@ function renderLeaderBoard() {
   const activeRows = rankedRows.filter((row) => row.tradeCount > 0);
   const teamTotal = rankedRows.reduce((total, row) => total + row.totalPnl, 0);
   const topRow = rankedRows[0] || null;
+  const topMetric = topRow ? getLeaderBoardDisplayValue(topRow, leaderboardRankMode) : 0;
   const winRates = activeRows.map((row) => row.winRate).filter(Number.isFinite);
   const averageWinRate = winRates.length
     ? winRates.reduce((total, value) => total + value, 0) / winRates.length
@@ -4128,8 +4180,14 @@ function renderLeaderBoard() {
     leaderboardTeamPnlEl.className = teamTotal >= 0 ? "gain" : "loss";
   }
   if (leaderboardTopPnlEl) {
-    leaderboardTopPnlEl.textContent = topRow ? formatSignedMoney(topRow.totalPnl) : "$0.00";
-    leaderboardTopPnlEl.className = topRow && topRow.totalPnl < 0 ? "loss" : "gain";
+    leaderboardTopPnlEl.textContent = topRow
+      ? leaderboardRankMode === "trades"
+        ? String(topMetric)
+        : leaderboardRankMode === "win-rate"
+          ? formatPercent(topMetric)
+          : formatSignedMoney(topMetric)
+      : "$0.00";
+    leaderboardTopPnlEl.className = topMetric < 0 ? "loss" : "gain";
   }
   if (leaderboardTopNameEl) leaderboardTopNameEl.textContent = topRow ? `${topRow.name} / ${topRow.email}` : "Waiting for trades";
   if (leaderboardActiveCountEl) leaderboardActiveCountEl.textContent = String(activeRows.length);
