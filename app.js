@@ -321,6 +321,7 @@ const confirmedLivePriceTimes = new Map();
 const confirmedLivePriceSources = new Map();
 const priceTickHistory = new Map();
 const productMinimums = new Map();
+const advisorySideState = new Map();
 const LIVE_PRICE_REFRESH_MS = 10000;
 const PAPER_CLOSE_PRICE_REFRESH_MS = 5000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
@@ -354,6 +355,8 @@ const PRICE_TICK_WINDOW_MS = 10 * 60 * 1000;
 const MICRO_PREDICTOR_MIN_TICKS = 6;
 const MICRO_SHORT_TRIGGER_BPS = -3.5;
 const MICRO_LONG_TRIGGER_BPS = 3.5;
+const ADVISORY_SIDE_FLIP_HOLD_MS = 120000;
+const ADVISORY_STRONG_FLIP_BOUNDED = 35;
 const COINBASE_SANDBOX_KEY = "atlas-coinbase-sandbox-enabled";
 const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
@@ -6554,6 +6557,49 @@ function applyAdvisoryOutcomeLearner(commodity, bounded) {
   };
 }
 
+function isActionableTone(tone) {
+  return tone === "long" || tone === "short";
+}
+
+function applyAdvisorySideStability(commodity, signal) {
+  const now = Date.now();
+  const prior = advisorySideState.get(commodity);
+  const nextTone = signal.tone;
+  const priorTone = prior?.tone;
+  const oppositeFlip = isActionableTone(priorTone)
+    && isActionableTone(nextTone)
+    && priorTone !== nextTone;
+  const elapsed = prior?.changedAt ? now - prior.changedAt : Number.POSITIVE_INFINITY;
+  const weakFlip = Math.abs(Number(signal.bounded) || 0) < ADVISORY_STRONG_FLIP_BOUNDED;
+
+  if (oppositeFlip && elapsed < ADVISORY_SIDE_FLIP_HOLD_MS && weakFlip) {
+    return {
+      ...signal,
+      label: "Wait",
+      chipLabel: "Wait",
+      action: "No trade",
+      color: "#735f2d",
+      tone: "wait",
+      stabilityNote: `Direction is unstable: ${priorTone} flipped toward ${nextTone} before the ${Math.round(ADVISORY_SIDE_FLIP_HOLD_MS / 1000)} second hold period confirmed.`
+    };
+  }
+
+  if (!prior || priorTone !== nextTone) {
+    advisorySideState.set(commodity, {
+      tone: nextTone,
+      changedAt: now,
+      bounded: signal.bounded
+    });
+  } else {
+    advisorySideState.set(commodity, {
+      ...prior,
+      bounded: signal.bounded
+    });
+  }
+
+  return signal;
+}
+
 function scoreCommodity(commodity, baseSignals) {
   const tweak = commodityTweaks[commodity] || { trend: 0, inventory: 0, geopolitics: 0, dollar: 0, curve: 0 };
   const baseScore = (
@@ -6613,7 +6659,7 @@ function scoreCommodity(commodity, baseSignals) {
   const karpathyAdjustment = getKarpathyConvictionAdjustment(tone);
   const conviction = clamp(Math.round(baseConviction + karpathyAdjustment), 0, 100);
 
-  return {
+  return applyAdvisorySideStability(commodity, {
     bounded,
     conviction,
     baseConviction,
@@ -6628,7 +6674,7 @@ function scoreCommodity(commodity, baseSignals) {
     action,
     color,
     tone
-  };
+  });
 }
 
 function formatPrice(value) {
@@ -6895,6 +6941,9 @@ function getSignalExplanation(signal, tradePlan) {
 
   if (!tradePlan.priceReady) {
     return "Waiting for a fresh Coinbase price before the advisory can become tradable.";
+  }
+  if (signal.stabilityNote) {
+    return `Waiting because ${signal.stabilityNote}`;
   }
   if (!side) {
     return `Waiting because the advisory is ${signal.label || "Wait"} at ${convictionText} conviction; it needs a long or short call at ${thresholdText}+ before the paper trader can act.`;
