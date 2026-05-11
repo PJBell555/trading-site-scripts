@@ -2137,7 +2137,7 @@ function getServerStrategySettings(user = {}) {
     regimeAware: strategy.regimeAware !== false,
     flatMaxMartingaleSteps: clamp(Math.round(Number(strategy.flatMaxMartingaleSteps) || 2), 1, 8),
     flatSizeMultiplier: clamp(Number(strategy.flatSizeMultiplier) || 0.5, 0.1, 1),
-    flatThresholdBoost: clamp(Math.round(Number(strategy.flatThresholdBoost) || 8), 0, 30),
+    flatThresholdBoost: clamp(Math.round(Number(strategy.flatThresholdBoost) || 4), 0, 30),
     flatMinEdgePercent: clamp(Math.round(Number(strategy.flatMinEdgePercent) || 56), 50, 80),
     flatMinVolatilityBps: clamp(Number(strategy.flatMinVolatilityBps) || 0.8, 0, 20),
     trendingMinEdgePercent: clamp(Math.round(Number(strategy.trendingMinEdgePercent) || 58), 50, 85),
@@ -2550,10 +2550,9 @@ function getServerSecondOpinionConsensus(signal, settings = {}) {
       label = "Second opinions disagree";
       detail = `${oppositeCount}/${opinions.length} server-side second opinions lean ${oppositeSide}; blocking the ${side} entry.`;
     } else if (waitCount >= required) {
-      blocksEntry = true;
-      thresholdBoost = 8;
+      thresholdBoost = 4;
       label = "Second opinions say wait";
-      detail = `${waitCount}/${opinions.length} server-side second opinions say wait; blocking the ${side} entry.`;
+      detail = `${waitCount}/${opinions.length} server-side second opinions say wait; adding a ${thresholdBoost}-point caution buffer instead of blocking the ${side} entry.`;
     } else if (confirmCount < required) {
       blocksEntry = true;
       thresholdBoost = 5;
@@ -3336,6 +3335,78 @@ async function handleD1Settings(env, request, origin) {
   }, 200, origin);
 }
 
+async function handleD1StrategyChange(env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const email = normalizeEmail(body.email);
+  if (!email) {
+    return jsonResponse({ error: "User email is required" }, 400, origin);
+  }
+
+  const patch = body.strategyPatch && typeof body.strategyPatch === "object" && !Array.isArray(body.strategyPatch)
+    ? body.strategyPatch
+    : {};
+  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const profiles = settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+    ? settings.userProfiles
+    : {};
+  const users = Array.isArray(settings.users) ? settings.users : [];
+  const user = users.find((candidate) => normalizeEmail(candidate.email) === email) || { email };
+  const profile = profiles[email] && typeof profiles[email] === "object" && !Array.isArray(profiles[email])
+    ? profiles[email]
+    : {};
+  const before = {
+    ...(user.strategy && typeof user.strategy === "object" ? user.strategy : {}),
+    ...(profile.strategy && typeof profile.strategy === "object" ? profile.strategy : {})
+  };
+  const after = {
+    ...before,
+    ...patch
+  };
+  const changedAt = new Date().toISOString();
+  const historyEntry = {
+    id: String(body.id || `strategy-change-${Date.now()}`),
+    changedAt,
+    changedByName: String(body.changedByName || "Cloudflare Worker").trim(),
+    changedByEmail: normalizeEmail(body.changedByEmail || ""),
+    summary: String(body.summary || "Strategy updated").trim(),
+    detail: String(body.detail || "").trim(),
+    before,
+    after
+  };
+  const strategyHistory = [
+    historyEntry,
+    ...(Array.isArray(profile.strategyHistory) ? profile.strategyHistory : Array.isArray(user.strategyHistory) ? user.strategyHistory : [])
+  ].slice(0, 50);
+
+  profile.strategy = after;
+  profile.strategyHistory = strategyHistory;
+  profiles[email] = profile;
+  user.strategy = after;
+  user.strategyHistory = strategyHistory;
+  if (!users.some((candidate) => normalizeEmail(candidate.email) === email)) users.push(user);
+
+  const nextSettings = {
+    ...settings,
+    users,
+    userProfiles: profiles,
+    generatedAt: changedAt,
+    source: "cloudflare-d1-shared-settings"
+  };
+  await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, nextSettings);
+  await upsertUserStrategyRecordsD1(env, nextSettings);
+
+  return jsonResponse({
+    storage: "d1",
+    email,
+    strategy: after,
+    historyEntry
+  }, 200, origin);
+}
+
 async function handleD1Advisories(env, request, origin) {
   if (request.method === "GET") {
     const payload = await loadAdvisoryPayloadD1(env);
@@ -3854,6 +3925,10 @@ export default {
 
       if (url.pathname === "/settings") {
         return handleSettingsRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/settings/strategy-change") {
+        return handleD1StrategyChange(env, request, origin);
       }
 
       if (url.pathname === "/advisories") {

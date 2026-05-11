@@ -456,7 +456,7 @@ const DEFAULT_USER_STRATEGY = {
   regimeAware: true,
   flatMaxMartingaleSteps: 2,
   flatSizeMultiplier: 0.5,
-  flatThresholdBoost: 8,
+  flatThresholdBoost: 4,
   flatMinEdgePercent: 56,
   flatMinVolatilityBps: 0.8,
   trendingMinEdgePercent: 58,
@@ -2317,10 +2317,9 @@ function getSecondOpinionConsensus(signal) {
       label = "Second opinions disagree";
       detail = `${oppositeCount}/${opinions.length} second opinions lean ${oppositeSide}; blocking the ${side} entry.`;
     } else if (waitCount >= required) {
-      blocksEntry = true;
-      thresholdBoost = 8;
+      thresholdBoost = 4;
       label = "Second opinions say wait";
-      detail = `${waitCount}/${opinions.length} second opinions say wait; blocking the ${side} entry.`;
+      detail = `${waitCount}/${opinions.length} second opinions say wait; adding a ${thresholdBoost}-point caution buffer instead of blocking the ${side} entry.`;
     } else if (confirmCount < required) {
       blocksEntry = true;
       thresholdBoost = 5;
