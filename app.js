@@ -339,6 +339,7 @@ const LLM_REFRESH_HOUR_OPTIONS = [1, 2, 3, 4, 6, 8, 12, 24];
 const LLM_REFRESH_HOURS_KEY = "comhedge-llm-refresh-hours-v1";
 const LLM_SCHEDULE_SLOT_KEY = "comhedge-llm-schedule-slot-v1";
 const LLM_LAST_RUN_KEY = "comhedge-llm-last-run-v1";
+const DEFAULT_PRIMARY_MODEL_ID = "gpt-5-5";
 const PAPER_START_EQUITY = 100000;
 const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
@@ -641,7 +642,7 @@ let activeCustomSkillId = "";
 let skillSearchQuery = "";
 let activeSkillVoiceRecognizer = null;
 let featureTypeFilter = "all";
-let primaryModelId = "sonnet-4.6";
+let primaryModelId = DEFAULT_PRIMARY_MODEL_ID;
 let secondaryModelId = "gpt-5-mini";
 let lastVerifiedLLMRun = null;
 let llmInFlight = false;
@@ -1581,17 +1582,16 @@ function getSelectedSecondOpinionPrompts() {
 }
 
 function saveModelSettings() {
-  window.localStorage.setItem(PRIMARY_MODEL_KEY, primaryModelId);
   window.localStorage.setItem(SECOND_OPINION_MODELS_KEY, JSON.stringify(getSelectedSecondOpinionModels()));
   window.localStorage.setItem(SECOND_OPINION_PROMPTS_KEY, JSON.stringify(getSelectedSecondOpinionPrompts()));
 }
 
 function loadModelSettings() {
+  primaryModelId = DEFAULT_PRIMARY_MODEL_ID;
   try {
-    const storedPrimary = window.localStorage.getItem(PRIMARY_MODEL_KEY);
-    if (advisoryModels.some(({ id }) => id === storedPrimary)) primaryModelId = storedPrimary;
-  } catch (error) {
-    primaryModelId = "gpt-5-5";
+    window.localStorage.removeItem(PRIMARY_MODEL_KEY);
+  } catch (_error) {
+    // Primary model now follows the deployed app default.
   }
 }
 
@@ -2164,6 +2164,89 @@ function getOpinionTone(signal, score) {
   if (signal.tone === "short") return "short";
   if (signal.tone === "long") return "long";
   return "wait";
+}
+
+function getSecondOpinionConsensusModelIds() {
+  const defaults = ["perplexity", "gemini", "claude"];
+  const selected = getStoredSecondOpinionModelIds();
+  const modelIds = selected.length ? selected : defaults;
+  return modelIds
+    .filter((modelId) => modelId !== primaryModelId)
+    .filter((modelId) => advisoryModels.some(({ id }) => id === modelId));
+}
+
+function getSecondOpinionConsensus(signal) {
+  const side = getSignalSide(signal);
+  const modelIds = getSecondOpinionConsensusModelIds();
+  const promptIds = getSelectedSecondOpinionPrompts();
+  const opinions = modelIds.map((modelId) => {
+    const model = getModelById(modelId);
+    const score = getOpinionScore(signal, model, promptIds);
+    const tone = getOpinionTone(signal, score);
+    return { modelId, modelName: model.name, score, tone };
+  });
+  const counts = opinions.reduce((total, opinion) => {
+    total[opinion.tone] = (total[opinion.tone] || 0) + 1;
+    return total;
+  }, { long: 0, short: 0, wait: 0 });
+  const required = opinions.length >= 3 ? Math.max(2, Math.ceil(opinions.length / 2)) : opinions.length;
+  const confirmCount = side ? counts[side] || 0 : 0;
+  const oppositeSide = side === "long" ? "short" : side === "short" ? "long" : null;
+  const oppositeCount = oppositeSide ? counts[oppositeSide] || 0 : 0;
+  const waitCount = counts.wait || 0;
+  let thresholdBoost = 0;
+  let blocksEntry = false;
+  let label = "Second opinions neutral";
+  let detail = "No directional primary advisory for second opinions to gate.";
+
+  if (!opinions.length) {
+    return {
+      enabled: false,
+      opinions,
+      counts,
+      required: 0,
+      confirmCount: 0,
+      thresholdBoost: 0,
+      blocksEntry: false,
+      label: "Second opinion gate off",
+      detail: "No second-opinion models are selected."
+    };
+  }
+
+  if (side) {
+    if (oppositeCount >= required) {
+      blocksEntry = true;
+      thresholdBoost = 10;
+      label = "Second opinions disagree";
+      detail = `${oppositeCount}/${opinions.length} second opinions lean ${oppositeSide}; blocking the ${side} entry.`;
+    } else if (waitCount >= required) {
+      blocksEntry = true;
+      thresholdBoost = 8;
+      label = "Second opinions say wait";
+      detail = `${waitCount}/${opinions.length} second opinions say wait; blocking the ${side} entry.`;
+    } else if (confirmCount < required) {
+      blocksEntry = true;
+      thresholdBoost = 5;
+      label = "Second opinions not confirmed";
+      detail = `${confirmCount}/${opinions.length} second opinions confirm ${side}; need ${required}.`;
+    } else {
+      thresholdBoost = waitCount || oppositeCount ? 3 : 0;
+      label = "Second opinions confirm";
+      detail = `${confirmCount}/${opinions.length} second opinions confirm ${side}.${thresholdBoost ? " Mixed votes add a small threshold buffer." : ""}`;
+    }
+  }
+
+  return {
+    enabled: true,
+    opinions,
+    counts,
+    required,
+    confirmCount,
+    thresholdBoost,
+    blocksEntry,
+    label,
+    detail
+  };
 }
 
 function renderSecondOpinionResults(modelIds) {
@@ -6713,6 +6796,9 @@ function getSignalExplanation(signal, tradePlan) {
   if (Number.isFinite(conviction) && Number.isFinite(threshold) && conviction < threshold) {
     return `Waiting because the ${side} advisory is ${conviction}/${threshold}; the current ${thresholdSource} threshold requires ${threshold}+ conviction before opening a paper trade.`;
   }
+  if (tradePlan.secondOpinionConsensus?.blocksEntry) {
+    return `Waiting because the second-opinion consensus gate blocked this ${side} call: ${tradePlan.secondOpinionConsensus.detail}`;
+  }
   if (tradePlan.regime?.enabled && tradePlan.regime.blocksWeakSetup) {
     return `Waiting because the ${tradePlan.regime.regime} regime marks this as a weak setup; edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`;
   }
@@ -7053,10 +7139,12 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
   const baseEntryThreshold = getPaperEntryThreshold(getSignalSide(signal));
   const coachThresholdBoost = getKarpathyCoachThresholdBoost(signal, regime, userStrategy);
-  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0) + coachThresholdBoost, 1, 100);
+  const secondOpinionConsensus = getSecondOpinionConsensus(signal);
+  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0) + coachThresholdBoost + secondOpinionConsensus.thresholdBoost, 1, 100);
   const thresholdParts = [getPaperEntryThresholdSource()];
   if (regime.enabled && regime.thresholdBoost) thresholdParts.push("regime");
   if (coachThresholdBoost) thresholdParts.push("coach");
+  if (secondOpinionConsensus.thresholdBoost) thresholdParts.push("2nd opinion");
   const entryThresholdSource = thresholdParts.join(" + ");
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
@@ -7121,6 +7209,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     entryThresholdSource,
     baseEntryThreshold,
     coachThresholdBoost,
+    secondOpinionConsensus,
     regime,
     entryThreshold,
     setupGrade,
@@ -7131,6 +7220,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     status,
     steps: [
       `${strategyName}: auto-enter long or short when conviction clears the ${entryThresholdSource} trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
+      `${secondOpinionConsensus.label}: ${secondOpinionConsensus.detail}`,
       `Regime is ${regime.regime}: edge ${regime.edgePercent}%, volatility ${regime.volatility.toFixed(2)} bps, ${regime.momentumAligned ? "momentum aligned" : "confirmation incomplete"}.`,
       `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
@@ -10354,7 +10444,8 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
       && !tradePlan.regime.blocksWeakSetup
       && tradePlan.regime.confirmationOk
     );
-  if (allowOpen && regimeAllowsOpen && getSignalSide(signal) && signal.conviction >= tradePlan.entryThreshold) {
+  const secondOpinionsAllowOpen = !tradePlan.secondOpinionConsensus?.blocksEntry;
+  if (allowOpen && regimeAllowsOpen && secondOpinionsAllowOpen && getSignalSide(signal) && signal.conviction >= tradePlan.entryThreshold) {
     openPaperTrade(commodity, commodityMeta, signal, tradePlan);
   }
 }
@@ -10440,6 +10531,13 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     };
   }
 
+  if (tradePlan.secondOpinionConsensus?.blocksEntry) {
+    return {
+      title: "No trade: second opinions block",
+      detail: tradePlan.secondOpinionConsensus.detail
+    };
+  }
+
   if (tradePlan.regime?.enabled && martingaleStep > tradePlan.regime.maxMartingaleStep) {
     return {
       title: `No trade: ${tradePlan.regime.regime} regime step cap`,
@@ -10496,7 +10594,7 @@ function getDecisionStateLabel(decision, openTrade, signal) {
   if (openTrade) return "Open";
   if (title.includes("ready")) return "Ready";
   if (title.includes("pending")) return "Pending";
-  if (title.includes("backend")) return "Blocked";
+  if (title.includes("backend") || title.includes("block")) return "Blocked";
   if (title.includes("price")) return "No price";
   if (title.includes("conviction")) return "Below threshold";
   if (!getSignalSide(signal)) return "Wait";
@@ -11339,7 +11437,10 @@ function calculateSignal() {
     : primarySignal.outcomeLearner?.ready
       ? ", Outcome learner watching"
       : "";
-  convictionEl.textContent = `${primarySignal.conviction} / 100 (${localBaselineSource} ${Math.round(primarySignal.baseConviction)}${adjustmentText}${learnerText})`;
+  const secondOpinionText = tradePlan.secondOpinionConsensus?.enabled
+    ? `, 2nd opinion ${tradePlan.secondOpinionConsensus.blocksEntry ? "blocked" : tradePlan.secondOpinionConsensus.thresholdBoost ? `+${tradePlan.secondOpinionConsensus.thresholdBoost} threshold` : "confirmed"}`
+    : "";
+  convictionEl.textContent = `${primarySignal.conviction} / 100 (${localBaselineSource} ${Math.round(primarySignal.baseConviction)}${adjustmentText}${learnerText}${secondOpinionText})`;
   if (localConvictionUpdatedEl) {
     localConvictionUpdatedEl.textContent = `Updated ${formatVerifiedTime(new Date())}`;
   }
