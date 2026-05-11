@@ -358,11 +358,42 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
+function getServerModelRoute(modelId, fallbackRoute = ADVISORY_MODEL_DEFAULT) {
+  const id = String(modelId || "").trim();
+  return SERVER_MODEL_ROUTES[id] || id || fallbackRoute;
+}
+
+function normalizeServerModelSettings(settings = {}) {
+  const primaryModelId = SERVER_MODEL_ROUTES[settings.primaryModelId]
+    ? settings.primaryModelId
+    : SERVER_DEFAULT_PRIMARY_MODEL_ID;
+  const criticModelId = settings.criticModelId === false || settings.criticModelId === null || settings.criticModelId === ""
+    ? null
+    : SERVER_MODEL_ROUTES[settings.criticModelId]
+      ? settings.criticModelId
+      : SERVER_DEFAULT_CRITIC_MODEL_ID;
+  return {
+    primaryModelId,
+    criticModelId: criticModelId === primaryModelId ? null : criticModelId,
+    secondOpinionGateEnabled: settings.secondOpinionGateEnabled !== false,
+    secondOpinionModels: normalizeServerSecondOpinionModels(settings.secondOpinionModels)
+      .filter((modelId) => modelId !== primaryModelId),
+    secondOpinionPrompts: normalizeServerSecondOpinionPrompts(settings.secondOpinionPrompts),
+    updatedAt: settings.updatedAt || null,
+    updatedBy: settings.updatedBy || ""
+  };
+}
+
 const ADVISORY_MODEL_DEFAULT = "openai/gpt-5.5";
 const CRITIC_MODEL_DEFAULT = "openai/gpt-5-mini";
+const SERVER_DEFAULT_PRIMARY_MODEL_ID = "gpt-5-5";
+const SERVER_DEFAULT_CRITIC_MODEL_ID = "gpt-5-mini";
 const SERVER_SECOND_OPINION_DEFAULT_MODELS = ["perplexity", "gemini", "claude"];
 const SERVER_SECOND_OPINION_DEFAULT_PROMPTS = ["technician"];
 const SERVER_SECOND_OPINION_MODELS = {
+  "sonnet-4.6": { name: "Sonnet 4.6", tilt: -1 },
+  "haiku-4.5": { name: "Haiku 4.5", tilt: 0 },
+  "gpt-5-mini": { name: "GPT-5-mini", tilt: 0 },
   sonnet: { name: "Sonnet 4.6", tilt: -1 },
   haiku: { name: "Haiku 4.5", tilt: 0 },
   gpt5mini: { name: "GPT-5-mini", tilt: 0 },
@@ -373,6 +404,18 @@ const SERVER_SECOND_OPINION_MODELS = {
   gemini: { name: "Gemini", tilt: 3 },
   claude: { name: "Claude", tilt: -1 },
   grok: { name: "Grok", tilt: 5 }
+};
+const SERVER_MODEL_ROUTES = {
+  "sonnet-4.6": "anthropic/claude-sonnet-4.6",
+  "haiku-4.5": "anthropic/claude-haiku-4.5",
+  "gpt-5-mini": "openai/gpt-5-mini",
+  "gemini-flash": "google/gemini-2.5-flash",
+  "gpt-5-5": "openai/gpt-5.5",
+  "gpt-5-4": "openai/gpt-5.4",
+  perplexity: "perplexity/sonar",
+  gemini: "google/gemini-2.5-flash",
+  claude: "anthropic/claude-sonnet-4.6",
+  grok: "x-ai/grok-4"
 };
 
 const APPROVED_ADVISORY_MODELS = new Set([
@@ -543,7 +586,10 @@ async function createOpenRouterAdvisory(env, body = {}) {
   }
 
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
-  const model = getOpenRouterAdvisoryModel(body.model || body.modelId);
+  const modelSettings = hasRuntimeStore(env)
+    ? normalizeServerModelSettings((await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())).modelSettings)
+    : normalizeServerModelSettings();
+  const model = getOpenRouterAdvisoryModel(getServerModelRoute(modelSettings.primaryModelId));
   const startedAt = Date.now();
 
   const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -1772,6 +1818,7 @@ function defaultSettingsPayload() {
     generatedAt: new Date().toISOString(),
     source: "cloudflare-github-shared-settings",
     coinbaseSandboxEnabled: false,
+    modelSettings: normalizeServerModelSettings(),
     users: [],
     userProfiles: {}
   };
@@ -2000,7 +2047,7 @@ function normalizeServerSecondOpinionPrompts(value) {
   return normalized.length ? [...new Set(normalized)] : [...SERVER_SECOND_OPINION_DEFAULT_PROMPTS];
 }
 
-function getUserPaperSchedulerSettings(user = {}, env) {
+function getUserPaperSchedulerSettings(user = {}, env, modelSettings = normalizeServerModelSettings()) {
   const email = normalizeEmail(user.email);
   const explicit = user.paperTrading && typeof user.paperTrading === "object"
     ? user.paperTrading
@@ -2019,9 +2066,15 @@ function getUserPaperSchedulerSettings(user = {}, env) {
     maxOpenTrades: clamp(Math.round(Number(explicit.maxOpenTrades ?? PAPER_SCHEDULER_DEFAULT_MAX_OPEN) || PAPER_SCHEDULER_DEFAULT_MAX_OPEN), 1, 10),
     entryThreshold: clamp(Math.round(Number(explicit.entryThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD) || PAPER_SCHEDULER_DEFAULT_THRESHOLD), 1, 100),
     minEvaluationMs: Math.max(60000, Number(explicit.minEvaluationMs) || PAPER_SCHEDULER_MIN_EVALUATION_MS),
-    secondOpinionGateEnabled: explicit.secondOpinionGateEnabled !== false,
-    secondOpinionModels: normalizeServerSecondOpinionModels(explicit.secondOpinionModels),
-    secondOpinionPrompts: normalizeServerSecondOpinionPrompts(explicit.secondOpinionPrompts),
+    primaryModelId: modelSettings.primaryModelId,
+    criticModelId: modelSettings.criticModelId,
+    secondOpinionGateEnabled: explicit.secondOpinionGateEnabled ?? modelSettings.secondOpinionGateEnabled,
+    secondOpinionModels: Object.prototype.hasOwnProperty.call(explicit, "secondOpinionModels")
+      ? normalizeServerSecondOpinionModels(explicit.secondOpinionModels)
+      : normalizeServerSecondOpinionModels(modelSettings.secondOpinionModels),
+    secondOpinionPrompts: Object.prototype.hasOwnProperty.call(explicit, "secondOpinionPrompts")
+      ? normalizeServerSecondOpinionPrompts(explicit.secondOpinionPrompts)
+      : normalizeServerSecondOpinionPrompts(modelSettings.secondOpinionPrompts),
     ...normalizeMarketCalendarSettings(explicit),
     lastEvaluationAt: explicit.lastEvaluationAt || null,
     lastDecision: explicit.lastDecision || "Not evaluated yet"
@@ -2448,8 +2501,9 @@ function getServerOpinionTone(signal, score) {
 function getServerSecondOpinionConsensus(signal, settings = {}) {
   const enabled = settings.secondOpinionGateEnabled !== false;
   const side = signal?.side || null;
+  const primaryModelId = settings.primaryModelId || SERVER_DEFAULT_PRIMARY_MODEL_ID;
   const modelIds = normalizeServerSecondOpinionModels(settings.secondOpinionModels)
-    .filter((modelId) => modelId !== "gpt-5-5");
+    .filter((modelId) => modelId !== primaryModelId);
   const promptIds = normalizeServerSecondOpinionPrompts(settings.secondOpinionPrompts);
   const opinions = enabled
     ? modelIds.map((modelId) => {
@@ -2842,6 +2896,7 @@ async function runPaperTradingScheduler(env, options = {}) {
   };
 
   const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const modelSettings = normalizeServerModelSettings(settings.modelSettings);
   const users = Array.isArray(settings.users) ? settings.users : [];
   const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
   const transactions = payload.transactions || [];
@@ -2850,7 +2905,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     for (const user of users) {
       const email = normalizeEmail(user.email);
       if (!email) continue;
-      const schedulerSettings = getUserPaperSchedulerSettings(user, env);
+      const schedulerSettings = getUserPaperSchedulerSettings(user, env, modelSettings);
       if (!schedulerSettings.enabled) continue;
       const lastEvaluationAt = schedulerSettings.lastEvaluationAt ? getTransactionDate(schedulerSettings.lastEvaluationAt) : null;
       if (!options.force && lastEvaluationAt && Date.now() - lastEvaluationAt.getTime() < schedulerSettings.minEvaluationMs) {
@@ -3086,9 +3141,10 @@ async function handlePaperSchedulerRoute(env, request, origin) {
   const url = new URL(request.url);
   if (request.method === "GET") {
     const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const modelSettings = normalizeServerModelSettings(settings.modelSettings);
     const enabledEmails = getEnabledPaperTraderEmails(env);
     const users = (Array.isArray(settings.users) ? settings.users : []).map((user) => {
-      const scheduler = getUserPaperSchedulerSettings(user, env);
+      const scheduler = getUserPaperSchedulerSettings(user, env, modelSettings);
       return {
         name: user.name || "",
         email: user.email || "",
@@ -3108,6 +3164,8 @@ async function handlePaperSchedulerRoute(env, request, origin) {
         dailyReopenTime: scheduler.dailyReopenTime,
         closeBeforeMinutes: scheduler.closeBeforeMinutes,
         marketCalendarNotes: scheduler.marketCalendarNotes,
+        primaryModelId: scheduler.primaryModelId,
+        criticModelId: scheduler.criticModelId,
         secondOpinionGateEnabled: scheduler.secondOpinionGateEnabled,
         secondOpinionModels: scheduler.secondOpinionModels,
         secondOpinionPrompts: scheduler.secondOpinionPrompts,
@@ -3143,6 +3201,10 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
       ? incoming.coinbaseSandboxEnabled
       : Boolean(current.coinbaseSandboxEnabled),
     users: Array.isArray(incoming.users) ? incoming.users : current.users || [],
+    modelSettings: normalizeServerModelSettings({
+      ...(current.modelSettings && typeof current.modelSettings === "object" ? current.modelSettings : {}),
+      ...(incoming.modelSettings && typeof incoming.modelSettings === "object" ? incoming.modelSettings : {})
+    }),
     userProfiles: incoming.userProfiles && typeof incoming.userProfiles === "object" && !Array.isArray(incoming.userProfiles)
       ? mergeUserProfiles(current.userProfiles || {}, incoming.userProfiles)
       : current.userProfiles || {}
@@ -3732,6 +3794,9 @@ export default {
 
         const body = await request.json().catch(() => ({}));
         const startedAt = Date.now();
+        const modelSettings = hasRuntimeStore(env)
+          ? normalizeServerModelSettings((await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())).modelSettings)
+          : normalizeServerModelSettings();
         const primary = await createOpenRouterAdvisory(env, body);
         const primaryTokenLog = await safeRecordTokenUsage(env, {
           provider: "OpenRouter",
@@ -3745,7 +3810,9 @@ export default {
           }
         });
 
-        const criticModel = getOpenRouterCriticModel(body.critic);
+        const criticModel = modelSettings.criticModelId
+          ? getOpenRouterCriticModel(getServerModelRoute(modelSettings.criticModelId))
+          : null;
         if (!criticModel) {
           return jsonResponse({ ...primary, tokenLog: primaryTokenLog }, 200, origin);
         }

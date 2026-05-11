@@ -584,6 +584,40 @@ body {
   gap: 6px;
 }
 
+.token-role-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.token-role-button,
+.token-role-check {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.74);
+  border: 1px solid rgba(96, 165, 250, 0.24);
+  border-radius: 8px;
+  color: #dbeafe;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.76rem;
+  font-weight: 900;
+  gap: 6px;
+  min-height: 30px;
+  padding: 6px 8px;
+}
+
+.token-role-button:disabled,
+.token-role-check:has(input:disabled) {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.token-role-check input {
+  accent-color: #22c55e;
+  margin: 0;
+}
+
 .token-role-pill {
   background: rgba(37, 99, 235, 0.18);
   border: 1px solid rgba(96, 165, 250, 0.26);

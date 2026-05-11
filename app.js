@@ -645,6 +645,14 @@ let activeSkillVoiceRecognizer = null;
 let featureTypeFilter = "all";
 let primaryModelId = DEFAULT_PRIMARY_MODEL_ID;
 let secondaryModelId = "gpt-5-mini";
+let sharedModelSettings = {
+  primaryModelId: DEFAULT_PRIMARY_MODEL_ID,
+  criticModelId: "gpt-5-mini",
+  secondOpinionModels: ["perplexity", "gemini", "claude"],
+  secondOpinionPrompts: ["technician"],
+  updatedAt: null,
+  updatedBy: ""
+};
 let lastVerifiedLLMRun = null;
 let llmInFlight = false;
 let llmAutoCommodityKey = null;
@@ -1582,17 +1590,65 @@ function getSelectedSecondOpinionPrompts() {
   return selected.length ? selected : ["technician"];
 }
 
+function normalizeModelSettings(settings = {}) {
+  const known = new Set(advisoryModels.map(({ id }) => id));
+  const primaryModel = known.has(settings.primaryModelId) ? settings.primaryModelId : DEFAULT_PRIMARY_MODEL_ID;
+  const criticModel = settings.criticModelId === null || settings.criticModelId === false || settings.criticModelId === ""
+    ? null
+    : known.has(settings.criticModelId)
+      ? settings.criticModelId
+      : "gpt-5-mini";
+  const secondOpinionModels = Array.isArray(settings.secondOpinionModels)
+    ? settings.secondOpinionModels.filter((modelId) => known.has(modelId) && modelId !== primaryModel)
+    : ["perplexity", "gemini", "claude"].filter((modelId) => modelId !== primaryModel);
+  const secondOpinionPrompts = Array.isArray(settings.secondOpinionPrompts) && settings.secondOpinionPrompts.length
+    ? settings.secondOpinionPrompts.filter(Boolean)
+    : ["technician"];
+
+  return {
+    primaryModelId: primaryModel,
+    criticModelId: criticModel === primaryModel ? null : criticModel,
+    secondOpinionGateEnabled: settings.secondOpinionGateEnabled !== false,
+    secondOpinionModels,
+    secondOpinionPrompts,
+    updatedAt: settings.updatedAt || null,
+    updatedBy: settings.updatedBy || ""
+  };
+}
+
+function applyModelSettings(settings = sharedModelSettings) {
+  sharedModelSettings = normalizeModelSettings(settings);
+  primaryModelId = sharedModelSettings.primaryModelId;
+  secondaryModelId = sharedModelSettings.criticModelId;
+  renderPrimaryModelSelector();
+  renderSecondOpinionControls();
+}
+
+function getSharedModelSettingsPayload() {
+  return normalizeModelSettings({
+    ...sharedModelSettings,
+    primaryModelId,
+    criticModelId: secondaryModelId,
+    secondOpinionModels: getSelectedSecondOpinionModels(),
+    secondOpinionPrompts: getSelectedSecondOpinionPrompts(),
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentUserProfile()?.email || getCurrentAccessEmail() || ""
+  });
+}
+
 function saveModelSettings() {
-  window.localStorage.setItem(SECOND_OPINION_MODELS_KEY, JSON.stringify(getSelectedSecondOpinionModels()));
-  window.localStorage.setItem(SECOND_OPINION_PROMPTS_KEY, JSON.stringify(getSelectedSecondOpinionPrompts()));
+  sharedModelSettings = getSharedModelSettingsPayload();
+  saveSharedSettings();
 }
 
 function loadModelSettings() {
-  primaryModelId = DEFAULT_PRIMARY_MODEL_ID;
+  applyModelSettings(sharedModelSettings);
   try {
     window.localStorage.removeItem(PRIMARY_MODEL_KEY);
+    window.localStorage.removeItem(SECOND_OPINION_MODELS_KEY);
+    window.localStorage.removeItem(SECOND_OPINION_PROMPTS_KEY);
   } catch (_error) {
-    // Primary model now follows the deployed app default.
+    // Model roles now follow Cloudflare shared settings.
   }
 }
 
@@ -1818,19 +1874,8 @@ function renderPrimaryModelSelector() {
 }
 
 function renderSecondOpinionControls() {
-  let storedModels = null;
-  let storedPrompts = null;
-
-  try {
-    storedModels = JSON.parse(window.localStorage.getItem(SECOND_OPINION_MODELS_KEY) || "null");
-    storedPrompts = JSON.parse(window.localStorage.getItem(SECOND_OPINION_PROMPTS_KEY) || "null");
-  } catch (error) {
-    storedModels = null;
-    storedPrompts = null;
-  }
-
-  const selectedModels = new Set(Array.isArray(storedModels) ? storedModels : ["perplexity", "gemini", "claude"]);
-  const selectedPrompts = new Set(Array.isArray(storedPrompts) ? storedPrompts : ["technician"]);
+  const selectedModels = new Set(sharedModelSettings.secondOpinionModels || ["perplexity", "gemini", "claude"]);
+  const selectedPrompts = new Set(sharedModelSettings.secondOpinionPrompts || ["technician"]);
 
   secondOpinionModelsEl.innerHTML = "";
   advisoryModels
@@ -1868,15 +1913,10 @@ function updateSecondOpinionRunState() {
 }
 
 function getStoredSecondOpinionModelIds() {
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(SECOND_OPINION_MODELS_KEY) || "null");
-    if (Array.isArray(stored)) {
-      return stored.filter((modelId) => modelId !== primaryModelId && advisoryModels.some(({ id }) => id === modelId));
-    }
-  } catch (_error) {
-    // Fall back to the current form state.
+  if (Array.isArray(sharedModelSettings.secondOpinionModels)) {
+    return sharedModelSettings.secondOpinionModels
+      .filter((modelId) => modelId !== primaryModelId && advisoryModels.some(({ id }) => id === modelId));
   }
-
   return secondOpinionModelsEl ? getSelectedSecondOpinionModels() : [];
 }
 
@@ -2086,6 +2126,19 @@ async function renderTokenCosts() {
     const roleMarkup = roles.length
       ? roles.map((role) => `<span class="token-role-pill">${escapeHtml(role)}</span>`).join("")
       : `<span class="token-role-pill token-role-muted">Available</span>`;
+    const isPrimary = model.id === primaryModelId;
+    const isCritic = Boolean(criticModel && model.id === criticModel.id);
+    const isSecondOpinion = secondOpinionIds.has(model.id);
+    const roleControls = `
+      <div class="token-role-actions" aria-label="${escapeHtml(model.name)} model role controls">
+        <button class="token-role-button" type="button" data-token-primary="${escapeHtml(model.id)}" ${isPrimary ? "disabled" : ""}>Primary</button>
+        <button class="token-role-button" type="button" data-token-critic="${escapeHtml(model.id)}" ${isPrimary || isCritic ? "disabled" : ""}>Critic</button>
+        <label class="token-role-check">
+          <input type="checkbox" data-token-second-opinion="${escapeHtml(model.id)}" ${isSecondOpinion ? "checked" : ""} ${isPrimary ? "disabled" : ""}>
+          <span>2nd</span>
+        </label>
+      </div>
+    `;
     const usage = usageByModel.get(model.openrouterId || model.id);
     const cadenceText = usage
       ? `${formatTokenCount(usage.calls)} calls / ${formatTokenCount(usage.totalTokens)} tokens / ${formatTokenCost(usage.billableCostUsd)}`
@@ -2098,7 +2151,10 @@ async function renderTokenCosts() {
           <span>${escapeHtml(model.provider)}</span>
         </div>
         <code>${escapeHtml(model.openrouterId || "Not configured")}</code>
-        <div class="token-role-pills">${roleMarkup}</div>
+        <div>
+          <div class="token-role-pills">${roleMarkup}</div>
+          ${roleControls}
+        </div>
         <span>${escapeHtml(cadenceText)}</span>
       </div>
     `;
@@ -2149,6 +2205,46 @@ async function renderTokenCosts() {
       <p class="token-job-note">Real token usage will appear here after the Worker is connected to D1 and OpenRouter calls are made.</p>
     `;
   }
+}
+
+function persistModelRoleChanges() {
+  sharedModelSettings = normalizeModelSettings({
+    ...sharedModelSettings,
+    primaryModelId,
+    criticModelId: secondaryModelId,
+    updatedAt: new Date().toISOString(),
+    updatedBy: getCurrentUserProfile()?.email || getCurrentAccessEmail() || ""
+  });
+  saveSharedSettings();
+  renderPrimaryModelSelector();
+  renderSecondOpinionControls();
+  renderTokenCosts();
+  lastVerifiedLLMRun = null;
+  llmAutoCommodityKey = null;
+  calculateSignal();
+}
+
+function setPrimaryModelRole(modelId) {
+  if (!advisoryModels.some(({ id }) => id === modelId)) return;
+  primaryModelId = modelId;
+  if (secondaryModelId === modelId) secondaryModelId = modelId === "gpt-5-mini" ? null : "gpt-5-mini";
+  sharedModelSettings.secondOpinionModels = (sharedModelSettings.secondOpinionModels || []).filter((id) => id !== modelId);
+  persistModelRoleChanges();
+}
+
+function setCriticModelRole(modelId) {
+  if (!advisoryModels.some(({ id }) => id === modelId) || modelId === primaryModelId) return;
+  secondaryModelId = modelId;
+  persistModelRoleChanges();
+}
+
+function setSecondOpinionModelRole(modelId, enabled) {
+  if (!advisoryModels.some(({ id }) => id === modelId) || modelId === primaryModelId) return;
+  const current = new Set(sharedModelSettings.secondOpinionModels || []);
+  if (enabled) current.add(modelId);
+  else current.delete(modelId);
+  sharedModelSettings.secondOpinionModels = Array.from(current);
+  persistModelRoleChanges();
 }
 
 function getOpinionScore(signal, model, promptIds) {
@@ -8582,11 +8678,13 @@ async function loadSharedSettings(manual = false) {
     const settings = await response.json();
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
+    applyModelSettings(settings.modelSettings || sharedModelSettings);
     if (usersChanged || profilesChanged) {
       applyCurrentUserPaperSettings();
       renderUserManagement();
       renderLeaderBoard();
     }
+    renderTokenCosts();
     setCoinbaseSandboxEnabled(true);
     calculateSignal();
     nextBackendSettingsSyncAt = 0;
@@ -8613,6 +8711,7 @@ async function saveSharedSettings() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         coinbaseSandboxEnabled: isCoinbaseSandboxEnabled(),
+        modelSettings: sharedModelSettings,
         users: getSharedUsersPayload(),
         userProfiles: getSharedUserProfilesPayload()
       })
@@ -8620,6 +8719,7 @@ async function saveSharedSettings() {
     if (!response.ok) throw new Error("settings save failed");
 
     const data = await response.json();
+    if (data?.settings?.modelSettings) applyModelSettings(data.settings.modelSettings);
     setCoinbaseSandboxEnabled(true);
     return true;
   } catch (error) {
@@ -12067,6 +12167,22 @@ secondOpinionRunAllEl.addEventListener("click", () => {
   renderSecondOpinionResults(modelIds);
 });
 tokenCostsRefreshEl?.addEventListener("click", renderTokenCosts);
+tokenModelListEl?.addEventListener("click", (event) => {
+  const primaryButton = event.target.closest("[data-token-primary]");
+  if (primaryButton) {
+    setPrimaryModelRole(primaryButton.dataset.tokenPrimary);
+    return;
+  }
+  const criticButton = event.target.closest("[data-token-critic]");
+  if (criticButton) {
+    setCriticModelRole(criticButton.dataset.tokenCritic);
+  }
+});
+tokenModelListEl?.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-token-second-opinion]");
+  if (!input) return;
+  setSecondOpinionModelRole(input.dataset.tokenSecondOpinion, input.checked);
+});
 document.querySelectorAll(".token-window-button").forEach((button) => {
   button.addEventListener("click", () => {
     document.querySelectorAll(".token-window-button").forEach((otherButton) => {
