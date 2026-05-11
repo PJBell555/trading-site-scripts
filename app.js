@@ -450,7 +450,7 @@ const LEADERBOARD_RANK_OPTIONS = {
   "open-pnl": { label: "Open P/L", emptyLast: true },
   trades: { label: "Trades", emptyLast: true },
   "win-rate": { label: "Win Rate", emptyLast: true },
-  expectancy: { label: "Expectancy", emptyLast: true }
+  expectancy: { label: "Ave Trade Profit", emptyLast: true }
 };
 const LEADERBOARD_PERIOD_OPTIONS = {
   all: { label: "All Time", ms: null },
@@ -574,10 +574,10 @@ const SKILL_SYSTEM_DETAILS = {
     sections: [
       ["Inputs", "Advisory snapshots, price at call time, future evaluated price, local score, LLM score, tone, and user threshold."],
       ["Accuracy Rules", "Long is correct when price rises after the evaluation window. Short is correct when price falls. Wait/flat calls are measured separately."],
-      ["Dashboards", "Forecast accuracy, trade accuracy, threshold tests, side-specific expectancy, and recent outcome rows."],
+      ["Dashboards", "Forecast accuracy, trade accuracy, threshold tests, side-specific average trade profit, and recent outcome rows."],
       ["What Users Can Tune", "Score threshold, evaluation window, side-specific minimum sample count, and when to allow microstructure vetoes."]
     ],
-    note: "Raising the threshold may improve selectivity, but it can reduce sample count. The useful test is expectancy by side, not headline accuracy alone."
+    note: "Raising the threshold may improve selectivity, but it can reduce sample count. The useful test is average trade profit by side, not headline accuracy alone."
   },
   "paper-execution": {
     label: "Execution simulator",
@@ -589,7 +589,7 @@ const SKILL_SYSTEM_DETAILS = {
       ["Risk Rules", "Per-user commodities, risk percent, max open trades, entry threshold, Martingale step, margin, multiplier, and estimated fees."],
       ["What Users Can Tune", "Enable/disable server trading, commodities, risk %, max open trades, entry threshold, leverage, fees, and contract multiplier."]
     ],
-    note: "This remains paper-only. Live brokerage execution should stay disabled until expectancy is positive and duplicate-order protections are audited."
+    note: "This remains paper-only. Live brokerage execution should stay disabled until average trade profit is positive and duplicate-order protections are audited."
   },
   "karpathy-coach": {
     label: "Feedback coach",
@@ -1286,7 +1286,7 @@ function formatPerformanceSummary(summary) {
   if (!summary.closedCount) return "No closed trades yet";
   const winRate = Number.isFinite(summary.winRate) ? formatPercent(summary.winRate) : "-";
   const expectancy = Number.isFinite(summary.expectancy) ? formatSignedMoney(summary.expectancy) : "-";
-  return `${formatSignedMoney(summary.netPnl)} / ${summary.closedCount} closed / ${winRate} win / ${expectancy} expectancy`;
+  return `${formatSignedMoney(summary.netPnl)} / ${summary.closedCount} closed / ${winRate} win / ${expectancy} ave trade profit`;
 }
 
 function mergeDefaultCustomSkills(rows) {
@@ -10244,7 +10244,7 @@ function renderEdgeDashboard(tradeEvaluations) {
   if (edgeOverallDetailEl) {
     edgeOverallDetailEl.textContent = overallSummary.trades
       ? `${formatSignedMoney(overallSummary.totalPnl)} net P/L across ${overallSummary.trades} closed trades.`
-      : "Expectancy appears after paper trades close.";
+      : "Average trade profit appears after paper trades close.";
   }
   if (edgeFeeDragEl) edgeFeeDragEl.textContent = overallSummary.trades ? formatMoney(overallSummary.averageFees) : "-";
   if (edgeFeeDetailEl) {
@@ -10256,7 +10256,7 @@ function renderEdgeDashboard(tradeEvaluations) {
     edgeBreakdownEl.innerHTML = "";
     const header = document.createElement("div");
     header.className = "edge-breakdown-row edge-breakdown-head";
-    ["Side", "Trades", "Win rate", "Avg win", "Avg loss", "Avg fees", "Expectancy"].forEach((value) => {
+    ["Side", "Trades", "Win rate", "Avg win", "Avg loss", "Avg fees", "Ave Trade Profit"].forEach((value) => {
       const cell = document.createElement("span");
       cell.textContent = value;
       header.append(cell);

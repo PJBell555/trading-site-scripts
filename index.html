@@ -133,7 +133,7 @@
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="open-pnl">Open P/L</button>
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="trades">Trades</button>
           <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="win-rate">Win Rate</button>
-          <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="expectancy">Expectancy</button>
+          <button class="leaderboard-rank-button" type="button" data-leaderboard-rank="expectancy">Ave Trade Profit</button>
         </div>
       </div>
       <div class="leaderboard-rank-toolbar" aria-label="Leader board time window controls">
@@ -174,7 +174,7 @@
                 <th>Open P/L</th>
                 <th>Total P/L</th>
                 <th>Win Rate</th>
-                <th>Expectancy</th>
+                <th>Ave Trade Profit</th>
                 <th>Trades</th>
                 <th>Scheduler</th>
                 <th>Last Trade</th>
@@ -1622,7 +1622,7 @@
           </div>
           <div class="calibration-grid" id="accuracy-calibration-grid"></div>
         </div>
-        <div class="edge-dashboard" aria-label="Trade edge and expectancy dashboard">
+        <div class="edge-dashboard" aria-label="Trade edge and average trade profit dashboard">
           <div class="section-heading edge-dashboard-heading">
             <div>
               <p class="eyebrow">Profitability test</p>
@@ -1632,19 +1632,19 @@
           </div>
           <div class="accuracy-dashboard edge-summary-grid">
             <div class="accuracy-card">
-              <span class="stat-label">Long expectancy</span>
+              <span class="stat-label">Long Ave Trade Profit</span>
               <strong id="edge-long-expectancy">-</strong>
               <p id="edge-long-detail">No closed long trades in this window.</p>
             </div>
             <div class="accuracy-card">
-              <span class="stat-label">Short expectancy</span>
+              <span class="stat-label">Short Ave Trade Profit</span>
               <strong id="edge-short-expectancy">-</strong>
               <p id="edge-short-detail">No closed short trades in this window.</p>
             </div>
             <div class="accuracy-card">
-              <span class="stat-label">Overall expectancy</span>
+              <span class="stat-label">Overall Ave Trade Profit</span>
               <strong id="edge-overall-expectancy">-</strong>
-              <p id="edge-overall-detail">Expectancy appears after paper trades close.</p>
+              <p id="edge-overall-detail">Average trade profit appears after paper trades close.</p>
             </div>
             <div class="accuracy-card">
               <span class="stat-label">Average fee drag</span>
@@ -1652,7 +1652,7 @@
               <p id="edge-fee-detail">Fees are included when stored on trade rows.</p>
             </div>
           </div>
-          <div class="edge-breakdown" id="edge-breakdown" aria-label="Expectancy formula by side"></div>
+          <div class="edge-breakdown" id="edge-breakdown" aria-label="Average trade profit formula by side"></div>
         </div>
         <div class="micro-learning-panel" aria-label="Micro predictor learning loop">
           <div class="section-heading micro-learning-heading">
