@@ -1906,10 +1906,14 @@ function renderSecondOpinionControls() {
 
 function updateSecondOpinionRunState() {
   const count = getSelectedSecondOpinionModels().length;
-  secondOpinionRunSelectedEl.textContent = `Run Selected (${count})`;
-  secondOpinionRunSelectedEl.disabled = count === 0;
-  secondOpinionStatusEl.textContent = `${getModelById(primaryModelId).name} primary`;
+  if (secondOpinionRunSelectedEl) {
+    secondOpinionRunSelectedEl.textContent = `Selected (${count})`;
+    secondOpinionRunSelectedEl.disabled = true;
+  }
+  if (secondOpinionRunAllEl) secondOpinionRunAllEl.disabled = true;
+  secondOpinionStatusEl.textContent = `${getModelById(primaryModelId).name} primary / ${count} gate model${count === 1 ? "" : "s"}`;
   primaryModelStatEl.textContent = getModelById(primaryModelId).name;
+  renderSecondOpinionInfluence();
 }
 
 function getStoredSecondOpinionModelIds() {
@@ -2345,7 +2349,11 @@ function getSecondOpinionConsensus(signal) {
   };
 }
 
-function renderSecondOpinionResults(modelIds) {
+function renderSecondOpinionInfluence() {
+  renderSecondOpinionResults(getSecondOpinionConsensusModelIds(), { recordEvent: false });
+}
+
+function renderSecondOpinionResults(modelIds, options = {}) {
   const signal = lastPrimarySignal;
   const tradePlan = lastTradePlan;
   const commodityMeta = lastCommodityMeta;
@@ -2355,8 +2363,8 @@ function renderSecondOpinionResults(modelIds) {
   secondOpinionResultsEl.innerHTML = "";
 
   if (!signal || !tradePlan) {
-    secondOpinionResultsLabelEl.textContent = "Results (0 opinions)";
-    secondOpinionStatusEl.textContent = "Run the main advisory first";
+    secondOpinionResultsLabelEl.textContent = "Influence values (0 opinions)";
+    secondOpinionStatusEl.textContent = "Waiting for main advisory";
     return;
   }
 
@@ -2411,17 +2419,19 @@ function renderSecondOpinionResults(modelIds) {
     secondOpinionResultsEl.append(card);
   });
 
-  secondOpinionResultsLabelEl.textContent = `Results (${modelIds.length} opinion${modelIds.length === 1 ? "" : "s"})`;
-  secondOpinionStatusEl.textContent = `Prepared ${modelIds.length} local opinion${modelIds.length === 1 ? "" : "s"}`;
-  recordOpenBrainEvent("second-opinion", `Ran ${modelIds.length} second opinion${modelIds.length === 1 ? "" : "s"} for ${commodityMeta.name}`, {
-    commodity: commodityMeta.id,
-    primaryModel: primaryModelId,
-    models: modelIds,
-    prompts: promptIds,
-    primarySignal: signal.label,
-    tags: ["second-opinion", commodityMeta.id, primaryModelId]
-  });
-  saveModelSettings();
+  const consensus = getSecondOpinionConsensus(signal);
+  secondOpinionResultsLabelEl.textContent = `Influence values (${modelIds.length} opinion${modelIds.length === 1 ? "" : "s"}) - ${consensus.label}`;
+  secondOpinionStatusEl.textContent = `${modelIds.length} second-opinion gate model${modelIds.length === 1 ? "" : "s"} saved in Cloudflare`;
+  if (options.recordEvent) {
+    recordOpenBrainEvent("second-opinion", `Viewed ${modelIds.length} second opinion${modelIds.length === 1 ? "" : "s"} for ${commodityMeta.name}`, {
+      commodity: commodityMeta.id,
+      primaryModel: primaryModelId,
+      models: modelIds,
+      prompts: promptIds,
+      primarySignal: signal.label,
+      tags: ["second-opinion", commodityMeta.id, primaryModelId]
+    });
+  }
 }
 
 function getDefaultUsers() {
@@ -11600,6 +11610,7 @@ function calculateSignal() {
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
   maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
   renderAdvisoryAdoptedSystems();
+  renderSecondOpinionInfluence();
   applyLLMDisplayOverride(commodity);
   maybeAutoTriggerLLM();
 }
@@ -12136,10 +12147,12 @@ secondOpinionModelsEl.addEventListener("change", () => {
   updateSecondOpinionRunState();
   saveModelSettings();
   renderTokenCosts();
+  renderSecondOpinionInfluence();
 });
 secondOpinionPromptsEl.addEventListener("change", () => {
   updateSecondOpinionRunState();
   saveModelSettings();
+  renderSecondOpinionInfluence();
 });
 secondOpinionSelectAllEl.addEventListener("click", () => {
   const boxes = Array.from(secondOpinionModelsEl.querySelectorAll("input[type='checkbox']"));
@@ -12150,21 +12163,10 @@ secondOpinionSelectAllEl.addEventListener("click", () => {
   updateSecondOpinionRunState();
   saveModelSettings();
   renderTokenCosts();
+  renderSecondOpinionInfluence();
 });
-secondOpinionRunSelectedEl.addEventListener("click", () => {
-  renderSecondOpinionResults(getSelectedSecondOpinionModels());
-});
-secondOpinionRunAllEl.addEventListener("click", () => {
-  const modelIds = advisoryModels
-    .map(({ id }) => id)
-    .filter((id) => id !== primaryModelId);
-  secondOpinionModelsEl.querySelectorAll("input[type='checkbox']").forEach((input) => {
-    input.checked = modelIds.includes(input.value);
-  });
-  saveModelSettings();
-  renderTokenCosts();
-  renderSecondOpinionResults(modelIds);
-});
+secondOpinionRunSelectedEl?.addEventListener("click", () => renderSecondOpinionInfluence());
+secondOpinionRunAllEl?.addEventListener("click", () => renderSecondOpinionInfluence());
 tokenCostsRefreshEl?.addEventListener("click", renderTokenCosts);
 tokenModelListEl?.addEventListener("click", (event) => {
   const primaryButton = event.target.closest("[data-token-primary]");
