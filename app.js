@@ -122,6 +122,7 @@ const llmRunBtn = document.querySelector("#llm-run-btn");
 const llmStatusEl = document.querySelector("#llm-status");
 const llmVerificationBody = document.querySelector("#llm-verification-body");
 const signalBadge = document.querySelector("#signal-badge");
+const signalStabilityStrip = document.querySelector("#signal-stability-strip");
 const signalExplanationEl = document.querySelector("#signal-explanation");
 const convictionEl = document.querySelector("#conviction");
 const localConvictionUpdatedEl = document.querySelector("#local-conviction-updated");
@@ -6561,6 +6562,22 @@ function isActionableTone(tone) {
   return tone === "long" || tone === "short";
 }
 
+function updateSignalStabilityStrip(signal) {
+  if (!signalStabilityStrip || !signal) return;
+  const decisionTone = signal.tone || "wait";
+  const rawTone = signal.rawTone || decisionTone;
+  const isUnstable = Boolean(signal.stabilityNote);
+  signalStabilityStrip.dataset.unstable = String(isUnstable);
+  signalStabilityStrip.dataset.decisionTone = decisionTone;
+  signalStabilityStrip.dataset.rawTone = rawTone;
+
+  signalStabilityStrip.querySelectorAll("[data-stability-tone]").forEach((pill) => {
+    const tone = pill.dataset.stabilityTone;
+    pill.dataset.active = String(tone === decisionTone);
+    pill.dataset.raw = String(isUnstable && tone === rawTone && tone !== decisionTone);
+  });
+}
+
 function applyAdvisorySideStability(commodity, signal) {
   const now = Date.now();
   const prior = advisorySideState.get(commodity);
@@ -6580,6 +6597,8 @@ function applyAdvisorySideStability(commodity, signal) {
       action: "No trade",
       color: "#735f2d",
       tone: "wait",
+      rawTone: nextTone,
+      heldTone: priorTone,
       stabilityNote: `Direction is unstable: ${priorTone} flipped toward ${nextTone} before the ${Math.round(ADVISORY_SIDE_FLIP_HOLD_MS / 1000)} second hold period confirmed.`
     };
   }
@@ -6597,7 +6616,10 @@ function applyAdvisorySideStability(commodity, signal) {
     });
   }
 
-  return signal;
+  return {
+    ...signal,
+    rawTone: nextTone
+  };
 }
 
 function scoreCommodity(commodity, baseSignals) {
@@ -6943,7 +6965,8 @@ function getSignalExplanation(signal, tradePlan) {
     return "Waiting for a fresh Coinbase price before the advisory can become tradable.";
   }
   if (signal.stabilityNote) {
-    return `Waiting because ${signal.stabilityNote}`;
+    const rawSide = isActionableTone(signal.rawTone) ? formatSide(signal.rawTone).toLowerCase() : "the opposite side";
+    return `Waiting because the advisory is unstable. The decision stays at Wait while the raw signal is flicking toward ${rawSide}; wait for the direction to hold before opening a paper trade.`;
   }
   if (!side) {
     return `Waiting because the advisory is ${signal.label || "Wait"} at ${convictionText} conviction; it needs a long or short call at ${thresholdText}+ before the paper trader can act.`;
@@ -11596,6 +11619,7 @@ function calculateSignal() {
     : `${primaryModelName}${secondaryModelName ? " + " + secondaryModelName : ""} scheduled 12 AM, 6 AM, 12 PM, 6 PM ET`;
   signalBadge.textContent = primarySignal.label;
   signalBadge.style.background = primarySignal.color;
+  updateSignalStabilityStrip(primarySignal);
   if (signalExplanationEl) signalExplanationEl.textContent = getSignalExplanation(primarySignal, tradePlan);
   const localBaselineSource = primarySignal.manualOverride === null ? "local heuristic" : "LLM/manual baseline";
   const adjustmentText = primarySignal.karpathyAdjustment
