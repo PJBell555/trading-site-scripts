@@ -2141,7 +2141,11 @@ function getServerStrategySettings(user = {}) {
     flatMinEdgePercent: clamp(Math.round(Number(strategy.flatMinEdgePercent) || 56), 50, 80),
     flatMinVolatilityBps: clamp(Number(strategy.flatMinVolatilityBps) || 0.8, 0, 20),
     trendingMinEdgePercent: clamp(Math.round(Number(strategy.trendingMinEdgePercent) || 58), 50, 85),
-    trendingMinVolatilityBps: clamp(Number(strategy.trendingMinVolatilityBps) || 1.2, 0, 20)
+    trendingMinVolatilityBps: clamp(Number(strategy.trendingMinVolatilityBps) || 1.2, 0, 20),
+    breakoutParticipation: strategy.breakoutParticipation !== false,
+    breakoutMinEdgePercent: clamp(Math.round(Number(strategy.breakoutMinEdgePercent) || 55), 50, 80),
+    breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
+    breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50)
   };
 }
 
@@ -2597,10 +2601,139 @@ async function getLatestServerMicroPrediction(env, commodity) {
     longTrigger: Boolean(row.long_trigger),
     ret10: Number(payload.ret10),
     ret30: Number(payload.ret30),
+    ret60: Number(payload.ret60),
+    ret180: Number(payload.ret180),
     vwapDistance: Number(payload.vwapDistance),
     volatility: Number(payload.volatility),
     predictionTime: row.prediction_time
   };
+}
+
+async function getServerAdvisoryBreakoutContext(env, commodity, strategy) {
+  if (!strategy.breakoutParticipation) return null;
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM advisory_snapshots
+    WHERE commodity = ?
+    ORDER BY snapshot_time DESC
+    LIMIT 80
+  `).bind(commodity).all();
+  const snapshots = getResults(result)
+    .map((row) => parseStoredJson(row.payload_json))
+    .filter((entry) => entry && Number.isFinite(Number(entry.price)) && ["long", "short", "wait"].includes(entry.tone));
+
+  if (snapshots.length < 6) return null;
+
+  const latest = snapshots[0];
+  const oldest = snapshots[snapshots.length - 1];
+  const latestPrice = Number(latest.price);
+  const oldestPrice = Number(oldest.price);
+  const moveBps = oldestPrice > 0 ? ((latestPrice - oldestPrice) / oldestPrice) * 10000 : 0;
+  const longCount = snapshots.filter((entry) => entry.tone === "long").length;
+  const shortCount = snapshots.filter((entry) => entry.tone === "short").length;
+  const longShare = Math.round((longCount / snapshots.length) * 100);
+  const shortShare = Math.round((shortCount / snapshots.length) * 100);
+  const ordered = snapshots
+    .slice()
+    .sort((a, b) => new Date(a.time || 0) - new Date(b.time || 0));
+  const evaluated = { long: { total: 0, correct: 0 }, short: { total: 0, correct: 0 } };
+  ordered.forEach((entry, index) => {
+    if (entry.tone !== "long" && entry.tone !== "short") return;
+    const entryTime = new Date(entry.time || 0).getTime();
+    const entryPrice = Number(entry.price);
+    if (!Number.isFinite(entryTime) || !Number.isFinite(entryPrice) || entryPrice <= 0) return;
+    const after = ordered.slice(index + 1).find((candidate) => {
+      const candidateTime = new Date(candidate.time || 0).getTime();
+      return Number.isFinite(candidateTime) && candidateTime >= entryTime + 60 * 1000 && Number.isFinite(Number(candidate.price));
+    });
+    if (!after) return;
+    const afterPrice = Number(after.price);
+    const delta = afterPrice - entryPrice;
+    evaluated[entry.tone].total += 1;
+    if ((entry.tone === "long" && delta > 0) || (entry.tone === "short" && delta < 0)) {
+      evaluated[entry.tone].correct += 1;
+    }
+  });
+  const longAccuracy = evaluated.long.total ? Math.round((evaluated.long.correct / evaluated.long.total) * 100) : 0;
+  const shortAccuracy = evaluated.short.total ? Math.round((evaluated.short.correct / evaluated.short.total) * 100) : 0;
+  const minMove = Number(strategy.breakoutMinMoveBps) || 0;
+  const minAccuracy = Math.max(60, Number(strategy.breakoutMinEdgePercent) || 60);
+  const minForecasts = 6;
+
+  return {
+    ready: true,
+    count: snapshots.length,
+    longCount,
+    shortCount,
+    longShare,
+    shortShare,
+    longEvaluated: evaluated.long.total,
+    shortEvaluated: evaluated.short.total,
+    longAccuracy,
+    shortAccuracy,
+    moveBps,
+    longConfirmed: evaluated.long.total >= minForecasts && longAccuracy >= minAccuracy && moveBps >= minMove,
+    shortConfirmed: evaluated.short.total >= minForecasts && shortAccuracy >= minAccuracy && moveBps <= -minMove
+  };
+}
+
+function getServerBreakoutParticipationSignal(signal, micro, strategy, advisoryBreakout = null) {
+  if (!strategy.breakoutParticipation || (!micro?.ready && !advisoryBreakout?.ready)) return null;
+
+  const upEdge = Math.round((Number.isFinite(Number(micro?.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
+  const downEdge = Math.round((Number.isFinite(Number(micro?.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+  const volatility = Number(micro?.volatility) || 0;
+  const minMove = Number(strategy.breakoutMinMoveBps) || 0;
+  const ret10 = Number(micro?.ret10) || 0;
+  const ret30 = Number(micro?.ret30) || 0;
+  const ret60 = Number(micro?.ret60) || 0;
+  const vwapDistance = Number(micro?.vwapDistance) || 0;
+  const microLongConfirmed = Boolean(
+    micro?.ready
+    && (micro.longTrigger || (ret10 > 0 && ret30 > 0))
+    && ret60 >= minMove
+    && vwapDistance > 0
+    && upEdge >= strategy.breakoutMinEdgePercent
+    && volatility >= strategy.breakoutMinVolatilityBps
+  );
+  const microShortConfirmed = Boolean(
+    micro?.ready
+    && (micro.shortTrigger || (ret10 < 0 && ret30 < 0))
+    && ret60 <= -minMove
+    && vwapDistance < 0
+    && downEdge >= strategy.breakoutMinEdgePercent
+    && volatility >= strategy.breakoutMinVolatilityBps
+  );
+  const longConfirmed = microLongConfirmed || Boolean(advisoryBreakout?.longConfirmed);
+  const shortConfirmed = microShortConfirmed || Boolean(advisoryBreakout?.shortConfirmed);
+  const advisorySide = signal?.side || null;
+  const advisoryConviction = Number(signal?.conviction) || 0;
+
+  if (longConfirmed && !(advisorySide === "short" && advisoryConviction >= 58)) {
+    const detail = microLongConfirmed
+      ? `Breakout participation: up edge ${upEdge}%, 60s move ${ret60.toFixed(2)} bps, VWAP +${vwapDistance.toFixed(2)} bps, volatility ${volatility.toFixed(2)} bps.`
+      : `Breakout participation: long forecast accuracy is ${advisoryBreakout.longAccuracy}% across ${advisoryBreakout.longEvaluated} evaluated samples while price moved ${advisoryBreakout.moveBps.toFixed(2)} bps.`;
+    return {
+      side: "long",
+      label: "Breakout Long",
+      conviction: Math.max(advisoryConviction, strategy.breakoutMinEdgePercent),
+      detail
+    };
+  }
+
+  if (shortConfirmed && !(advisorySide === "long" && advisoryConviction >= 58)) {
+    const detail = microShortConfirmed
+      ? `Breakout participation: down edge ${downEdge}%, 60s move ${ret60.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps, volatility ${volatility.toFixed(2)} bps.`
+      : `Breakout participation: short forecast accuracy is ${advisoryBreakout.shortAccuracy}% across ${advisoryBreakout.shortEvaluated} evaluated samples while price moved ${advisoryBreakout.moveBps.toFixed(2)} bps.`;
+    return {
+      side: "short",
+      label: "Breakout Short",
+      conviction: Math.max(advisoryConviction, strategy.breakoutMinEdgePercent),
+      detail
+    };
+  }
+
+  return null;
 }
 
 function getServerRegimeAssessment(signal, micro, strategy) {
@@ -3014,9 +3147,15 @@ async function runPaperTradingScheduler(env, options = {}) {
         }
 
         const signal = getServerSignal(advisory);
-        const micro = strategySettings.regimeAware ? await getLatestServerMicroPrediction(env, commodity) : null;
+        const micro = (strategySettings.regimeAware || strategySettings.breakoutParticipation)
+          ? await getLatestServerMicroPrediction(env, commodity)
+          : null;
         const regime = getServerRegimeAssessment(signal, micro, strategySettings);
         const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
+        const advisoryBreakout = strategySettings.breakoutParticipation
+          ? await getServerAdvisoryBreakoutContext(env, commodity, strategySettings)
+          : null;
+        const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
             + (regime.enabled ? regime.thresholdBoost : 0)
@@ -3024,30 +3163,33 @@ async function runPaperTradingScheduler(env, options = {}) {
           1,
           100
         );
-        if (!signal.side || signal.conviction < effectiveThreshold) {
+        if ((!signal.side || signal.conviction < effectiveThreshold) && !breakoutSignal) {
           lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
           run.skippedTrades += 1;
           continue;
         }
 
-        if (secondOpinionConsensus.blocksEntry) {
+        if (secondOpinionConsensus.blocksEntry && !breakoutSignal) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
           run.skippedTrades += 1;
           continue;
         }
 
-        const step = getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps);
-        if (regime.enabled && step > regime.maxMartingaleStep) {
+        const activeSignal = breakoutSignal
+          ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
+          : signal;
+        const step = breakoutSignal ? 1 : getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps);
+        if (!breakoutSignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
           run.skippedTrades += 1;
           continue;
         }
-        if (regime.enabled && !regime.confirmationOk) {
+        if (!breakoutSignal && regime.enabled && !regime.confirmationOk) {
           lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
           run.skippedTrades += 1;
           continue;
         }
-        const terms = getServerTradeTerms(config, signal.side, price.price, step, regime.enabled ? regime.sizeMultiplier : 1);
+        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, breakoutSignal ? strategySettings.flatSizeMultiplier : regime.enabled ? regime.sizeMultiplier : 1);
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
@@ -3055,8 +3197,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           userName: user.name || "",
           commodity,
           commodityName: config.name,
-          action: signal.side === "short" ? "SELL SHORT" : "BUY",
-          side: signal.side,
+          action: activeSignal.side === "short" ? "SELL SHORT" : "BUY",
+          side: activeSignal.side,
           step,
           contract: config.ticker,
           contractMonth: config.contractMonth,
@@ -3077,13 +3219,15 @@ async function runPaperTradingScheduler(env, options = {}) {
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
-          note: `Server scheduler opened ${config.name} ${signal.side} at ${signal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
+          note: breakoutSignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} via ${price.source}; ${breakoutSignal.detail}`
+            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
         await recordOpenBrainServerEvent(
           env,
           "paper-trade",
-          `${open.action} ${open.contract} at ${price.price.toFixed(2)} with net P/L 0.00`,
+            `${open.action} ${open.contract} at ${price.price.toFixed(2)} with net P/L 0.00`,
           {
             id: `memory-${getTransactionKey(open)}`,
             source: "cloudflare-paper-scheduler",
@@ -3101,7 +3245,9 @@ async function runPaperTradingScheduler(env, options = {}) {
         );
         run.openedTrades += 1;
         activeOpenCount += 1;
-        lastDecision = `${commodity}: opened ${signal.side} at ${price.price}`;
+        lastDecision = breakoutSignal
+          ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
+          : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
       }
 
       updateUserPaperSchedulerSettings(user, {

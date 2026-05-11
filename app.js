@@ -396,6 +396,9 @@ const ADVISORY_SNAPSHOT_KEY = "atlas-last-advisory-snapshot-key";
 const ACCESS_STATE_KEY = "atlas-access-unlocked";
 const ACCESS_EMAIL_KEY = "atlas-access-email";
 const ACCESS_SESSION_RECORDED_KEY = "atlas-access-session-recorded";
+const ACCESS_SESSION_ID_KEY = "atlas-access-session-id";
+const SESSION_HEARTBEAT_MS = 300000;
+const ACTIVE_SESSION_WINDOW_MS = 10 * 60 * 1000;
 const ACCESS_PASSWORD_HASH = "55bdd6bb9b1839c8f8e7c3459e61f5537d0691c6b4c8fa827d594708f4d63db2";
 const USER_ROSTER_KEY = "atlas-user-roster-v1";
 const LEGACY_LEDGER_USER_EMAIL = "peter@pjbell.com";
@@ -497,7 +500,11 @@ const DEFAULT_USER_STRATEGY = {
   flatMinEdgePercent: 56,
   flatMinVolatilityBps: 0.8,
   trendingMinEdgePercent: 58,
-  trendingMinVolatilityBps: 1.2
+  trendingMinVolatilityBps: 1.2,
+  breakoutParticipation: true,
+  breakoutMinEdgePercent: 55,
+  breakoutMinVolatilityBps: 0.8,
+  breakoutMinMoveBps: 3
 };
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
@@ -2985,7 +2992,11 @@ function normalizeUserStrategy(strategy = {}) {
     flatMinEdgePercent: clamp(Math.round(Number(merged.flatMinEdgePercent) || DEFAULT_USER_STRATEGY.flatMinEdgePercent), 50, 80),
     flatMinVolatilityBps: clamp(Number(merged.flatMinVolatilityBps) || DEFAULT_USER_STRATEGY.flatMinVolatilityBps, 0, 20),
     trendingMinEdgePercent: clamp(Math.round(Number(merged.trendingMinEdgePercent) || DEFAULT_USER_STRATEGY.trendingMinEdgePercent), 50, 85),
-    trendingMinVolatilityBps: clamp(Number(merged.trendingMinVolatilityBps) || DEFAULT_USER_STRATEGY.trendingMinVolatilityBps, 0, 20)
+    trendingMinVolatilityBps: clamp(Number(merged.trendingMinVolatilityBps) || DEFAULT_USER_STRATEGY.trendingMinVolatilityBps, 0, 20),
+    breakoutParticipation: merged.breakoutParticipation !== false,
+    breakoutMinEdgePercent: clamp(Math.round(Number(merged.breakoutMinEdgePercent) || DEFAULT_USER_STRATEGY.breakoutMinEdgePercent), 50, 80),
+    breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
+    breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50)
   };
 }
 
@@ -3054,13 +3065,18 @@ const STRATEGY_HISTORY_FIELDS = [
   ["flatMinEdgePercent", "Flat/mixed minimum edge"],
   ["flatMinVolatilityBps", "Flat/mixed minimum volatility"],
   ["trendingMinEdgePercent", "Trending minimum edge"],
-  ["trendingMinVolatilityBps", "Trending minimum volatility"]
+  ["trendingMinVolatilityBps", "Trending minimum volatility"],
+  ["breakoutParticipation", "Breakout participation"],
+  ["breakoutMinEdgePercent", "Breakout minimum edge"],
+  ["breakoutMinVolatilityBps", "Breakout minimum volatility"],
+  ["breakoutMinMoveBps", "Breakout minimum move"]
 ];
 
 function formatStrategyFieldValue(key, value) {
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (key.toLowerCase().includes("percent")) return `${value}%`;
   if (key.toLowerCase().includes("volatility")) return `${formatNumberInput(value, 2)} bps`;
+  if (key === "breakoutMinMoveBps") return `${formatNumberInput(value, 2)} bps`;
   if (key === "flatSizeMultiplier") return `${formatNumberInput(value, 2)}x`;
   return String(value ?? "");
 }
@@ -3166,6 +3182,10 @@ function getStrategyChangeSummary(before, after) {
   if (before.flatMinVolatilityBps !== after.flatMinVolatilityBps) changes.push("flat-regime volatility minimum");
   if (before.trendingMinEdgePercent !== after.trendingMinEdgePercent) changes.push("trending edge minimum");
   if (before.trendingMinVolatilityBps !== after.trendingMinVolatilityBps) changes.push("trending volatility minimum");
+  if (before.breakoutParticipation !== after.breakoutParticipation) changes.push(after.breakoutParticipation ? "enabled breakout participation" : "disabled breakout participation");
+  if (before.breakoutMinEdgePercent !== after.breakoutMinEdgePercent) changes.push("breakout edge minimum");
+  if (before.breakoutMinVolatilityBps !== after.breakoutMinVolatilityBps) changes.push("breakout volatility minimum");
+  if (before.breakoutMinMoveBps !== after.breakoutMinMoveBps) changes.push("breakout move minimum");
   return changes.length ? `Changed ${changes.join(", ")}` : "No material strategy change";
 }
 
@@ -4434,7 +4454,11 @@ function saveUserStrategySettings(user, container) {
     flatMinEdgePercent: container.querySelector("[data-strategy-field='flatMinEdgePercent']")?.value,
     flatMinVolatilityBps: container.querySelector("[data-strategy-field='flatMinVolatilityBps']")?.value,
     trendingMinEdgePercent: container.querySelector("[data-strategy-field='trendingMinEdgePercent']")?.value,
-    trendingMinVolatilityBps: container.querySelector("[data-strategy-field='trendingMinVolatilityBps']")?.value
+    trendingMinVolatilityBps: container.querySelector("[data-strategy-field='trendingMinVolatilityBps']")?.value,
+    breakoutParticipation: container.querySelector("[data-strategy-field='breakoutParticipation']")?.checked,
+    breakoutMinEdgePercent: container.querySelector("[data-strategy-field='breakoutMinEdgePercent']")?.value,
+    breakoutMinVolatilityBps: container.querySelector("[data-strategy-field='breakoutMinVolatilityBps']")?.value,
+    breakoutMinMoveBps: container.querySelector("[data-strategy-field='breakoutMinMoveBps']")?.value
   });
 
   const changed = recordUserStrategyChange(user, before, strategy);
@@ -4592,6 +4616,10 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "flatMinVolatilityBps", label: "Flat/mixed minimum volatility", value: strategy.flatMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps" },
     { key: "trendingMinEdgePercent", label: "Trending minimum edge", value: strategy.trendingMinEdgePercent, type: "number", min: 50, max: 85, step: 1, suffix: "%" },
     { key: "trendingMinVolatilityBps", label: "Trending minimum volatility", value: strategy.trendingMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps" },
+    { key: "breakoutParticipation", label: "Breakout participation", value: strategy.breakoutParticipation, type: "checkbox", on: "Small step-1 long/short entries allowed on confirmed breakouts", off: "Off", help: "Lets the Cloudflare scheduler take a small step-1 trade when Coinbase microstructure confirms a strong upside or downside breakout, even if the slower advisory score has not fully cleared its normal threshold." },
+    { key: "breakoutMinEdgePercent", label: "Breakout minimum edge", value: strategy.breakoutMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%", help: "Minimum micro predictor probability required before the breakout override can participate. Applies to both long and short breakouts." },
+    { key: "breakoutMinVolatilityBps", label: "Breakout minimum volatility", value: strategy.breakoutMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps", help: "Minimum live tick volatility required. This prevents breakout trades in dead or flat tape." },
+    { key: "breakoutMinMoveBps", label: "Breakout minimum move", value: strategy.breakoutMinMoveBps, type: "number", min: 0, max: 50, step: 0.1, suffix: " bps", help: "Minimum 60-second directional move. Positive move can trigger long, negative move can trigger short." },
     { key: "skillsAccess", label: "Skills context", value: strategy.skillsAccess, type: "checkbox", on: strategy.skillFocus, off: "Disabled" },
     { key: "openBrainAccess", label: "Open Brain context", value: strategy.openBrainAccess, type: "checkbox", on: "Enabled", off: "Disabled" }
   ];
@@ -4638,8 +4666,8 @@ function renderStrategyEnginePanel(user = getCurrentUserProfile(), strategy = ge
       </div>
       <div class="strategy-engine-grid">
         ${rows.map((rule) => `
-          <div class="strategy-engine-rule">
-            <span>${escapeHtml(rule.label)}</span>
+          <div class="strategy-engine-rule"${rule.help ? ` title="${escapeHtml(rule.help)}"` : ""}>
+            <span>${escapeHtml(rule.label)}${rule.help ? ` <button class="inline-help-button" type="button" aria-label="${escapeHtml(rule.label)} help" title="${escapeHtml(rule.help)}">?</button>` : ""}</span>
             ${rule.type === "checkbox" ? `
               <label class="strategy-engine-toggle">
                 <input data-strategy-engine-field="${escapeHtml(rule.key)}" type="checkbox"${rule.value ? " checked" : ""}>
@@ -4882,6 +4910,7 @@ function createUserProfilePanel(user) {
   const actionsCard = document.createElement("section");
   const historyCard = document.createElement("section");
   const history = getUserSessionHistory(user);
+  const activeSessions = history.filter((session) => isSessionActive(session));
   const emailKey = normalizeEmail(user.email);
   const isEditing = editingUserEmail === emailKey;
 
@@ -5236,6 +5265,22 @@ function createUserProfilePanel(user) {
         Trending min volatility bps
         <input data-strategy-field="trendingMinVolatilityBps" type="number" min="0" max="20" step="0.1" value="${formatNumberInput(strategy.trendingMinVolatilityBps, 2)}">
       </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="breakoutParticipation" type="checkbox"${strategy.breakoutParticipation ? " checked" : ""} title="Lets the Cloudflare scheduler take a small step-1 trade when Coinbase microstructure confirms a strong upside or downside breakout, even if the slower advisory score has not fully cleared its normal threshold.">
+        Breakout participation <span class="profile-field-hint" title="Long and short both work. The scheduler still requires live tape confirmation, volatility, VWAP alignment, and no open trade.">small step-1 confirmed breakout trades</span>
+      </label>
+      <label>
+        Breakout min edge % <span class="profile-field-hint" title="Minimum micro predictor probability before breakout participation can open a long or short.">?</span>
+        <input data-strategy-field="breakoutMinEdgePercent" type="number" min="50" max="80" step="1" value="${strategy.breakoutMinEdgePercent}" title="Minimum micro predictor probability before breakout participation can open a long or short.">
+      </label>
+      <label>
+        Breakout min volatility bps <span class="profile-field-hint" title="Minimum live tick volatility. This avoids entering during flat, inactive tape.">?</span>
+        <input data-strategy-field="breakoutMinVolatilityBps" type="number" min="0" max="20" step="0.1" value="${formatNumberInput(strategy.breakoutMinVolatilityBps, 2)}" title="Minimum live tick volatility. This avoids entering during flat, inactive tape.">
+      </label>
+      <label>
+        Breakout min 60s move bps <span class="profile-field-hint" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">?</span>
+        <input data-strategy-field="breakoutMinMoveBps" type="number" min="0" max="50" step="0.1" value="${formatNumberInput(strategy.breakoutMinMoveBps, 2)}" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">
+      </label>
       <label class="profile-strategy-wide">
         Strategy definition <span class="profile-field-hint">notes only until mapped to executable fields</span>
         <textarea data-strategy-field="description" rows="3">${escapeHtml(strategy.description)}</textarea>
@@ -5443,6 +5488,7 @@ function createUserProfilePanel(user) {
     <h3>Session Statistics</h3>
     <div class="profile-stat-grid">
       <div><span>Total Sessions</span><strong>${Number(user.sessions) || history.length}</strong></div>
+      <div><span>Active Sessions</span><strong>${activeSessions.length ? `${activeSessions.length} active` : "None"}</strong></div>
       <div><span>Unique Devices</span><strong>${getUniqueSessionCount(user, "device") || 1}</strong></div>
       <div><span>Unique Locations</span><strong>${getUniqueSessionCount(user, "location") || 1}</strong></div>
       <div><span>Last Active</span><strong>${formatRelativeDate(user.lastActiveAt)}</strong></div>
@@ -5483,20 +5529,25 @@ function createUserProfilePanel(user) {
   const table = document.createElement("table");
   table.className = "profile-session-table";
   table.innerHTML = `
-    <thead><tr><th>Timestamp</th><th>Device</th><th>Location</th><th>Colo</th></tr></thead>
+    <thead><tr><th>Timestamp</th><th>Status</th><th>Device</th><th>Location</th><th>Colo</th></tr></thead>
     <tbody></tbody>
   `;
   const tbody = table.querySelector("tbody");
   (history.length ? history : [{ time: null, device: "-", location: "-", colo: "-" }]).slice(0, 8).forEach((session) => {
     const row = document.createElement("tr");
+    const active = isSessionActive(session);
     [
-      session.time ? `${formatTradeTime(session.time)} (${formatRelativeDate(session.time)})` : "No sessions recorded",
+      session.lastSeenAt
+        ? `${formatTradeTime(session.lastSeenAt)} (${formatRelativeDate(session.lastSeenAt)})`
+        : session.time ? `${formatTradeTime(session.time)} (${formatRelativeDate(session.time)})` : "No sessions recorded",
+      active ? "Active" : "Inactive",
       [session.device || "Unknown", session.platform || ""].filter(Boolean).join(" / "),
       session.location || "Unknown",
       session.colo || "unknown"
-    ].forEach((value) => {
+    ].forEach((value, index) => {
       const cell = document.createElement("td");
       cell.textContent = value;
+      if (index === 1) cell.className = active ? "session-status-active" : "session-status-inactive";
       row.append(cell);
     });
     tbody.append(row);
@@ -5958,30 +6009,70 @@ function renderUserManagement() {
 }
 
 function markCurrentSessionActive() {
-  if (window.sessionStorage.getItem(ACCESS_SESSION_RECORDED_KEY) === "true") return;
   const user = findRegisteredUserByEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
   if (!user) return;
 
-  user.lastActiveAt = new Date().toISOString();
-  user.sessions = Math.max(1, Number(user.sessions || 0) + 1);
-  user.sessionHistory = [
-    {
-      time: user.lastActiveAt,
-      device: "Desktop",
-      platform: window.navigator?.platform || "Browser",
-      location: "Unknown",
-      colo: "local"
-    },
-    ...(Array.isArray(user.sessionHistory) ? user.sessionHistory : [])
-  ].slice(0, 25);
+  updateCurrentSessionHeartbeat(user, window.sessionStorage.getItem(ACCESS_SESSION_RECORDED_KEY) !== "true");
   saveUserRoster();
   saveSharedSettings();
-  recordOpenBrainEvent("login", `${user.name || user.email} logged in`, {
-    userId: user.id,
-    email: user.email,
-    tags: ["login", normalizeEmail(user.email)]
-  });
+  if (window.sessionStorage.getItem(ACCESS_SESSION_RECORDED_KEY) !== "true") {
+    recordOpenBrainEvent("login", `${user.name || user.email} logged in`, {
+      userId: user.id,
+      email: user.email,
+      tags: ["login", normalizeEmail(user.email)]
+    });
+  }
   window.sessionStorage.setItem(ACCESS_SESSION_RECORDED_KEY, "true");
+}
+
+function getCurrentAccessSessionId() {
+  let sessionId = window.sessionStorage.getItem(ACCESS_SESSION_ID_KEY);
+  if (!sessionId) {
+    sessionId = `session-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    window.sessionStorage.setItem(ACCESS_SESSION_ID_KEY, sessionId);
+  }
+  return sessionId;
+}
+
+function updateCurrentSessionHeartbeat(user, createSession = false) {
+  const now = new Date().toISOString();
+  const sessionId = getCurrentAccessSessionId();
+  const currentHistory = Array.isArray(user.sessionHistory) ? user.sessionHistory : [];
+  const existingIndex = currentHistory.findIndex((session) => session.sessionId === sessionId);
+  const existing = existingIndex >= 0 ? currentHistory[existingIndex] : null;
+  const session = {
+    ...(existing || {}),
+    sessionId,
+    time: existing?.time || now,
+    lastSeenAt: now,
+    status: "active",
+    device: existing?.device || "Desktop",
+    platform: existing?.platform || window.navigator?.platform || "Browser",
+    location: existing?.location || "Unknown",
+    colo: existing?.colo || "cloudflare"
+  };
+
+  user.lastActiveAt = now;
+  user.sessions = Math.max(createSession ? Number(user.sessions || 0) + 1 : Number(user.sessions || 0), currentHistory.length || 1);
+  user.sessionHistory = [
+    session,
+    ...currentHistory.filter((entry, index) => index !== existingIndex)
+  ].slice(0, 25);
+}
+
+function heartbeatCurrentSession() {
+  if (window.sessionStorage.getItem(ACCESS_STATE_KEY) !== "true") return;
+  const user = findRegisteredUserByEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
+  if (!user) return;
+  updateCurrentSessionHeartbeat(user, false);
+  saveUserRoster();
+  saveSharedSettings();
+  if (selectedUserId === user.id) renderSelectedUserProfile();
+}
+
+function isSessionActive(session = {}, now = Date.now()) {
+  const lastSeen = getTransactionDate(session.lastSeenAt || session.time).getTime();
+  return Number.isFinite(lastSeen) && now - lastSeen <= ACTIVE_SESSION_WINDOW_MS;
 }
 
 function addUser(name, email) {
@@ -6301,6 +6392,7 @@ async function handleAccessSubmit(event) {
   window.sessionStorage.setItem(ACCESS_STATE_KEY, "true");
   window.sessionStorage.setItem(ACCESS_EMAIL_KEY, email);
   window.sessionStorage.removeItem(ACCESS_SESSION_RECORDED_KEY);
+  window.sessionStorage.removeItem(ACCESS_SESSION_ID_KEY);
   showAppShell();
   initializeApp();
 }
@@ -12471,6 +12563,8 @@ function hasValidAccessSession() {
 
   window.sessionStorage.removeItem(ACCESS_STATE_KEY);
   window.sessionStorage.removeItem(ACCESS_EMAIL_KEY);
+  window.sessionStorage.removeItem(ACCESS_SESSION_ID_KEY);
+  window.sessionStorage.removeItem(ACCESS_SESSION_RECORDED_KEY);
   return false;
 }
 
@@ -12526,6 +12620,7 @@ function initializeApp() {
   window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
   window.setInterval(loadSharedMicroPredictions, BACKEND_ADVISORY_SYNC_MS);
   window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
+  window.setInterval(heartbeatCurrentSession, SESSION_HEARTBEAT_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(() => queuePaperSweep(), Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", () => {

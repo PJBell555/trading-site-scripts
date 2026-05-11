@@ -1246,6 +1246,23 @@ body {
   font-weight: 800;
 }
 
+.inline-help-button {
+  align-items: center;
+  background: rgba(96, 165, 250, 0.14);
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 999px;
+  color: #bfdbfe;
+  cursor: help;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 900;
+  height: 18px;
+  justify-content: center;
+  margin-left: 4px;
+  padding: 0;
+  width: 18px;
+}
+
 .profile-strategy-history {
   border-top: 1px solid rgba(148, 163, 184, 0.16);
   display: grid;
@@ -1474,6 +1491,16 @@ body {
   color: var(--muted);
   font-size: 0.78rem;
   text-transform: uppercase;
+}
+
+.session-status-active {
+  color: var(--accent);
+  font-weight: 900;
+}
+
+.session-status-inactive {
+  color: var(--muted);
+  font-weight: 800;
 }
 
 .user-strategy-banner {
