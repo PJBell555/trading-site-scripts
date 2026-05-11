@@ -118,6 +118,9 @@ const primaryModelStatEl = document.querySelector("#primary-model-stat");
 const commodityStrip = document.querySelector("#commodity-strip");
 const inputsTitle = document.querySelector("#inputs-title");
 const outputTitle = document.querySelector("#output-title");
+const advisorDetailToggleEl = document.querySelector("#advisor-detail-toggle");
+const advisorDecisionDetailEl = document.querySelector("#advisor-decision-detail");
+const advisorDecisionDetailBodyEl = document.querySelector("#advisor-decision-detail-body");
 const llmRunBtn = document.querySelector("#llm-run-btn");
 const llmStatusEl = document.querySelector("#llm-status");
 const llmVerificationBody = document.querySelector("#llm-verification-body");
@@ -488,6 +491,8 @@ const DEFAULT_USER_STRATEGY = {
   karpathyCoachText: KARPATHY_OIL_COACH_TEXT,
   karpathyFlatSelectivity: true,
   karpathyConfirmationGate: true,
+  karpathyAutoApply: false,
+  karpathyRecommendation: null,
   advisoryOutcomeLearner: true,
   skillsAccess: true,
   openBrainAccess: true,
@@ -2980,6 +2985,10 @@ function normalizeUserStrategy(strategy = {}) {
     karpathyCoachText: String(merged.karpathyCoachText || DEFAULT_USER_STRATEGY.karpathyCoachText).trim(),
     karpathyFlatSelectivity: merged.karpathyFlatSelectivity !== false,
     karpathyConfirmationGate: merged.karpathyConfirmationGate !== false,
+    karpathyAutoApply: merged.karpathyAutoApply === true,
+    karpathyRecommendation: merged.karpathyRecommendation && typeof merged.karpathyRecommendation === "object"
+      ? merged.karpathyRecommendation
+      : null,
     advisoryOutcomeLearner: merged.advisoryOutcomeLearner !== false,
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
@@ -3053,6 +3062,7 @@ const STRATEGY_HISTORY_FIELDS = [
   ["karpathyCoachText", "Karpathy coach policy"],
   ["karpathyFlatSelectivity", "Karpathy flat selectivity"],
   ["karpathyConfirmationGate", "Karpathy confirmation gate"],
+  ["karpathyAutoApply", "Karpathy auto-apply"],
   ["advisoryOutcomeLearner", "Advisory outcome learner"],
   ["skillsAccess", "Skills access"],
   ["openBrainAccess", "Open Brain access"],
@@ -3171,6 +3181,7 @@ function getStrategyChangeSummary(before, after) {
   if (before.karpathyCoachText !== after.karpathyCoachText) changes.push("Karpathy coach policy");
   if (before.karpathyFlatSelectivity !== after.karpathyFlatSelectivity) changes.push(after.karpathyFlatSelectivity ? "enabled Karpathy flat selectivity" : "disabled Karpathy flat selectivity");
   if (before.karpathyConfirmationGate !== after.karpathyConfirmationGate) changes.push(after.karpathyConfirmationGate ? "enabled Karpathy confirmation gate" : "disabled Karpathy confirmation gate");
+  if (before.karpathyAutoApply !== after.karpathyAutoApply) changes.push(after.karpathyAutoApply ? "enabled Karpathy auto-apply" : "disabled Karpathy auto-apply");
   if (before.advisoryOutcomeLearner !== after.advisoryOutcomeLearner) changes.push(after.advisoryOutcomeLearner ? "enabled advisory outcome learner" : "disabled advisory outcome learner");
   if (before.skillFocus !== after.skillFocus) changes.push("skill focus");
   if (before.openBrainMemory !== after.openBrainMemory) changes.push("Open Brain instruction");
@@ -4500,6 +4511,7 @@ function saveUserStrategySettings(user, container) {
     karpathyCoachText: container.querySelector("[data-strategy-field='karpathyCoachText']")?.value,
     karpathyFlatSelectivity: container.querySelector("[data-strategy-field='karpathyFlatSelectivity']")?.checked,
     karpathyConfirmationGate: container.querySelector("[data-strategy-field='karpathyConfirmationGate']")?.checked,
+    karpathyAutoApply: container.querySelector("[data-strategy-field='karpathyAutoApply']")?.checked,
     advisoryOutcomeLearner: container.querySelector("[data-strategy-field='advisoryOutcomeLearner']")?.checked,
     skillsAccess: container.querySelector("[data-strategy-field='skillsAccess']")?.checked,
     openBrainAccess: container.querySelector("[data-strategy-field='openBrainAccess']")?.checked,
@@ -4665,6 +4677,7 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "karpathyLoop", label: "Karpathy loop", value: strategy.karpathyLoop, type: "checkbox", on: "Adjusts thresholds from evaluated outcomes", off: "Off" },
     { key: "karpathyFlatSelectivity", label: "Karpathy flat selectivity", value: strategy.karpathyFlatSelectivity, type: "checkbox", on: "More selective in flat/mixed markets", off: "Off" },
     { key: "karpathyConfirmationGate", label: "Karpathy confirmation gate", value: strategy.karpathyConfirmationGate, type: "checkbox", on: "Requires structure + momentum confirmation", off: "Off" },
+    { key: "karpathyAutoApply", label: "Karpathy auto-apply", value: strategy.karpathyAutoApply, type: "checkbox", on: "Cloudflare may apply recommended threshold changes", off: "Recommendation only", help: "When off, the Cloudflare scheduler records coach recommendations but does not change this user's trading threshold. When on, the scheduler can update the paper-trading entry threshold from closed-trade outcomes." },
     { key: "advisoryOutcomeLearner", label: "Advisory outcome learner", value: strategy.advisoryOutcomeLearner, type: "checkbox", on: "Learns long/short/wait from forecast outcomes", off: "Off" },
     { key: "regimeAware", label: "Regime-aware Martingale", value: strategy.regimeAware, type: "checkbox", on: "On", off: "Off" },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
@@ -4887,6 +4900,78 @@ function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commodityS
     <p>${escapeHtml(latestAction)}</p>
     <p class="coach-telemetry-warning">${escapeHtml(getLearnerSampleBalance(learner))}</p>
   `;
+}
+
+function getCurrentKarpathyRecommendation() {
+  const strategy = getCurrentUserStrategy();
+  const stored = strategy.karpathyRecommendation && typeof strategy.karpathyRecommendation === "object"
+    ? strategy.karpathyRecommendation
+    : null;
+  const side = getSignalSide(lastPrimarySignal);
+  const loop = getKarpathyLoop(side);
+  return {
+    source: stored ? "Cloudflare scheduler" : "Browser preview",
+    recommendedThreshold: Number(stored?.recommendedThreshold ?? loop.threshold),
+    currentThreshold: Number(stored?.currentThreshold ?? lastTradePlan?.entryThreshold ?? getPaperEntryThreshold(side)),
+    sampleCount: Number(stored?.sampleCount ?? loop.sampleCount),
+    winRate: Number(stored?.winRate ?? loop.winRate),
+    avgPnl: Number(stored?.avgPnl ?? loop.avgPnl),
+    lossStreak: Number(stored?.lossStreak ?? loop.lossStreak),
+    action: stored?.action || "recommend",
+    summary: stored?.summary || "Karpathy coach is evaluating closed paper trades and recommending threshold changes.",
+    updatedAt: stored?.updatedAt || null
+  };
+}
+
+function renderAdvisorDecisionDetail(signal = lastPrimarySignal, tradePlan = lastTradePlan) {
+  if (!advisorDecisionDetailBodyEl) return;
+  if (!signal || !tradePlan) {
+    advisorDecisionDetailBodyEl.innerHTML = "<p>Decision inputs are not ready yet.</p>";
+    return;
+  }
+
+  const strategy = getCurrentUserStrategy();
+  const learner = signal.outcomeLearner || getAdvisoryOutcomeLearner(commoditySelect.value);
+  const karpathy = getCurrentKarpathyRecommendation();
+  const secondOpinion = tradePlan.secondOpinionConsensus || getSecondOpinionConsensus(signal);
+  const regime = tradePlan.regime || getRegimeAssessment(signal, strategy);
+  const rows = [
+    {
+      title: "Primary advisory",
+      body: `The current call is ${signal.label} at ${signal.conviction}/100. The local baseline is ${Math.round(signal.baseConviction || signal.conviction)} and the scheduled LLM score is ${getLatestLLMConvictionForCommodity(commoditySelect.value)?.score ?? "not fresh"}.`
+    },
+    {
+      title: "Karpathy loop",
+      body: `${karpathy.source} recommendation: threshold ${karpathy.recommendedThreshold}. It is based on ${karpathy.sampleCount} recent closed trade sample(s), ${formatPercent(karpathy.winRate * 100)} win rate, ${formatSignedMoney(karpathy.avgPnl)} average P/L, and ${karpathy.lossStreak} current loss streak. Auto-apply is ${strategy.karpathyAutoApply ? "on" : "off, so this is recommendation-only"}.`
+    },
+    {
+      title: "Advisory outcome learner",
+      body: learner?.ready
+        ? `${learner.note}. Long accuracy ${formatPercent(learner.longSummary.accuracy)} over ${learner.longSummary.count}; short accuracy ${formatPercent(learner.shortSummary.accuracy)} over ${learner.shortSummary.count}; wait accuracy ${formatPercent(learner.waitSummary.accuracy)} over ${learner.waitSummary.count}.`
+        : `${learner?.note || "Collecting evaluated advisory snapshots"}. This learner checks whether prior long, short, and wait calls were correct after the evaluation window.`
+    },
+    {
+      title: "Second opinions",
+      body: secondOpinion?.enabled
+        ? `${secondOpinion.label}: ${secondOpinion.detail}`
+        : "Second-opinion gating is disabled or has no directional call to evaluate."
+    },
+    {
+      title: "Regime and microstructure",
+      body: `Regime is ${regime.regime || "unknown"}. Edge ${regime.edgePercent ?? "-"}%, volatility ${Number(regime.volatility || 0).toFixed(2)} bps, momentum ${regime.momentumAligned ? "aligned" : "not aligned"}. Flat or mixed tape can add threshold requirements and reduce recovery sizing.`
+    },
+    {
+      title: "Cloudflare scheduler",
+      body: `Cloudflare is the source of truth for paper trading. Browser execution is disabled; the Worker checks user settings, market calendar, active open trades, Martingale step, forecast outcomes, and price source before opening or closing a paper trade. Current entry threshold is ${tradePlan.entryThreshold} from ${tradePlan.entryThresholdSource}.`
+    }
+  ];
+
+  advisorDecisionDetailBodyEl.innerHTML = rows.map((row) => `
+    <article>
+      <strong>${escapeHtml(row.title)}</strong>
+      <p>${escapeHtml(row.body)}</p>
+    </article>
+  `).join("");
 }
 
 function getBuiltInStrategyStartedAt() {
@@ -5278,6 +5363,10 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="karpathyConfirmationGate" type="checkbox"${strategy.karpathyConfirmationGate ? " checked" : ""}>
         Karpathy confirmation gate
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="karpathyAutoApply" type="checkbox"${strategy.karpathyAutoApply ? " checked" : ""} title="When off, Cloudflare records Karpathy recommendations only. When on, Cloudflare can apply the recommended paper-trading threshold to this account.">
+        Karpathy auto-apply <span class="profile-field-hint" title="Recommendation-only is safer while sample sizes are small. Auto-apply lets Cloudflare update the entry threshold from closed-trade outcomes.">recommend or apply threshold changes</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="advisoryOutcomeLearner" type="checkbox"${strategy.advisoryOutcomeLearner ? " checked" : ""}>
@@ -11945,6 +12034,7 @@ function calculateSignal() {
   executePaperTrading(commodity, commodityMeta, primarySignal, tradePlan, { allowOpen: true });
   renderKarpathyLoop(primarySignal, tradePlan);
   renderCoachTelemetry(primarySignal, commodity);
+  renderAdvisorDecisionDetail(primarySignal, tradePlan);
   renderPaperTrading(commodity, primarySignal, tradePlan);
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
   maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
@@ -12472,6 +12562,12 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
 });
 leaderboardUserDetailCloseEl?.addEventListener("click", closeLeaderBoardUserDetail);
 advisoryStrategyToggleEl?.addEventListener("click", toggleAdvisoryStrategyDetail);
+advisorDetailToggleEl?.addEventListener("click", () => {
+  const expanded = advisorDetailToggleEl.getAttribute("aria-expanded") === "true";
+  advisorDetailToggleEl.setAttribute("aria-expanded", String(!expanded));
+  if (advisorDecisionDetailEl) advisorDecisionDetailEl.hidden = expanded;
+  if (!expanded) renderAdvisorDecisionDetail();
+});
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 refreshLiveLedgerEl?.addEventListener("click", () => loadSharedLiveTradeLedger());
 paperEquityInputEl.readOnly = true;

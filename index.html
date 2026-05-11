@@ -935,7 +935,10 @@
 
         <div class="panel verdict">
           <div class="panel-head">
-            <h2 id="output-title">Advisor output: Oil</h2>
+            <div class="panel-title-row">
+              <h2 id="output-title">Advisor output: Oil</h2>
+              <button class="filter-button advisor-detail-toggle" id="advisor-detail-toggle" type="button" aria-expanded="false" aria-controls="advisor-decision-detail">Detail</button>
+            </div>
             <p>Decision support only. No brokerage connectivity or auto-execution is enabled.</p>
           </div>
 
@@ -946,6 +949,10 @@
             <span class="signal-state-pill" data-stability-tone="long">Long</span>
           </div>
           <p class="signal-explanation" id="signal-explanation">Waiting for enough conviction to explain the next action.</p>
+          <section class="advisor-decision-detail" id="advisor-decision-detail" hidden>
+            <p class="eyebrow">Decision trace</p>
+            <div id="advisor-decision-detail-body"></div>
+          </section>
           <div class="score-row">
             <div>
               <span class="stat-label">Local conviction</span>

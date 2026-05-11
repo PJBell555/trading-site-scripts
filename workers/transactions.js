@@ -2134,6 +2134,8 @@ function getServerStrategySettings(user = {}) {
   return {
     type: String(strategy.type || "martingale-karpathy"),
     martingaleSteps: clamp(Math.round(Number(strategy.martingaleSteps) || 4), 1, 8),
+    karpathyLoop: strategy.karpathyLoop !== false,
+    karpathyAutoApply: strategy.karpathyAutoApply === true,
     regimeAware: strategy.regimeAware !== false,
     flatMaxMartingaleSteps: clamp(Math.round(Number(strategy.flatMaxMartingaleSteps) || 2), 1, 8),
     flatSizeMultiplier: clamp(Number(strategy.flatSizeMultiplier) || 0.5, 0.1, 1),
@@ -2164,6 +2166,91 @@ function getNextServerMartingaleStep(transactions = [], userEmail, maxStep = 4) 
   }
   if (!highestLosingStep) return 1;
   return highestLosingStep >= maxStep ? 1 : Math.min(maxStep, highestLosingStep + 1);
+}
+
+function getServerLossStreak(closed = []) {
+  let streak = 0;
+  for (const entry of closed) {
+    if (Number(entry.pnl) < 0) streak += 1;
+    else break;
+  }
+  return streak;
+}
+
+function getServerKarpathyRecommendation(transactions = [], userEmail, currentThreshold = PAPER_SCHEDULER_DEFAULT_THRESHOLD, strategy = {}) {
+  const closed = getClosedPaperTradesForUser(transactions, userEmail);
+  const sample = closed.slice(0, 12);
+  const wins = sample.filter((entry) => Number(entry.pnl) > 0).length;
+  const sampleCount = sample.length;
+  const winRate = sampleCount ? wins / sampleCount : 0;
+  const netPnl = sample.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
+  const avgPnl = sampleCount ? netPnl / sampleCount : 0;
+  const lossStreak = getServerLossStreak(closed);
+  let recommendedThreshold = Number(currentThreshold) || PAPER_SCHEDULER_DEFAULT_THRESHOLD;
+  const reasons = [];
+
+  if (!strategy.karpathyLoop) {
+    return {
+      enabled: false,
+      action: "off",
+      currentThreshold,
+      recommendedThreshold,
+      sampleCount,
+      winRate,
+      avgPnl,
+      lossStreak,
+      summary: "Karpathy loop is disabled for this user.",
+      updatedAt: new Date().toISOString()
+    };
+  }
+
+  if (sampleCount >= 3) {
+    recommendedThreshold = PAPER_SCHEDULER_DEFAULT_THRESHOLD;
+    if (winRate < 0.45) {
+      recommendedThreshold += 10;
+      reasons.push("win rate below 45%");
+    } else if (winRate < 0.55) {
+      recommendedThreshold += 5;
+      reasons.push("win rate below 55%");
+    } else if (winRate >= 0.7 && avgPnl > 0) {
+      recommendedThreshold -= 5;
+      reasons.push("win rate above 70% with positive average P/L");
+    }
+    if (avgPnl < 0) {
+      recommendedThreshold += 3;
+      reasons.push("average P/L is negative");
+    }
+    if (lossStreak) {
+      recommendedThreshold += Math.min(lossStreak * 2, 10);
+      reasons.push(`${lossStreak} trade loss streak`);
+    }
+  } else {
+    reasons.push("needs at least 3 closed trades before changing threshold");
+  }
+
+  recommendedThreshold = clamp(Math.round(recommendedThreshold), 45, 75);
+  const delta = recommendedThreshold - currentThreshold;
+  const action = sampleCount < 3
+    ? "collect"
+    : delta > 0 ? "tighten"
+      : delta < 0 ? "loosen"
+        : "hold";
+
+  return {
+    enabled: true,
+    action,
+    currentThreshold,
+    recommendedThreshold,
+    delta,
+    sampleCount,
+    winRate,
+    avgPnl,
+    netPnl,
+    lossStreak,
+    autoApply: strategy.karpathyAutoApply === true,
+    summary: reasons.length ? `Karpathy coach: ${reasons.join(", ")}.` : "Karpathy coach: threshold is appropriate for recent closed trades.",
+    updatedAt: new Date().toISOString()
+  };
 }
 
 async function getLatestAdvisoryByCommodity(env, commodity) {
@@ -3051,6 +3138,19 @@ async function runPaperTradingScheduler(env, options = {}) {
       let activeOpenCount = enabledOpenTrades.length;
       const strategySettings = getServerStrategySettings(user);
       const exclusiveMartingale = shouldUseExclusiveMartingale(user);
+      const coachRecommendation = getServerKarpathyRecommendation(transactions, email, schedulerSettings.entryThreshold, strategySettings);
+      user.strategy = {
+        ...(user.strategy && typeof user.strategy === "object" ? user.strategy : {}),
+        karpathyRecommendation: coachRecommendation
+      };
+      if (coachRecommendation.enabled && coachRecommendation.autoApply && coachRecommendation.sampleCount >= 3) {
+        schedulerSettings.entryThreshold = coachRecommendation.recommendedThreshold;
+        updateUserPaperSchedulerSettings(user, {
+          ...schedulerSettings,
+          entryThreshold: coachRecommendation.recommendedThreshold,
+          karpathyRecommendationAppliedAt: coachRecommendation.updatedAt
+        });
+      }
       let lastDecision = "No eligible commodities evaluated";
       const marketSchedule = getUserMarketScheduleStatus(schedulerSettings);
 
