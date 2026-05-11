@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-live-scheduler-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-advisory-strategy-toggle-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -866,17 +866,20 @@
             The safest first version of this product is an advisor that weighs market structure, inventories, macro pressure, and momentum, then explains why it prefers long, short, or wait.
           </p>
           <div class="user-strategy-banner" id="user-strategy-banner">
-            <div class="advisory-user-profile">
+            <div class="advisory-user-profile advisory-user-profile-compact">
               <span id="advisory-user-avatar" class="user-avatar">CH</span>
               <div>
                 <span class="stat-label">Viewing advisory for</span>
                 <strong id="advisory-user-name">Current user</strong>
               </div>
+              <button class="filter-button advisory-strategy-toggle" id="advisory-strategy-toggle" type="button" aria-expanded="false" aria-controls="advisory-strategy-detail">Strategy</button>
             </div>
-            <span class="stat-label">Current user strategy</span>
-            <strong id="advisory-user-strategy-name">Loading strategy</strong>
-            <p>Strategy settings are defined in the user profile.</p>
-            <div class="advisory-adopted-systems" id="advisory-adopted-systems" aria-label="Adopted skills and strategy at work"></div>
+            <div class="advisory-strategy-detail" id="advisory-strategy-detail" hidden>
+              <span class="stat-label">Current user strategy</span>
+              <strong id="advisory-user-strategy-name">Loading strategy</strong>
+              <p>Strategy settings are defined in the user profile.</p>
+              <div class="advisory-adopted-systems" id="advisory-adopted-systems" aria-label="Adopted skills and strategy at work"></div>
+            </div>
             <div class="advisory-power-row">
               <label class="advisory-power-toggle">
                 <input id="low-power-mode-toggle" type="checkbox" checked>
@@ -1715,6 +1718,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-live-scheduler-1"></script>
+  <script src="./app.js?v=comhedge-advisory-strategy-toggle-1"></script>
 </body>
 </html>

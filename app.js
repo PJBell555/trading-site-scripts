@@ -156,6 +156,8 @@ const advisoryUserAvatarEl = document.querySelector("#advisory-user-avatar");
 const advisoryUserNameEl = document.querySelector("#advisory-user-name");
 const advisoryUserStrategyNameEl = document.querySelector("#advisory-user-strategy-name");
 const advisoryAdoptedSystemsEl = document.querySelector("#advisory-adopted-systems");
+const advisoryStrategyToggleEl = document.querySelector("#advisory-strategy-toggle");
+const advisoryStrategyDetailEl = document.querySelector("#advisory-strategy-detail");
 const lowPowerModeToggleEl = document.querySelector("#low-power-mode-toggle");
 const lowPowerModeStatusEl = document.querySelector("#low-power-mode-status");
 const paperSizeEl = document.querySelector("#paper-size");
@@ -4206,6 +4208,14 @@ function renderCurrentUserStrategy() {
   renderAdvisoryAdoptedSystems(strategy);
   renderStrategyEnginePanel(user, strategy);
   renderCoachTelemetry();
+}
+
+function toggleAdvisoryStrategyDetail() {
+  if (!advisoryStrategyDetailEl || !advisoryStrategyToggleEl) return;
+  const shouldOpen = advisoryStrategyDetailEl.hidden;
+  advisoryStrategyDetailEl.hidden = !shouldOpen;
+  advisoryStrategyToggleEl.setAttribute("aria-expanded", String(shouldOpen));
+  advisoryStrategyToggleEl.textContent = shouldOpen ? "Hide Strategy" : "Strategy";
 }
 
 function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
@@ -11751,6 +11761,7 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
   renderLeaderBoard();
 });
 leaderboardUserDetailCloseEl?.addEventListener("click", closeLeaderBoardUserDetail);
+advisoryStrategyToggleEl?.addEventListener("click", toggleAdvisoryStrategyDetail);
 liveTradeFormEl?.addEventListener("submit", addLiveTradeFromForm);
 refreshLiveLedgerEl?.addEventListener("click", () => loadSharedLiveTradeLedger());
 paperEquityInputEl.readOnly = true;
