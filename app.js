@@ -378,7 +378,7 @@ const LLM_REFRESH_HOURS_KEY = "comhedge-llm-refresh-hours-v1";
 const LLM_SCHEDULE_SLOT_KEY = "comhedge-llm-schedule-slot-v1";
 const LLM_LAST_RUN_KEY = "comhedge-llm-last-run-v1";
 const DEFAULT_PRIMARY_MODEL_ID = "gpt-5-5";
-const PAPER_START_EQUITY = 100000;
+const PAPER_START_EQUITY = 1000;
 const PAPER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_MIN_CONVICTION = 50;
 const MARTINGALE_MAX_STEP = 4;
@@ -2665,17 +2665,13 @@ function normalizeEmail(value) {
   return String(value || "").trim().toLowerCase();
 }
 
-function isProtectedAccountBalanceUser(user = {}) {
-  const email = normalizeEmail(user.email);
-  const name = String(user.name || "").trim().toLowerCase();
-  return email === "peter@pjbell.com" || name === "peter bell" || name === "christopher roberts";
-}
+function getDefaultUserEquity(user = {}, fallback = DEFAULT_NON_EXEMPT_USER_EQUITY) {
+  const explicit = Number(user.paperBaseEquity);
+  if (Number.isFinite(explicit)) return Math.max(0, explicit);
 
-function getDefaultUserEquity(user = {}, fallback = PAPER_START_EQUITY) {
-  const value = Number(user.paperBaseEquity ?? fallback);
-  if (isProtectedAccountBalanceUser(user)) {
-    return Number.isFinite(value) ? Math.max(0, value) : PAPER_START_EQUITY;
-  }
+  const fallbackValue = Number(fallback);
+  if (Number.isFinite(fallbackValue)) return Math.max(0, fallbackValue);
+
   return DEFAULT_NON_EXEMPT_USER_EQUITY;
 }
 
