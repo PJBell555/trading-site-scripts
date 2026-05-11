@@ -3178,7 +3178,9 @@ async function runPaperTradingScheduler(env, options = {}) {
         const activeSignal = breakoutSignal
           ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
           : signal;
-        const step = breakoutSignal ? 1 : getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps);
+        const step = exclusiveMartingale
+          ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps)
+          : 1;
         if (!breakoutSignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
           run.skippedTrades += 1;
@@ -3189,7 +3191,12 @@ async function runPaperTradingScheduler(env, options = {}) {
           run.skippedTrades += 1;
           continue;
         }
-        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, breakoutSignal ? strategySettings.flatSizeMultiplier : regime.enabled ? regime.sizeMultiplier : 1);
+        const sizeMultiplier = breakoutSignal && exclusiveMartingale
+          ? 1
+          : breakoutSignal
+            ? strategySettings.flatSizeMultiplier
+            : regime.enabled ? regime.sizeMultiplier : 1;
+        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier);
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
@@ -3220,7 +3227,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           pnl: 0,
           openedAt: new Date().toISOString(),
           note: breakoutSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} via ${price.source}; ${breakoutSignal.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}`
             : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
