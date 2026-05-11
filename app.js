@@ -623,6 +623,8 @@ let leaderBoardDetailMode = "profile";
 let activeSection = "home";
 let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
+const leaderBoardSchedulerStatus = new Map();
+let leaderBoardSchedulerLoadedAt = 0;
 let activeSkillSystem = "micro-predictor";
 let activeCustomSkillId = "";
 let skillSearchQuery = "";
@@ -3254,8 +3256,17 @@ function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user))
   return Array.from(active.values());
 }
 
+function userCanTradeCommodityForProfile(user, commodity) {
+  const selected = normalizeCommodityIds(user?.commodities);
+  return selected.includes(normalizeCommodityId(commodity || "oil"));
+}
+
+function getUserEnabledOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user)) {
+  return getUserOpenPaperTrades(user, entries).filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
+}
+
 function getUserOpenPnl(user, entries = getUserPaperLedgerEntries(user)) {
-  return getUserOpenPaperTrades(user, entries).reduce((total, entry) => {
+  return getUserEnabledOpenPaperTrades(user, entries).reduce((total, entry) => {
     const commodity = entry.commodity || "oil";
     const livePrice = getUsableMarketPrice(commodity);
     if (!Number.isFinite(livePrice)) return total;
@@ -3283,10 +3294,35 @@ function getUserLastTradeTime(user, entries = getUserPaperLedgerEntries(user)) {
 }
 
 function getUserSchedulerSummary(user) {
+  const liveStatus = leaderBoardSchedulerStatus.get(normalizeEmail(user?.email));
+  if (liveStatus) {
+    const evaluated = liveStatus.lastEvaluationAt ? formatRelativeDate(liveStatus.lastEvaluationAt) : "Never";
+    const decision = liveStatus.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
+    return `${evaluated}: ${decision}`;
+  }
+
   const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
   const evaluated = paperTrading.lastEvaluationAt ? formatRelativeDate(paperTrading.lastEvaluationAt) : "Never";
   const decision = paperTrading.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
   return `${evaluated}: ${decision}`;
+}
+
+function getUserSchedulerHint(user) {
+  const liveStatus = leaderBoardSchedulerStatus.get(normalizeEmail(user?.email));
+  const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
+  const status = liveStatus || paperTrading;
+  const evaluated = status.lastEvaluationAt ? formatTradeTime(status.lastEvaluationAt) : "Never evaluated";
+  const decision = status.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision;
+  const source = liveStatus ? "Live Cloudflare scheduler status" : "Profile fallback status";
+  const loaded = leaderBoardSchedulerLoadedAt ? `Status refreshed ${formatRelativeDate(leaderBoardSchedulerLoadedAt)}.` : "Live scheduler status has not loaded yet.";
+
+  return [
+    source,
+    `Last checked: ${evaluated}.`,
+    `Decision: ${decision}.`,
+    "Common meanings: Wait 48/58 means the advisory is Wait or below the effective threshold; max open trades reached means an existing enabled trade blocks new entries; market closed means the user calendar says trading is closed.",
+    loaded
+  ].join(" ");
 }
 
 function getUserTradeCount(user, entries = getUserPaperLedgerEntries(user)) {
@@ -3334,6 +3370,7 @@ function getLeaderBoardRows() {
     const totalPnl = closedPnl + openPnl;
     const tradeCount = entries.filter(isOpeningTransaction).length;
     const closedCount = entries.filter(isClosingTransaction).length;
+    const activeOpenCount = getUserEnabledOpenPaperTrades(user, entries).length;
     const winRate = getUserWinRate(user, entries);
     const expectancy = getUserTradeExpectancy(user, entries);
     const lastTradeTime = getUserLastTradeTime(user, entries);
@@ -3348,6 +3385,7 @@ function getLeaderBoardRows() {
       totalPnl,
       tradeCount,
       closedCount,
+      activeOpenCount,
       winRate,
       expectancy,
       lastTradeTime,
@@ -3468,7 +3506,7 @@ function createLeaderBoardTradeHistoryPanel(user) {
   const thead = document.createElement("thead");
   const tbody = document.createElement("tbody");
   const closedPnl = entries.filter(isClosingTransaction).reduce((total, entry) => total + getDisplayPnl(entry), 0);
-  const openTrades = getUserOpenPaperTrades(user, entries);
+  const openTrades = getUserEnabledOpenPaperTrades(user, entries);
   const openedCount = entries.filter(isOpeningTransaction).length;
   const closedCount = entries.filter(isClosingTransaction).length;
 
@@ -3478,7 +3516,7 @@ function createLeaderBoardTradeHistoryPanel(user) {
     <div><span class="stat-label">Period</span><strong>${escapeHtml(LEADERBOARD_PERIOD_OPTIONS[leaderboardPeriodMode]?.label || "All Time")}</strong></div>
     <div><span class="stat-label">Closed P/L</span><strong class="${closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(closedPnl)}</strong></div>
     <div><span class="stat-label">Opened / closed</span><strong>${openedCount} / ${closedCount}</strong></div>
-    <div><span class="stat-label">Open trades</span><strong>${openTrades.length}</strong></div>
+    <div><span class="stat-label">Active enabled trades</span><strong>${openTrades.length}</strong></div>
   `;
 
   tableWrap.className = "history-wrap";
@@ -3761,7 +3799,7 @@ function renderLeaderBoard() {
     const tradeButton = document.createElement("button");
     tradeButton.type = "button";
     tradeButton.className = "leaderboard-trades-trigger";
-    tradeButton.textContent = `${entry.tradeCount} opened / ${entry.closedCount} closed`;
+    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed`;
     tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
     tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
@@ -3777,7 +3815,7 @@ function renderLeaderBoard() {
         className: Number.isFinite(entry.expectancy) ? (entry.expectancy >= 0 ? "gain" : "loss") : ""
       },
       tradeButton,
-      { value: entry.schedulerSummary },
+      { value: entry.schedulerSummary, title: getUserSchedulerHint(entry.user), className: "leaderboard-scheduler-cell" },
       { value: entry.lastTradeTime ? formatRelativeDate(entry.lastTradeTime) : "No trades" }
     ].forEach((item) => {
       if (item instanceof HTMLElement) {
@@ -3786,6 +3824,7 @@ function renderLeaderBoard() {
       }
       const cell = document.createElement("td");
       if (item.className) cell.className = item.className;
+      if (item.title) cell.title = item.title;
       cell.textContent = item.value;
       row.append(cell);
     });
@@ -8235,6 +8274,10 @@ function getSharedSettingsUrl() {
   return `${getHistoryApiUrl()}/settings`;
 }
 
+function getPaperSchedulerUrl() {
+  return `${getHistoryApiUrl()}/paper-scheduler`;
+}
+
 function getActualTradesUrl() {
   return `${getHistoryApiUrl()}/actual-trades`;
 }
@@ -9738,11 +9781,40 @@ async function refreshLeaderBoardData() {
   try {
     await Promise.all([
       loadSharedSettings(true),
-      loadSharedTransactionHistory(true)
+      loadSharedTransactionHistory(true),
+      loadLeaderBoardSchedulerStatus(true)
     ]);
   } finally {
     renderLeaderBoard();
     if (leaderboardRefreshEl) leaderboardRefreshEl.textContent = "Refresh";
+  }
+}
+
+async function loadLeaderBoardSchedulerStatus(manual = false) {
+  if (!hasHistoryBackend()) return false;
+  try {
+    const response = await fetchWithTimeout(`${getPaperSchedulerUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    if (!response.ok) throw new Error("scheduler unavailable");
+    const payload = await response.json();
+    leaderBoardSchedulerStatus.clear();
+    (Array.isArray(payload.users) ? payload.users : []).forEach((user) => {
+      const email = normalizeEmail(user.email);
+      if (!email) return;
+      leaderBoardSchedulerStatus.set(email, {
+        enabled: Boolean(user.enabled),
+        commodities: Array.isArray(user.commodities) ? user.commodities : [],
+        entryThreshold: user.entryThreshold,
+        maxOpenTrades: user.maxOpenTrades,
+        lastEvaluationAt: user.lastEvaluationAt,
+        lastDecision: user.lastDecision
+      });
+    });
+    leaderBoardSchedulerLoadedAt = Date.now();
+    renderLeaderBoard();
+    return true;
+  } catch (error) {
+    if (manual && leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = "Scheduler status unavailable";
+    return false;
   }
 }
 
@@ -9753,12 +9825,14 @@ async function initializeBackendState() {
 
   const historyLoad = autoSyncTransactionHistory();
   const settingsLoad = loadSharedSettings();
+  const schedulerLoad = loadLeaderBoardSchedulerStatus();
   const advisoryLoad = loadSharedAdvisoryHistory();
   const microPredictionLoad = loadSharedMicroPredictions();
   const openBrainLoad = loadOpenBrainEventsFromBackend();
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
+    schedulerLoad,
     advisoryLoad,
     microPredictionLoad,
     openBrainLoad

@@ -304,6 +304,12 @@ body {
   min-width: 980px;
 }
 
+.leaderboard-scheduler-cell {
+  cursor: help;
+  text-decoration: underline dotted rgba(147, 197, 253, 0.6);
+  text-underline-offset: 3px;
+}
+
 .rank-badge {
   align-items: center;
   background: rgba(59, 130, 246, 0.16);
