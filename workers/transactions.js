@@ -115,11 +115,13 @@ function getTransactionKey(entry) {
 }
 
 function isClosingTransaction(entry) {
-  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => entry.action?.includes(word));
+  const action = String(entry.action || "").toUpperCase();
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => action.includes(word));
 }
 
 function isOpeningTransaction(entry) {
-  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
+  const action = String(entry.action || "").trim().toUpperCase();
+  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(action);
 }
 
 function normalizeEmail(value) {
@@ -173,6 +175,12 @@ function samePaperTradeIdentity(left = {}, right = {}) {
 function closingEntryMatchesOpenTrade(closeEntry = {}, openEntry = {}) {
   if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
   if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
+  const closeTradeId = String(closeEntry.tradeId || "");
+  const openTradeId = String(openEntry.tradeId || "");
+  if (closeTradeId && openTradeId && closeTradeId !== openTradeId) return false;
+  const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
+  const openOpenedAt = openEntry.openedAt ? getTransactionDate(openEntry.openedAt).getTime() : 0;
+  if (closeOpenedAt && openOpenedAt && closeOpenedAt !== openOpenedAt) return false;
   if (normalizeEmail(closeEntry.userEmail || "") !== normalizeEmail(openEntry.userEmail || "")) return false;
   if (String(closeEntry.commodity || "") !== String(openEntry.commodity || "")) return false;
   if (closeEntry.contract && openEntry.contract && String(closeEntry.contract) !== String(openEntry.contract)) return false;

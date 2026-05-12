@@ -430,10 +430,10 @@ const LEADERBOARD_RANK_KEY = "comhedge-leaderboard-rank-v2";
 const LEADERBOARD_PERIOD_KEY = "comhedge-leaderboard-period-v1";
 const LOW_POWER_MODE_KEY = "comhedge-low-power-mode-v1";
 const NORMAL_SIGNAL_THROTTLE_MS = 1000;
-const LOW_POWER_SIGNAL_THROTTLE_MS = 5000;
+const LOW_POWER_SIGNAL_THROTTLE_MS = 10000;
 const HIDDEN_SIGNAL_THROTTLE_MS = 15000;
 const NORMAL_CHART_THROTTLE_MS = 3000;
-const LOW_POWER_CHART_THROTTLE_MS = 15000;
+const LOW_POWER_CHART_THROTTLE_MS = 30000;
 const HIDDEN_CHART_THROTTLE_MS = 60000;
 const NORMAL_PAPER_SWEEP_THROTTLE_MS = 2000;
 const LOW_POWER_PAPER_SWEEP_THROTTLE_MS = 10000;
@@ -8774,6 +8774,12 @@ function samePaperTradeIdentity(a, b) {
 function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
   if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
   if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
+  const closeTradeId = String(closeEntry.tradeId || "");
+  const openTradeId = String(openEntry.tradeId || "");
+  if (closeTradeId && openTradeId && closeTradeId !== openTradeId) return false;
+  const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
+  const openOpenedAt = openEntry.openedAt ? getTransactionDate(openEntry.openedAt).getTime() : 0;
+  if (closeOpenedAt && openOpenedAt && closeOpenedAt !== openOpenedAt) return false;
   if (!samePaperTradePosition(closeEntry, openEntry)) return false;
   const closeTime = getTransactionDate(closeEntry.closedAt || closeEntry.time).getTime();
   const openTime = getTransactionDate(openEntry.openedAt || openEntry.time).getTime();
@@ -8783,6 +8789,12 @@ function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
 function closingEntryMatchesActiveTrade(closeEntry, activeTrade) {
   if (samePaperTradeIdentity(closeEntry, activeTrade)) return true;
   if (!isClosingTransaction(closeEntry) || !activeTrade) return false;
+  const closeTradeId = String(closeEntry.tradeId || "");
+  const activeTradeId = String(activeTrade.tradeId || activeTrade.id || "");
+  if (closeTradeId && activeTradeId && closeTradeId !== activeTradeId) return false;
+  const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
+  const activeOpenedAt = activeTrade.openedAt ? getTransactionDate(activeTrade.openedAt).getTime() : 0;
+  if (closeOpenedAt && activeOpenedAt && closeOpenedAt !== activeOpenedAt) return false;
   if (!samePaperTradePosition(closeEntry, activeTrade)) return false;
   if (closeEntry.contract && activeTrade.contract && closeEntry.contract !== activeTrade.contract) return false;
   const closeTime = getTransactionDate(closeEntry.closedAt || closeEntry.time).getTime();
@@ -11493,7 +11505,8 @@ function getProfitTotal(entries) {
 }
 
 function isClosingTransaction(entry) {
-  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => entry.action?.includes(word));
+  const action = String(entry.action || "").toUpperCase();
+  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => action.includes(word));
 }
 
 function getTransactionTargetOrExitPrice(entry) {
@@ -11526,7 +11539,8 @@ function getTransactionEntryPriceDisplay(entry) {
 }
 
 function isOpeningTransaction(entry) {
-  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(entry.action);
+  const action = String(entry.action || "").trim().toUpperCase();
+  return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(action);
 }
 
 function getLatestUnclosedOpeningTrade(commodity) {
@@ -12207,7 +12221,7 @@ function calculateSignal() {
   maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan);
   maybeRecordMicroPrediction(commodity, primarySignal, tradePlan);
   renderAdvisoryAdoptedSystems();
-  renderSecondOpinionInfluence();
+  if (activeSection === "second-opinion") renderSecondOpinionInfluence();
   applyLLMDisplayOverride(commodity);
   maybeAutoTriggerLLM();
 }
