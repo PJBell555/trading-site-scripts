@@ -4799,10 +4799,16 @@ function toggleAdvisoryStrategyDetail() {
   advisoryStrategyToggleEl.textContent = shouldOpen ? "Hide Strategy" : "Strategy";
 }
 
+function isMartingaleStrategy(strategy = getCurrentUserStrategy()) {
+  const type = String(strategy?.type || "").toLowerCase();
+  const name = String(strategy?.name || "").toLowerCase();
+  return type.includes("martingale") || name.includes("martingale");
+}
+
 function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
   return [
     { key: "strategyText", label: "Strategy definition text", value: "Saved as notes; does not execute by itself", type: "static" },
-    { key: "martingaleEnabled", label: "Martingale recovery", value: String(strategy.type || "").includes("martingale"), type: "checkbox", on: "On", off: "Off" },
+    { key: "martingaleEnabled", label: "Martingale recovery", value: isMartingaleStrategy(strategy), type: "checkbox", on: "On", off: "Off" },
     { key: "martingaleSteps", label: "Martingale max steps", value: strategy.martingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "karpathyLoop", label: "Karpathy loop", value: strategy.karpathyLoop, type: "checkbox", on: "Adjusts thresholds from evaluated outcomes", off: "Off" },
     { key: "karpathyFlatSelectivity", label: "Karpathy flat selectivity", value: strategy.karpathyFlatSelectivity, type: "checkbox", on: "More selective in flat/mixed markets", off: "Off" },
@@ -10920,8 +10926,7 @@ function getBlockingOpenPaperTradeForNewEntry(commodity) {
   if (sameCommodity) return sameCommodity;
 
   const strategy = getCurrentUserStrategy();
-  const isMartingale = String(strategy.type || "").includes("martingale");
-  return isMartingale ? activeTrades[0] || null : null;
+  return isMartingaleStrategy(strategy) ? activeTrades[0] || null : null;
 }
 
 async function openPaperTrade(commodity, commodityMeta, signal, tradePlan) {

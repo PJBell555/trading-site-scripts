@@ -2135,7 +2135,9 @@ function getEnabledCommodityOpenTrades(openTrades = [], enabledCommodities = [])
 }
 
 function shouldUseExclusiveMartingale(user = {}) {
-  return String(user.strategy?.type || "").includes("martingale");
+  const type = String(user.strategy?.type || "").toLowerCase();
+  const name = String(user.strategy?.name || "").toLowerCase();
+  return type.includes("martingale") || name.includes("martingale");
 }
 
 function getServerStrategySettings(user = {}) {
