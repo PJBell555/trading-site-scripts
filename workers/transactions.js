@@ -2541,6 +2541,21 @@ async function getServerMarketPrice(env, user, commodity, advisory = null) {
   }
   if (live) return live;
 
+  try {
+    const stored = await loadStoredPriceSnapshots(env);
+    const snapshot = stored[commodity];
+    const snapshotPrice = Number(snapshot?.price);
+    if (snapshot?.ok && Number.isFinite(snapshotPrice) && snapshotPrice > 0 && isFreshPriceSnapshot(snapshot)) {
+      return {
+        price: snapshotPrice,
+        source: "Cloudflare price snapshot",
+        time: snapshot.fetchedAt || new Date().toISOString()
+      };
+    }
+  } catch (_error) {
+    // If the snapshot table is unavailable, continue to advisory and micro fallbacks.
+  }
+
   const advisoryPrice = Number(advisory?.price);
   const advisoryTime = getTransactionDate(advisory?.time);
   const advisoryFresh = Date.now() - advisoryTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;

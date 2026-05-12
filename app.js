@@ -3789,7 +3789,7 @@ function getUserOpenPnl(user, entries = getUserPaperLedgerEntries(user)) {
   return getUserEnabledOpenPaperTrades(user, entries).reduce((total, entry) => {
     const commodity = entry.commodity || "oil";
     const livePrice = getUsableMarketPrice(commodity);
-    if (!Number.isFinite(livePrice)) return total;
+    if (!Number.isFinite(livePrice) || livePrice <= 0) return total;
     const pnl = getTradeNetPnl({
       ...entry,
       id: entry.tradeId || entry.id,
@@ -6046,7 +6046,7 @@ function buildFallbackPaperTradeRow(message) {
 function buildUnrealizedPnlCell(openTrade, livePrice) {
   const cell = document.createElement("td");
   const livePriceNum = Number(livePrice);
-  if (!openTrade || !Number.isFinite(livePriceNum)) {
+  if (!openTrade || !Number.isFinite(livePriceNum) || livePriceNum <= 0) {
     cell.textContent = UNAVAILABLE_TEXT;
     return cell;
   }
