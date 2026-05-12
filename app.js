@@ -8570,6 +8570,11 @@ function getDisplayTransactionSource() {
 }
 
 async function loadBundledTransactionHistory() {
+  if (hasHistoryBackend()) {
+    sharedHistoryStatusEl.textContent = "Backend ledger is source of truth";
+    return false;
+  }
+
   const bundledLedger = window.COMHEDGE_BUNDLED_TRANSACTIONS;
   const bundledEntries = Array.isArray(bundledLedger?.transactions) ? bundledLedger.transactions : [];
   if (bundledEntries.length) {
@@ -8994,6 +8999,15 @@ function getTradePnl(trade, exitPrice) {
 }
 
 function savePaperState() {
+  if (!BROWSER_PAPER_EXECUTION_ENABLED && hasHistoryBackend()) {
+    try {
+      window.localStorage.removeItem(PAPER_STATE_KEY);
+    } catch (error) {
+      // Ignore storage cleanup failures; Cloudflare remains the paper ledger source of truth.
+    }
+    return;
+  }
+
   try {
     const state = {
       paperEquity,
@@ -9050,6 +9064,15 @@ function updatePaperRiskSetting() {
 }
 
 function loadPaperState() {
+  if (!BROWSER_PAPER_EXECUTION_ENABLED && hasHistoryBackend()) {
+    try {
+      window.localStorage.removeItem(PAPER_STATE_KEY);
+    } catch (error) {
+      // Ignore storage cleanup failures; Cloudflare remains the paper ledger source of truth.
+    }
+    return;
+  }
+
   try {
     const stored = window.localStorage.getItem(PAPER_STATE_KEY);
     if (!stored) return;
@@ -10564,10 +10587,9 @@ async function saveSharedTransactionHistory() {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    const mergedEntries = getMergedTransactionEntries(entries);
-    replaceTransactionHistory(mergedEntries);
+    replaceTransactionHistory(entries, { preserveOpenTrades: false });
     reconcilePaperStateFromHistory();
-    sharedHistoryStatusEl.textContent = `Backend saved ${mergedEntries.length || transactionHistory.length} rows`;
+    sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
     backendHistoryReady = true;
     nextBackendTransactionSyncAt = 0;
     pendingHistorySaveRetry = false;
@@ -10584,6 +10606,14 @@ async function saveSharedTransactionHistory() {
 }
 
 function queueSharedTransactionHistorySave({ immediate = false } = {}) {
+  if (!BROWSER_PAPER_EXECUTION_ENABLED && hasHistoryBackend()) {
+    backendHistoryDirty = false;
+    pendingHistorySaveRetry = false;
+    backendHistoryReady = true;
+    sharedHistoryStatusEl.textContent = "Cloudflare ledger active; browser paper writes disabled";
+    return;
+  }
+
   if (isLocalMockBackendEnabled()) {
     backendHistoryDirty = false;
     pendingHistorySaveRetry = false;
@@ -10671,17 +10701,10 @@ async function loadSharedTransactionHistory(manual = false) {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
-    const mergedEntries = getMergedTransactionEntries(entries);
-    const hasLocalOnlyRows = mergedEntries.length > entries.length;
-    replaceTransactionHistory(mergedEntries);
+    replaceTransactionHistory(entries, { preserveOpenTrades: false });
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
-    if (hasLocalOnlyRows) {
-      queueSharedTransactionHistorySave();
-      sharedHistoryStatusEl.textContent = `Backend merged ${mergedEntries.length} rows`;
-    } else {
-      sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
-    }
+    sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
     renderLeaderBoard();
@@ -12951,7 +12974,7 @@ function initializeApp() {
   renderPeriodFilterButtons();
   renderAdvisoryFilterButtons();
   renderMicroLearningLoop();
-  loadBundledTransactionHistory();
+  if (!hasHistoryBackend()) loadBundledTransactionHistory();
   loadLowPowerMode();
   calculateSignal();
   initializeBackendState();
