@@ -2770,8 +2770,15 @@ function saveUserRoster() {
   window.localStorage.setItem(USER_ROSTER_KEY, JSON.stringify(userRoster));
 }
 
+const ACCOUNT_EMAIL_ALIASES = {
+  "peter@ambeil.com": "peterambiel@gmail.com",
+  "pete@ambeil.com": "peterambiel@gmail.com",
+  "peter@ambiel.com": "peterambiel@gmail.com"
+};
+
 function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
+  const email = String(value || "").trim().toLowerCase();
+  return ACCOUNT_EMAIL_ALIASES[email] || email;
 }
 
 function getDefaultUserEquity(user = {}, fallback = DEFAULT_NON_EXEMPT_USER_EQUITY) {

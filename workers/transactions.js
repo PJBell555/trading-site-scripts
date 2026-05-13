@@ -124,8 +124,24 @@ function isOpeningTransaction(entry) {
   return !isClosingTransaction(entry) && ["BUY", "SELL SHORT"].includes(action);
 }
 
+const ACCOUNT_EMAIL_ALIASES = {
+  "peter@ambeil.com": "peterambiel@gmail.com",
+  "pete@ambeil.com": "peterambiel@gmail.com",
+  "peter@ambiel.com": "peterambiel@gmail.com"
+};
+
 function normalizeEmail(value) {
-  return String(value || "").trim().toLowerCase();
+  const email = String(value || "").trim().toLowerCase();
+  return ACCOUNT_EMAIL_ALIASES[email] || email;
+}
+
+function normalizeMergedFrom(value, canonicalEmail) {
+  const emails = new Set();
+  (Array.isArray(value) ? value : []).forEach((entry) => {
+    const email = normalizeEmail(entry);
+    if (email && email !== canonicalEmail) emails.add(email);
+  });
+  return Array.from(emails);
 }
 
 function clamp(value, min, max) {
@@ -3505,6 +3521,46 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
   };
 }
 
+function canonicalizeSettingsPayload(settings = defaultSettingsPayload()) {
+  const usersByEmail = new Map();
+  const profilesByEmail = {};
+  const users = Array.isArray(settings.users) ? settings.users : [];
+  const profiles = settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+    ? settings.userProfiles
+    : {};
+
+  users.forEach((user) => {
+    const email = normalizeEmail(user.email);
+    if (!email) return;
+    const existing = usersByEmail.get(email) || {};
+    usersByEmail.set(email, {
+      ...existing,
+      ...user,
+      email,
+      name: email === "peterambiel@gmail.com" ? "Peter Ambiel" : user.name || existing.name || email,
+      mergedFrom: normalizeMergedFrom([...(existing.mergedFrom || []), ...(user.mergedFrom || [])], email)
+    });
+  });
+
+  Object.entries(profiles).forEach(([key, profile]) => {
+    const email = normalizeEmail(profile?.email || key);
+    if (!email) return;
+    profilesByEmail[email] = {
+      ...(profilesByEmail[email] || {}),
+      ...(profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {}),
+      email,
+      name: email === "peterambiel@gmail.com" ? "Peter Ambiel" : profile?.name || profilesByEmail[email]?.name || "",
+      mergedFrom: normalizeMergedFrom([...(profilesByEmail[email]?.mergedFrom || []), ...(profile?.mergedFrom || [])], email)
+    };
+  });
+
+  return {
+    ...settings,
+    users: Array.from(usersByEmail.values()),
+    userProfiles: profilesByEmail
+  };
+}
+
 async function ensureUserStrategyRecordsTable(env) {
   await env.DB.prepare(`
     CREATE TABLE IF NOT EXISTS user_strategy_records (
@@ -3604,7 +3660,7 @@ async function mergeUserStrategyRecordsD1(env, settings = {}) {
 async function handleD1Settings(env, request, origin) {
   if (request.method === "GET") {
     const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
-    const enrichedSettings = await mergeUserStrategyRecordsD1(env, settings);
+    const enrichedSettings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, settings));
     return jsonResponse({
       ...defaultSettingsPayload(),
       ...enrichedSettings,
@@ -3619,7 +3675,7 @@ async function handleD1Settings(env, request, origin) {
 
   const body = await request.json().catch(() => ({}));
   const current = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
-  const settings = mergeSettingsPayload(current, body);
+  const settings = canonicalizeSettingsPayload(mergeSettingsPayload(current, body));
   await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, settings);
   await upsertUserStrategyRecordsD1(env, settings);
 
