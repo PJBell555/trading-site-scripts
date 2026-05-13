@@ -16,6 +16,7 @@ const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
 const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
+const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
 const DEFAULT_MARKET_CALENDAR = {
   overnightRiskMode: "accept",
@@ -837,10 +838,27 @@ function normalizeTradeMode(value, fallback = PAPER_TRADE_MODE) {
   return mode === REAL_TRADE_MODE ? REAL_TRADE_MODE : PAPER_TRADE_MODE;
 }
 
+function inferServerCommodityFromContract(contract) {
+  const text = String(contract || "").trim().toLowerCase();
+  if (!text) return "";
+  const direct = Object.values(SERVER_COMMODITIES).find((commodity) => (
+    [commodity.ticker, commodity.productId].some((value) => String(value || "").toLowerCase() === text)
+  ));
+  if (direct) return direct.id;
+  if (text.startsWith("nol") || text.includes("oil")) return "oil";
+  if (text.includes("natural-gas") || text.includes("natgas") || text.includes("ng reference")) return "natural-gas";
+  if (text.includes("gold")) return "gold";
+  if (text.includes("silver")) return "silver";
+  if (text.includes("copper")) return "copper";
+  if (text.includes("platinum")) return "platinum";
+  return "";
+}
+
 function normalizeD1Transaction(entry = {}, fallbackTradeMode = PAPER_TRADE_MODE) {
   const transactionKey = getTransactionKey(entry);
   const tradeMode = normalizeTradeMode(firstPresent(entry.tradeMode, entry.trade_mode, entry.mode), fallbackTradeMode);
-  const payloadEntry = { ...entry, sharedKey: transactionKey, tradeMode };
+  const commodity = firstPresent(entry.commodity, inferServerCommodityFromContract(entry.contract));
+  const payloadEntry = { ...entry, commodity, sharedKey: transactionKey, tradeMode };
   const now = new Date().toISOString();
 
   return {
@@ -848,7 +866,7 @@ function normalizeD1Transaction(entry = {}, fallbackTradeMode = PAPER_TRADE_MODE
     trade_mode: tradeMode,
     trade_id: textOrNull(firstPresent(entry.tradeId, entry.id)),
     user_email: textOrNull(firstPresent(entry.userEmail, entry.profileEmail, entry.accountEmail, entry.email)),
-    commodity: textOrNull(entry.commodity),
+    commodity: textOrNull(commodity),
     commodity_name: textOrNull(entry.commodityName),
     action: textOrNull(entry.action),
     side: textOrNull(entry.side),
@@ -1095,7 +1113,11 @@ async function loadUnifiedTransactionPayloadD1(env, tradeMode, source) {
     transactions: getResults(result)
       .map((row) => parseStoredJson(row.payload_json))
       .filter(Boolean)
-      .map((entry) => ({ ...entry, tradeMode: normalizeTradeMode(entry.tradeMode, normalizedMode) }))
+      .map((entry) => ({
+        ...entry,
+        commodity: firstPresent(entry.commodity, inferServerCommodityFromContract(entry.contract)),
+        tradeMode: normalizeTradeMode(entry.tradeMode, normalizedMode)
+      }))
   };
 }
 
@@ -2129,6 +2151,12 @@ function getTransactionsForUser(transactions = [], userEmail) {
   return transactions.filter((entry) => getTransactionUserEmail(entry) === email);
 }
 
+function isStaleUnclosedOpeningTrade(entry) {
+  if (!isOpeningTransaction(entry)) return false;
+  const openedAt = getTransactionDate(entry.openedAt || entry.time).getTime();
+  return Number.isFinite(openedAt) && Date.now() - openedAt > STALE_UNCLOSED_OPEN_TRADE_MS;
+}
+
 function getOpenPaperTradesForUser(transactions = [], userEmail) {
   const active = new Map();
   getTransactionsForUser(transactions, userEmail)
@@ -2148,13 +2176,13 @@ function getOpenPaperTradesForUser(transactions = [], userEmail) {
         });
       }
     });
-  return Array.from(active.values());
+  return Array.from(active.values()).filter((entry) => !isStaleUnclosedOpeningTrade(entry));
 }
 
 function getEnabledCommodityOpenTrades(openTrades = [], enabledCommodities = []) {
   const enabled = new Set((Array.isArray(enabledCommodities) ? enabledCommodities : []).map(normalizeServerCommodityId).filter(Boolean));
   if (!enabled.size) return openTrades;
-  return openTrades.filter((trade) => enabled.has(normalizeServerCommodityId(trade.commodity)));
+  return openTrades.filter((trade) => enabled.has(normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract))));
 }
 
 function shouldUseExclusiveMartingale(user = {}) {

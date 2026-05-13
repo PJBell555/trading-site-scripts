@@ -370,6 +370,7 @@ const BACKEND_REQUEST_TIMEOUT_MS = 10000;
 const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
 const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
 const CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED = true;
+const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const LOCAL_MOCK_BACKEND_PARAM = "mock-backend";
 const LOCAL_MOCK_BACKEND_LEDGER_URL = "./dev/mock-ledger.json";
 const LLM_SCHEDULE_CHECK_MS = 60000;
@@ -3774,6 +3775,12 @@ function isEntryInLeaderBoardPeriod(entry, cutoff = getLeaderBoardPeriodCutoff()
   return Number.isFinite(time) && time >= cutoff;
 }
 
+function isStaleUnclosedOpeningTrade(entry) {
+  if (!isOpeningTransaction(entry)) return false;
+  const openedAt = getTransactionDate(entry.openedAt || entry.time).getTime();
+  return Number.isFinite(openedAt) && Date.now() - openedAt > STALE_UNCLOSED_OPEN_TRADE_MS;
+}
+
 function getUserLeaderBoardEntries(user, cutoff = getLeaderBoardPeriodCutoff()) {
   return getUserPaperLedgerEntries(user).filter((entry) => isEntryInLeaderBoardPeriod(entry, cutoff));
 }
@@ -3800,15 +3807,16 @@ function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user))
         });
       }
     });
-  return Array.from(active.values());
+  return Array.from(active.values()).filter((entry) => !isStaleUnclosedOpeningTrade(entry));
 }
 
 function userCanTradeCommodityForProfile(user, commodity) {
+  if (!commodity) return false;
   const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
   const selected = paperTrading.enabled && paperTrading.commodities.length
     ? normalizeCommodityIds(paperTrading.commodities)
     : normalizeCommodityIds(user?.commodities);
-  return selected.includes(normalizeCommodityId(commodity || "oil"));
+  return selected.includes(normalizeCommodityId(commodity));
 }
 
 function getUserEnabledOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user)) {
@@ -4256,7 +4264,7 @@ function drawLeaderBoardChart(rows) {
     context.fillStyle = "#dbeafe";
     context.font = `700 ${18 * scale}px Aptos, Segoe UI, sans-serif`;
     context.textAlign = "center";
-    context.fillText("No closed trades to chart yet", width / 2, height / 2);
+    context.fillText(hasFreshCloudTradingState() ? "No closed trades to chart yet" : "Waiting for server to show trades", width / 2, height / 2);
     return;
   }
 
@@ -4381,7 +4389,7 @@ function renderLeaderBoard() {
     const cell = document.createElement("td");
     cell.colSpan = 10;
     cell.textContent = requiresFreshCloudState() && !hasFreshCloudTradingState()
-      ? "Waiting for current Cloudflare settings and ledger. Stale browser leaderboard data is disabled."
+      ? "Waiting for server to show trades."
       : "No users available.";
     row.append(cell);
     leaderboardBodyEl.append(row);
@@ -8180,7 +8188,20 @@ function getOpenPaperTrade(commodity) {
 }
 
 function getCommodityFromContract(contract) {
-  return commodities.find(({ id }) => marketConfig[id]?.ticker === contract)?.id || null;
+  const text = String(contract || "").trim().toLowerCase();
+  if (!text) return null;
+  const direct = commodities.find(({ id }) => {
+    const config = marketConfig[id] || {};
+    return [config.ticker, config.productId].some((value) => String(value || "").toLowerCase() === text);
+  });
+  if (direct) return direct.id;
+  if (text.startsWith("nol") || text.includes("oil")) return "oil";
+  if (text.includes("natural-gas") || text.includes("natgas") || text.includes("ng reference")) return "natural-gas";
+  if (text.includes("gold")) return "gold";
+  if (text.includes("silver")) return "silver";
+  if (text.includes("copper")) return "copper";
+  if (text.includes("platinum")) return "platinum";
+  return null;
 }
 
 function getTransactionDate(value) {
