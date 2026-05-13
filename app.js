@@ -4410,8 +4410,8 @@ function renderLeaderBoard() {
     const tradeButton = document.createElement("button");
     tradeButton.type = "button";
     tradeButton.className = "leaderboard-trades-trigger";
-    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed / ${entry.rawRowCount} rows`;
-    tradeButton.title = "Counts are limited to this account's currently enabled paper-trading commodities. Rows are raw Cloudflare ledger rows for audit.";
+    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed`;
+    tradeButton.title = `Counts are limited to this account's currently enabled paper-trading commodities. Raw Cloudflare audit rows: ${entry.rawRowCount}.`;
     tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
     tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
