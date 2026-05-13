@@ -369,6 +369,7 @@ const BACKEND_FAILURE_BACKOFF_MS = 300000;
 const BACKEND_REQUEST_TIMEOUT_MS = 10000;
 const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
 const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
+const CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED = true;
 const LOCAL_MOCK_BACKEND_PARAM = "mock-backend";
 const LOCAL_MOCK_BACKEND_LEDGER_URL = "./dev/mock-ledger.json";
 const LLM_SCHEDULE_CHECK_MS = 60000;
@@ -718,6 +719,7 @@ let backendAdvisorySyncInFlight = false;
 let backendMicroPredictionSyncInFlight = false;
 let backendHistoryReady = false;
 let transactionHistoryLoadedFromBackend = false;
+let sharedSettingsLoadedFromBackend = false;
 let pendingHistorySaveRetry = false;
 let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
@@ -3899,6 +3901,7 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
 }
 
 function getLeaderBoardRows() {
+  if (!hasFreshCloudTradingState()) return [];
   const cutoff = getLeaderBoardPeriodCutoff();
   return userRoster.map((user) => {
     const entries = getUserLeaderBoardEntries(user, cutoff)
@@ -4368,7 +4371,9 @@ function renderLeaderBoard() {
     const row = document.createElement("tr");
     const cell = document.createElement("td");
     cell.colSpan = 10;
-    cell.textContent = "No users available.";
+    cell.textContent = requiresFreshCloudState() && !hasFreshCloudTradingState()
+      ? "Waiting for current Cloudflare settings and ledger. Stale browser leaderboard data is disabled."
+      : "No users available.";
     row.append(cell);
     leaderboardBodyEl.append(row);
     drawLeaderBoardChart(rankedRows);
@@ -7651,6 +7656,38 @@ function getBackendBackoffText(syncAt) {
   return `Backend offline; retrying in ${minutes} min`;
 }
 
+function clearCloudRuntimeLedgerState() {
+  transactionHistory.length = 0;
+  transactionHistoryLoadedFromBackend = false;
+  openPaperTrades.clear();
+  pendingPaperActions.clear();
+}
+
+function purgeBrowserRuntimeStateForCloudMode() {
+  if (!hasHistoryBackend() || !CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) return;
+  [
+    PAPER_STATE_KEY,
+    PAPER_DECISION_LOG_KEY,
+    LIVE_TRADE_LEDGER_KEY
+  ].forEach((key) => {
+    try {
+      window.localStorage.removeItem(key);
+    } catch (error) {
+      // Browser storage cleanup is best-effort; Cloudflare remains authoritative.
+    }
+  });
+  paperDecisionLog.length = 0;
+  liveTradeLedger.length = 0;
+}
+
+function requiresFreshCloudState() {
+  return Boolean(hasHistoryBackend() && CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED && !isLocalMockBackendEnabled());
+}
+
+function hasFreshCloudTradingState() {
+  return !requiresFreshCloudState() || (sharedSettingsLoadedFromBackend && transactionHistoryLoadedFromBackend);
+}
+
 function getTradeGrossPnl(trade, exitPrice) {
   const priceMove = trade.side === "short"
     ? trade.entryPrice - exitPrice
@@ -9324,6 +9361,7 @@ async function loadSharedSettings(manual = false) {
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
+    sharedSettingsLoadedFromBackend = true;
     sharedSettingsLoadedAt = settings.generatedAt || new Date().toISOString();
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
@@ -9346,6 +9384,7 @@ async function loadSharedSettings(manual = false) {
     nextBackendSettingsSyncAt = 0;
     return true;
   } catch (error) {
+    if (requiresFreshCloudState()) sharedSettingsLoadedFromBackend = false;
     nextBackendSettingsSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     if (manual) coinbaseSandboxStatusEl.textContent = "Settings sync failed";
     return false;
@@ -10608,6 +10647,12 @@ async function saveSharedTransactionHistory() {
     pendingHistorySaveRetry = true;
     return false;
   }
+  if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) {
+    backendHistoryDirty = false;
+    pendingHistorySaveRetry = false;
+    sharedHistoryStatusEl.textContent = "Cloudflare ledger is read-only from the browser";
+    return true;
+  }
   if (backendHistoryWriteInFlight) {
     backendHistoryDirty = true;
     pendingHistorySaveRetry = true;
@@ -10638,7 +10683,12 @@ async function saveSharedTransactionHistory() {
   } catch (error) {
     nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     pendingHistorySaveRetry = true;
-    sharedHistoryStatusEl.textContent = `Local ledger active; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+    if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED && hasHistoryBackend()) {
+      clearCloudRuntimeLedgerState();
+      sharedHistoryStatusEl.textContent = `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+    } else {
+      sharedHistoryStatusEl.textContent = `Local ledger active; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+    }
     return false;
   } finally {
     backendHistoryWriteInFlight = false;
@@ -10731,7 +10781,14 @@ async function loadSharedTransactionHistory(manual = false) {
     sharedHistoryStatusEl.textContent = "Local ledger active; backend URL unavailable";
     return false;
   }
-  if (!manual && isBackendBackoffActive(nextBackendTransactionSyncAt)) return false;
+  if (!manual && isBackendBackoffActive(nextBackendTransactionSyncAt)) {
+    if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) {
+      clearCloudRuntimeLedgerState();
+      sharedHistoryStatusEl.textContent = `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+      renderLeaderBoard();
+    }
+    return false;
+  }
   if (backendSyncInFlight || backendHistoryWriteInFlight) return false;
   backendSyncInFlight = true;
 
@@ -10754,11 +10811,18 @@ async function loadSharedTransactionHistory(manual = false) {
   } catch (error) {
     backendHistoryReady = true;
     nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
-    sharedHistoryStatusEl.textContent = manual
-      ? "Backend sync failed; using local ledger"
-      : `Backend offline; using local ledger. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
-    await loadBundledTransactionHistory();
-    transactionHistoryLoadedFromBackend = false;
+    if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) {
+      clearCloudRuntimeLedgerState();
+      sharedHistoryStatusEl.textContent = manual
+        ? "Cloudflare ledger sync failed; stale browser ledger disabled"
+        : `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+    } else {
+      sharedHistoryStatusEl.textContent = manual
+        ? "Backend sync failed; using local ledger"
+        : `Backend offline; using local ledger. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+      await loadBundledTransactionHistory();
+      transactionHistoryLoadedFromBackend = false;
+    }
     calculateSignal();
     renderLeaderBoard();
     return false;
@@ -11925,6 +11989,19 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   transactionHistoryEl.innerHTML = "";
+  if (requiresFreshCloudState() && !transactionHistoryLoadedFromBackend) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    renderPnlWithCapital(historyTotalAllEl, 0);
+    renderPnlWithCapital(historyTotalFilteredEl, 0, getSafeHistoryStartCapital(historyCommodityFilter));
+    historyTotalCountEl.textContent = "Cloudflare loading";
+    cell.colSpan = 12;
+    cell.textContent = "Waiting for current Cloudflare paper-trade ledger. Stale browser trades are disabled.";
+    row.append(cell);
+    transactionHistoryEl.append(row);
+    return;
+  }
+
   if (!historyFiltersTouched) {
     historyCommodityFilter = "all";
     historyPeriodFilter = "all";
@@ -12979,14 +13056,15 @@ function initializeApp() {
   if (appStarted) return;
   appStarted = true;
 
+  purgeBrowserRuntimeStateForCloudMode();
   loadUserRoster();
-  loadPaperState();
+  if (!requiresFreshCloudState()) loadPaperState();
   applyCurrentUserPaperSettings();
   loadModelSettings();
   loadLastVerifiedLLMRun();
   loadLocalAdvisoryHistory();
   loadLocalMicroPredictionHistory();
-  loadPaperDecisionLog();
+  if (!requiresFreshCloudState()) loadPaperDecisionLog();
   loadLeaderBoardRankMode();
   loadLeaderBoardPeriodMode();
   loadCustomStrategies();
@@ -12995,7 +13073,7 @@ function initializeApp() {
   loadOpenBrainMemory();
   loadAdvisoryScoreThreshold();
   loadFeatureRequests();
-  loadLiveTradeLedger();
+  if (!requiresFreshCloudState()) loadLiveTradeLedger();
   const migratedKarpathyAutoApply = migrateKarpathyAutoApplyForAllUsers();
   if (migratedKarpathyAutoApply) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
