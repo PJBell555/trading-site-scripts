@@ -720,6 +720,7 @@ let backendHistoryReady = false;
 let pendingHistorySaveRetry = false;
 let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
+let sharedSettingsLoadedAt = "";
 let nextBackendAdvisorySyncAt = 0;
 let nextBackendMicroPredictionSyncAt = 0;
 let nextBackendOpenBrainSyncAt = 0;
@@ -3740,6 +3741,13 @@ function getUserPaperLedgerEntries(user) {
   return getDedupedPaperCloseEntries(source).filter((entry) => entryBelongsToUser(entry, user));
 }
 
+function getRawUserPaperLedgerEntries(user) {
+  const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
+  return source
+    .map(normalizeTransactionEntry)
+    .filter((entry) => entryBelongsToUser(entry, user));
+}
+
 function getLeaderBoardPeriodCutoff(mode = leaderboardPeriodMode) {
   const option = LEADERBOARD_PERIOD_OPTIONS[mode] || LEADERBOARD_PERIOD_OPTIONS[LEADERBOARD_DEFAULT_PERIOD];
   return Number.isFinite(option.ms) ? Date.now() - option.ms : null;
@@ -3753,6 +3761,10 @@ function isEntryInLeaderBoardPeriod(entry, cutoff = getLeaderBoardPeriodCutoff()
 
 function getUserLeaderBoardEntries(user, cutoff = getLeaderBoardPeriodCutoff()) {
   return getUserPaperLedgerEntries(user).filter((entry) => isEntryInLeaderBoardPeriod(entry, cutoff));
+}
+
+function getRawUserLeaderBoardEntries(user, cutoff = getLeaderBoardPeriodCutoff()) {
+  return getRawUserPaperLedgerEntries(user).filter((entry) => isEntryInLeaderBoardPeriod(entry, cutoff));
 }
 
 function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user)) {
@@ -3883,6 +3895,7 @@ function getLeaderBoardRows() {
   const cutoff = getLeaderBoardPeriodCutoff();
   return userRoster.map((user) => {
     const entries = getUserLeaderBoardEntries(user, cutoff);
+    const rawEntries = getRawUserLeaderBoardEntries(user, cutoff);
     const closedPnl = entries
       .filter(isClosingTransaction)
       .reduce((total, entry) => total + getDisplayPnl(entry), 0);
@@ -3906,6 +3919,7 @@ function getLeaderBoardRows() {
       tradeCount,
       closedCount,
       activeOpenCount,
+      rawRowCount: rawEntries.length,
       winRate,
       expectancy,
       lastTradeTime,
@@ -4029,6 +4043,7 @@ function createLeaderBoardTradeHistoryPanel(user) {
   const openTrades = getUserEnabledOpenPaperTrades(user, entries);
   const openedCount = entries.filter(isOpeningTransaction).length;
   const closedCount = entries.filter(isClosingTransaction).length;
+  const rawRowCount = getRawUserLeaderBoardEntries(user).length;
 
   wrap.className = "leaderboard-trade-detail";
   summary.className = "ledger-totals";
@@ -4037,6 +4052,7 @@ function createLeaderBoardTradeHistoryPanel(user) {
     <div><span class="stat-label">Closed P/L</span><strong class="${closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(closedPnl)}</strong></div>
     <div><span class="stat-label">Opened / closed</span><strong>${openedCount} / ${closedCount}</strong></div>
     <div><span class="stat-label">Active enabled trades</span><strong>${openTrades.length}</strong></div>
+    <div><span class="stat-label">Raw ledger rows</span><strong>${rawRowCount}</strong></div>
   `;
 
   tableWrap.className = "history-wrap";
@@ -4377,7 +4393,8 @@ function renderLeaderBoard() {
     const tradeButton = document.createElement("button");
     tradeButton.type = "button";
     tradeButton.className = "leaderboard-trades-trigger";
-    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed`;
+    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed / ${entry.rawRowCount} rows`;
+    tradeButton.title = "Opened and closed are deduped trade lifecycle counts. Rows are raw Cloudflare ledger rows for audit.";
     tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
     tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
@@ -8706,8 +8723,12 @@ function getTradeLifecycleKey(entry) {
   ].join("|");
 }
 
+function getPaperTradeId(entry = {}) {
+  return entry.tradeId || entry.id || "";
+}
+
 function getTradeIdentityKey(entry) {
-  const tradeId = entry?.tradeId || entry?.id;
+  const tradeId = getPaperTradeId(entry);
   if (!tradeId) return "";
   const openedAt = entry?.openedAt ? getTransactionDate(entry.openedAt) : null;
   const openedAtKey = openedAt && !Number.isNaN(openedAt.getTime()) ? openedAt.toISOString() : "";
@@ -8717,7 +8738,7 @@ function getTradeIdentityKey(entry) {
 }
 
 function getTradeIdentityKeyForTrade(trade) {
-  const tradeId = trade?.id || trade?.tradeId;
+  const tradeId = getPaperTradeId(trade);
   if (!tradeId) return "";
   const openedAt = trade?.openedAt ? getTransactionDate(trade.openedAt) : null;
   const openedAtKey = openedAt && !Number.isNaN(openedAt.getTime()) ? openedAt.toISOString() : "";
@@ -8775,8 +8796,8 @@ function samePaperTradeIdentity(a, b) {
   const bIdentity = getTradeIdentityKey(b) || getTradeIdentityKeyForTrade(b);
   if (aIdentity && bIdentity && aIdentity === bIdentity) return true;
 
-  const aTradeId = a.tradeId || (isOpeningTransaction(a) ? a.id : "");
-  const bTradeId = b.tradeId || b.id;
+  const aTradeId = getPaperTradeId(a);
+  const bTradeId = getPaperTradeId(b);
   if (aTradeId && bTradeId && String(aTradeId) === String(bTradeId)) return true;
 
   return samePaperTradeLifecycle(a, b) && sameOpenTimestamp(a, b);
@@ -8785,8 +8806,8 @@ function samePaperTradeIdentity(a, b) {
 function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
   if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
   if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
-  const closeTradeId = String(closeEntry.tradeId || "");
-  const openTradeId = String(openEntry.tradeId || "");
+  const closeTradeId = String(getPaperTradeId(closeEntry) || "");
+  const openTradeId = String(getPaperTradeId(openEntry) || "");
   if (closeTradeId && openTradeId && closeTradeId !== openTradeId) return false;
   const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
   const openOpenedAt = openEntry.openedAt ? getTransactionDate(openEntry.openedAt).getTime() : 0;
@@ -8800,8 +8821,8 @@ function closingEntryMatchesOpenTrade(closeEntry, openEntry) {
 function closingEntryMatchesActiveTrade(closeEntry, activeTrade) {
   if (samePaperTradeIdentity(closeEntry, activeTrade)) return true;
   if (!isClosingTransaction(closeEntry) || !activeTrade) return false;
-  const closeTradeId = String(closeEntry.tradeId || "");
-  const activeTradeId = String(activeTrade.tradeId || activeTrade.id || "");
+  const closeTradeId = String(getPaperTradeId(closeEntry) || "");
+  const activeTradeId = String(getPaperTradeId(activeTrade) || "");
   if (closeTradeId && activeTradeId && closeTradeId !== activeTradeId) return false;
   const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
   const activeOpenedAt = activeTrade.openedAt ? getTransactionDate(activeTrade.openedAt).getTime() : 0;
@@ -9286,6 +9307,7 @@ async function loadSharedSettings(manual = false) {
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
+    sharedSettingsLoadedAt = settings.generatedAt || new Date().toISOString();
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
     const appStateChanged = applySharedAppState(settings.appState);
@@ -9328,6 +9350,7 @@ async function saveSharedSettings() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         coinbaseSandboxEnabled: isCoinbaseSandboxEnabled(),
+        settingsLoadedAt: sharedSettingsLoadedAt,
         modelSettings: sharedModelSettings,
         appState: getSharedAppStatePayload(),
         users: getSharedUsersPayload(),
@@ -9337,6 +9360,7 @@ async function saveSharedSettings() {
     if (!response.ok) throw new Error("settings save failed");
 
     const data = await response.json();
+    sharedSettingsLoadedAt = data?.settings?.generatedAt || sharedSettingsLoadedAt || new Date().toISOString();
     if (data?.settings?.modelSettings) applyModelSettings(data.settings.modelSettings);
     setCoinbaseSandboxEnabled(true);
     return true;
@@ -11958,7 +11982,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 
   renderPnlWithCapital(historyTotalAllEl, allTotal);
   renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
-  historyTotalCountEl.textContent = `${rowsToRender.length} row${rowsToRender.length === 1 ? "" : "s"}`;
+  historyTotalCountEl.textContent = `${rowsToRender.length} shown / ${displaySourceEntries.length} total`;
   if (sharedHistoryStatusEl && displaySourceEntries.length) {
     sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
   }

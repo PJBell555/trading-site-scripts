@@ -147,8 +147,12 @@ function getTradeLifecycleKey(entry) {
   ].join("|");
 }
 
+function getPaperTradeId(entry = {}) {
+  return entry.tradeId || entry.id || "";
+}
+
 function getTradeIdentityKey(entry = {}) {
-  const tradeId = entry.tradeId || entry.id;
+  const tradeId = getPaperTradeId(entry);
   if (!tradeId) return "";
   const openedAt = entry.openedAt ? getTransactionDate(entry.openedAt) : null;
   const openedAtKey = openedAt && openedAt.getTime() ? openedAt.toISOString() : "";
@@ -161,6 +165,8 @@ function samePaperTradeIdentity(left = {}, right = {}) {
   const leftIdentity = getTradeIdentityKey(left);
   const rightIdentity = getTradeIdentityKey(right);
   if (leftIdentity && rightIdentity && leftIdentity === rightIdentity) return true;
+  const leftTradeId = getPaperTradeId(left);
+  const rightTradeId = getPaperTradeId(right);
 
   return (
     normalizeEmail(left.userEmail || "") === normalizeEmail(right.userEmail || "") &&
@@ -168,15 +174,16 @@ function samePaperTradeIdentity(left = {}, right = {}) {
     String(left.contract || "") === String(right.contract || "") &&
     String(left.side || "") === String(right.side || "") &&
     String(left.step || "") === String(right.step || "") &&
-    String(left.tradeId || "") === String(right.tradeId || "")
+    Boolean(leftTradeId && rightTradeId) &&
+    String(leftTradeId) === String(rightTradeId)
   );
 }
 
 function closingEntryMatchesOpenTrade(closeEntry = {}, openEntry = {}) {
   if (samePaperTradeIdentity(closeEntry, openEntry)) return true;
   if (!isClosingTransaction(closeEntry) || !isOpeningTransaction(openEntry)) return false;
-  const closeTradeId = String(closeEntry.tradeId || "");
-  const openTradeId = String(openEntry.tradeId || "");
+  const closeTradeId = String(getPaperTradeId(closeEntry) || "");
+  const openTradeId = String(getPaperTradeId(openEntry) || "");
   if (closeTradeId && openTradeId && closeTradeId !== openTradeId) return false;
   const closeOpenedAt = closeEntry.openedAt ? getTransactionDate(closeEntry.openedAt).getTime() : 0;
   const openOpenedAt = openEntry.openedAt ? getTransactionDate(openEntry.openedAt).getTime() : 0;
@@ -3391,8 +3398,7 @@ async function runPaperTradingScheduler(env, options = {}) {
       run.decisions.push({ email, name: user.name || "", decision: lastDecision });
     }
 
-    const mergedTransactions = mergeTransactions(payload.transactions || [], transactions);
-    await replaceUnifiedTransactionsD1(env, PAPER_TRADE_MODE, mergedTransactions);
+    await upsertUnifiedTransactionRows(env, transactions, PAPER_TRADE_MODE);
     await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
       ...settings,
       users,
@@ -3471,6 +3477,10 @@ async function handlePaperSchedulerRoute(env, request, origin) {
 }
 
 function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {}) {
+  const currentGeneratedAt = getTransactionDate(current.generatedAt).getTime();
+  const clientLoadedAt = incoming.settingsLoadedAt ? getTransactionDate(incoming.settingsLoadedAt).getTime() : 0;
+  const acceptUserState = Boolean(clientLoadedAt && (!currentGeneratedAt || clientLoadedAt >= currentGeneratedAt - 1000));
+
   return {
     ...current,
     generatedAt: new Date().toISOString(),
@@ -3478,7 +3488,7 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
     coinbaseSandboxEnabled: typeof incoming.coinbaseSandboxEnabled === "boolean"
       ? incoming.coinbaseSandboxEnabled
       : Boolean(current.coinbaseSandboxEnabled),
-    users: Array.isArray(incoming.users) ? incoming.users : current.users || [],
+    users: acceptUserState && Array.isArray(incoming.users) ? incoming.users : current.users || [],
     modelSettings: normalizeServerModelSettings({
       ...(current.modelSettings && typeof current.modelSettings === "object" ? current.modelSettings : {}),
       ...(incoming.modelSettings && typeof incoming.modelSettings === "object" ? incoming.modelSettings : {})
@@ -3489,7 +3499,7 @@ function mergeSettingsPayload(current = defaultSettingsPayload(), incoming = {})
         ...incoming.appState
       }
       : current.appState || {},
-    userProfiles: incoming.userProfiles && typeof incoming.userProfiles === "object" && !Array.isArray(incoming.userProfiles)
+    userProfiles: acceptUserState && incoming.userProfiles && typeof incoming.userProfiles === "object" && !Array.isArray(incoming.userProfiles)
       ? mergeUserProfiles(current.userProfiles || {}, incoming.userProfiles)
       : current.userProfiles || {}
   };
@@ -3692,6 +3702,73 @@ async function handleD1StrategyChange(env, request, origin) {
   }, 200, origin);
 }
 
+async function handleD1UserCapitalUpdate(env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const updates = Array.isArray(body.updates) ? body.updates : [];
+  if (!updates.length) {
+    return jsonResponse({ error: "No user capital updates provided" }, 400, origin);
+  }
+
+  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const users = Array.isArray(settings.users) ? settings.users : [];
+  const profiles = settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+    ? { ...settings.userProfiles }
+    : {};
+  const applied = [];
+
+  updates.forEach((update) => {
+    const email = normalizeEmail(update.email);
+    const capital = Number(update.paperBaseEquity ?? update.startCapital);
+    if (!email || !Number.isFinite(capital) || capital < 0) return;
+
+    const user = users.find((candidate) => normalizeEmail(candidate.email) === email);
+    const nextCapital = Math.round(capital * 100) / 100;
+    if (user) {
+      user.paperBaseEquity = nextCapital;
+      user.commodityAllocations = user.commodityAllocations && typeof user.commodityAllocations === "object" && !Array.isArray(user.commodityAllocations)
+        ? user.commodityAllocations
+        : {};
+      user.commodityAllocations.oil = {
+        ...(user.commodityAllocations.oil && typeof user.commodityAllocations.oil === "object" ? user.commodityAllocations.oil : {}),
+        startCapital: nextCapital
+      };
+    }
+
+    const profile = profiles[email] && typeof profiles[email] === "object" && !Array.isArray(profiles[email])
+      ? { ...profiles[email] }
+      : {};
+    profile.paperBaseEquity = nextCapital;
+    profile.commodityAllocations = profile.commodityAllocations && typeof profile.commodityAllocations === "object" && !Array.isArray(profile.commodityAllocations)
+      ? profile.commodityAllocations
+      : {};
+    profile.commodityAllocations.oil = {
+      ...(profile.commodityAllocations.oil && typeof profile.commodityAllocations.oil === "object" ? profile.commodityAllocations.oil : {}),
+      startCapital: nextCapital
+    };
+    profiles[email] = profile;
+    applied.push({ email, paperBaseEquity: nextCapital });
+  });
+
+  if (!applied.length) {
+    return jsonResponse({ error: "No valid user capital updates provided" }, 400, origin);
+  }
+
+  const nextSettings = {
+    ...settings,
+    users,
+    userProfiles: profiles,
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-shared-settings"
+  };
+  await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, nextSettings);
+
+  return jsonResponse({ storage: "d1", applied, settings: nextSettings }, 200, origin);
+}
+
 async function handleD1Advisories(env, request, origin) {
   if (request.method === "GET") {
     const payload = await loadAdvisoryPayloadD1(env);
@@ -3888,8 +3965,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
 
   const incoming = Array.isArray(body.transactions) ? body.transactions : [];
   const taggedIncoming = incoming.map((entry) => ({ ...entry, tradeMode: normalizeTradeMode(entry.tradeMode, normalizedMode) }));
-  const mergedTransactions = mergeTransactions(current.transactions, taggedIncoming);
-  if (transactionSetsMatch(current.transactions, mergedTransactions)) {
+  if (!taggedIncoming.length) {
     return jsonResponse({
       commit: null,
       backup: null,
@@ -3903,7 +3979,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     }, 200, origin);
   }
 
-  await upsertUnifiedTransactionRows(env, mergedTransactions, normalizedMode);
+  await upsertUnifiedTransactionRows(env, taggedIncoming, normalizedMode);
   const saved = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
 
   return jsonResponse({
@@ -4224,6 +4300,10 @@ export default {
 
       if (url.pathname === "/settings/strategy-change") {
         return handleD1StrategyChange(env, request, origin);
+      }
+
+      if (url.pathname === "/settings/user-capital") {
+        return handleD1UserCapitalUpdate(env, request, origin);
       }
 
       if (url.pathname === "/advisories") {
