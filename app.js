@@ -475,6 +475,8 @@ const ADVISORY_PERIODS = {
 const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
 const ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES = 8;
 const ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE = 160;
+const ADVISORY_CALIBRATION_MIN_SIDE_SAMPLES = 8;
+const ADVISORY_EXPLORATION_MODE = false;
 const DEFAULT_ADVISORY_SCORE_THRESHOLD = 60;
 const ADVISORY_SCORE_BANDS = [
   { label: "Below 50", min: 0, max: 49 },
@@ -5041,8 +5043,11 @@ function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commodityS
   const evaluatedCount = learner?.evaluatedCount || sampleCount;
   const currentTone = signal?.tone || "wait";
   const adjustment = Number(learner?.adjustment) || 0;
+  const learnerEvaluations = Array.isArray(learner?.evaluations) ? learner.evaluations : [];
   const adjustmentText = learner?.ready
-    ? `${adjustment > 0 ? "+" : ""}${adjustment} score points`
+    ? ADVISORY_EXPLORATION_MODE
+      ? `${adjustment > 0 ? "+" : ""}${adjustment} observed only`
+      : `${adjustment > 0 ? "+" : ""}${adjustment} score points`
     : "None yet";
   const latestAction = learner?.ready
     ? learner.note
@@ -5066,6 +5071,9 @@ function renderCoachTelemetry(signal = lastPrimarySignal, commodity = commodityS
       <div><span>Current adjustment</span><strong>${escapeHtml(adjustmentText)}</strong></div>
       <div><span>Current advisory tone</span><strong>${escapeHtml(currentTone.toUpperCase())}</strong></div>
       <div><span>Sample balance</span><strong>${escapeHtml(getLearnerSampleBalanceLabel(learner))}</strong></div>
+      <div><span>Best long band</span><strong>${escapeHtml(getCalibrationAdvice(learnerEvaluations, "long"))}</strong></div>
+      <div><span>Best short band</span><strong>${escapeHtml(getCalibrationAdvice(learnerEvaluations, "short"))}</strong></div>
+      <div><span>Trading mode</span><strong>${ADVISORY_EXPLORATION_MODE ? "Exploration: volume unchanged" : "Selective: learner can adjust score"}</strong></div>
     </div>
     <p>${escapeHtml(latestAction)}</p>
     <p class="coach-telemetry-warning">${escapeHtml(getLearnerSampleBalance(learner))}</p>
@@ -7077,11 +7085,13 @@ function applyAdvisoryOutcomeLearner(commodity, bounded) {
   }
 
   learner.adjustment = adjustment;
-  learner.note = adjustment
-    ? `Outcome learner ${adjustment > 0 ? "+" : ""}${adjustment} from forecast accuracy`
-    : "Outcome learner observed outcomes without changing this call";
+  learner.note = ADVISORY_EXPLORATION_MODE
+    ? `${adjustment ? `Outcome learner would apply ${adjustment > 0 ? "+" : ""}${adjustment}` : "Outcome learner observed outcomes"}; exploration mode keeps trade volume unchanged`
+    : adjustment
+      ? `Outcome learner ${adjustment > 0 ? "+" : ""}${adjustment} from forecast accuracy`
+      : "Outcome learner observed outcomes without changing this call";
   return {
-    bounded: clamp(Math.round(bounded + adjustment), -100, 100),
+    bounded: ADVISORY_EXPLORATION_MODE ? bounded : clamp(Math.round(bounded + adjustment), -100, 100),
     learner
   };
 }
@@ -10163,6 +10173,43 @@ function summarizeEvaluations(evaluations, predicate = () => true) {
   };
 }
 
+function formatCalibrationSummary(summary) {
+  return summary.count ? `${formatPercent(summary.accuracy)} / ${summary.count}` : "No samples";
+}
+
+function getCalibrationBandSummary(evaluations, tone, band) {
+  return summarizeEvaluations(evaluations, (item) => {
+    const score = getAdvisoryLocalConviction(item.entry);
+    return item.entry.tone === tone
+      && Number.isFinite(score)
+      && score >= band.min
+      && score <= band.max;
+  });
+}
+
+function getBestCalibrationBand(evaluations, tone) {
+  const summaries = ADVISORY_SCORE_BANDS.map((band) => ({
+    band,
+    summary: getCalibrationBandSummary(evaluations, tone, band)
+  })).filter(({ summary }) => (
+    summary.count >= ADVISORY_CALIBRATION_MIN_SIDE_SAMPLES
+    && Number.isFinite(summary.accuracy)
+  ));
+
+  return summaries.sort((a, b) => (
+    b.summary.accuracy - a.summary.accuracy
+    || b.summary.count - a.summary.count
+  ))[0] || null;
+}
+
+function getCalibrationAdvice(evaluations, tone) {
+  const best = getBestCalibrationBand(evaluations, tone);
+  if (!best) return `Need ${ADVISORY_CALIBRATION_MIN_SIDE_SAMPLES}+ ${tone} samples in a score band.`;
+  const accuracy = Math.round(best.summary.accuracy);
+  const status = accuracy >= 60 ? "candidate edge" : "below target";
+  return `${best.band.label}: ${accuracy}% over ${best.summary.count} ${tone} calls (${status})`;
+}
+
 function renderScoreCalibrationBands(forecastEvaluations) {
   if (!accuracyCalibrationGridEl) return;
 
@@ -10179,9 +10226,12 @@ function renderScoreCalibrationBands(forecastEvaluations) {
     const label = document.createElement("span");
     const value = document.createElement("strong");
     const count = document.createElement("p");
+    const sideGrid = document.createElement("div");
     const track = document.createElement("div");
     const fill = document.createElement("i");
     const note = document.createElement("p");
+    const longSummary = getCalibrationBandSummary(forecastEvaluations, "long", band);
+    const shortSummary = getCalibrationBandSummary(forecastEvaluations, "short", band);
 
     card.className = "calibration-card";
     card.dataset.ready = String(hasUsefulSample);
@@ -10192,15 +10242,25 @@ function renderScoreCalibrationBands(forecastEvaluations) {
     count.textContent = hasSamples
       ? `${summary.correct} of ${summary.count} forecasts correct`
       : "No evaluated forecasts in this score band.";
+    sideGrid.className = "calibration-side-grid";
+    [
+      ["Long", longSummary],
+      ["Short", shortSummary]
+    ].forEach(([sideLabel, sideSummary]) => {
+      const side = document.createElement("span");
+      side.textContent = `${sideLabel}: ${formatCalibrationSummary(sideSummary)}`;
+      side.dataset.ready = String(sideSummary.count >= ADVISORY_CALIBRATION_MIN_SIDE_SAMPLES);
+      sideGrid.append(side);
+    });
     track.className = "calibration-track";
     fill.style.width = hasSamples ? `${Math.max(4, Math.min(100, accuracy))}%` : "0%";
     track.append(fill);
     note.textContent = !hasSamples
       ? "This band has not had enough calls yet."
       : hasUsefulSample
-        ? "Use this band to see whether conviction is calibrated."
+        ? "Use the long/short rows to see which side is actually calibrated."
         : "Small sample: treat this as noise until more calls arrive.";
-    card.append(label, value, count, track, note);
+    card.append(label, value, count, sideGrid, track, note);
     accuracyCalibrationGridEl.append(card);
   });
 }

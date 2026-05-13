@@ -3990,6 +3990,28 @@ select {
   line-height: 1.35;
 }
 
+.calibration-side-grid {
+  display: grid;
+  gap: 6px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.calibration-side-grid span {
+  min-width: 0;
+  padding: 7px 8px;
+  color: #bfdbfe;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
+.calibration-side-grid span[data-ready="true"] {
+  color: #ccfbf1;
+  border-color: rgba(34, 211, 166, 0.28);
+}
+
 .calibration-track {
   height: 10px;
   overflow: hidden;
