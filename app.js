@@ -717,6 +717,7 @@ let backendSettingsSyncInFlight = false;
 let backendAdvisorySyncInFlight = false;
 let backendMicroPredictionSyncInFlight = false;
 let backendHistoryReady = false;
+let transactionHistoryLoadedFromBackend = false;
 let pendingHistorySaveRetry = false;
 let nextBackendTransactionSyncAt = 0;
 let nextBackendSettingsSyncAt = 0;
@@ -3738,7 +3739,10 @@ function getUserCurrentPnl(user) {
 
 function getUserPaperLedgerEntries(user) {
   const source = transactionHistory.length ? transactionHistory : getBundledTransactionEntries();
-  return getDedupedPaperCloseEntries(source).filter((entry) => entryBelongsToUser(entry, user));
+  const entries = transactionHistoryLoadedFromBackend
+    ? source.map(normalizeTransactionEntry).filter(isPaperTradeEntry)
+    : getDedupedPaperCloseEntries(source);
+  return entries.filter((entry) => entryBelongsToUser(entry, user));
 }
 
 function getRawUserPaperLedgerEntries(user) {
@@ -3789,7 +3793,10 @@ function getUserOpenPaperTrades(user, entries = getUserPaperLedgerEntries(user))
 }
 
 function userCanTradeCommodityForProfile(user, commodity) {
-  const selected = normalizeCommodityIds(user?.commodities);
+  const paperTrading = normalizeServerPaperTrading(user?.paperTrading);
+  const selected = paperTrading.enabled && paperTrading.commodities.length
+    ? normalizeCommodityIds(paperTrading.commodities)
+    : normalizeCommodityIds(user?.commodities);
   return selected.includes(normalizeCommodityId(commodity || "oil"));
 }
 
@@ -3894,8 +3901,10 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
 function getLeaderBoardRows() {
   const cutoff = getLeaderBoardPeriodCutoff();
   return userRoster.map((user) => {
-    const entries = getUserLeaderBoardEntries(user, cutoff);
-    const rawEntries = getRawUserLeaderBoardEntries(user, cutoff);
+    const entries = getUserLeaderBoardEntries(user, cutoff)
+      .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
+    const rawEntries = getRawUserLeaderBoardEntries(user, cutoff)
+      .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
     const closedPnl = entries
       .filter(isClosingTransaction)
       .reduce((total, entry) => total + getDisplayPnl(entry), 0);
@@ -4031,6 +4040,7 @@ function appendLeaderBoardTradeCell(row, value, className = "") {
 
 function createLeaderBoardTradeHistoryPanel(user) {
   const entries = getUserLeaderBoardEntries(user)
+    .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity))
     .slice()
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
   const wrap = document.createElement("div");
@@ -4043,7 +4053,9 @@ function createLeaderBoardTradeHistoryPanel(user) {
   const openTrades = getUserEnabledOpenPaperTrades(user, entries);
   const openedCount = entries.filter(isOpeningTransaction).length;
   const closedCount = entries.filter(isClosingTransaction).length;
-  const rawRowCount = getRawUserLeaderBoardEntries(user).length;
+  const rawRowCount = getRawUserLeaderBoardEntries(user)
+    .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity))
+    .length;
 
   wrap.className = "leaderboard-trade-detail";
   summary.className = "ledger-totals";
@@ -4052,7 +4064,7 @@ function createLeaderBoardTradeHistoryPanel(user) {
     <div><span class="stat-label">Closed P/L</span><strong class="${closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(closedPnl)}</strong></div>
     <div><span class="stat-label">Opened / closed</span><strong>${openedCount} / ${closedCount}</strong></div>
     <div><span class="stat-label">Active enabled trades</span><strong>${openTrades.length}</strong></div>
-    <div><span class="stat-label">Raw ledger rows</span><strong>${rawRowCount}</strong></div>
+    <div><span class="stat-label">Raw enabled rows</span><strong>${rawRowCount}</strong></div>
   `;
 
   tableWrap.className = "history-wrap";
@@ -4394,7 +4406,7 @@ function renderLeaderBoard() {
     tradeButton.type = "button";
     tradeButton.className = "leaderboard-trades-trigger";
     tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed / ${entry.rawRowCount} rows`;
-    tradeButton.title = "Opened and closed are deduped trade lifecycle counts. Rows are raw Cloudflare ledger rows for audit.";
+    tradeButton.title = "Counts are limited to this account's currently enabled paper-trading commodities. Rows are raw Cloudflare ledger rows for audit.";
     tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
     tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
@@ -8523,7 +8535,9 @@ async function addLiveTradeFromForm(event) {
 
 function getUserScopedTransactions() {
   const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
-  const deduped = getDedupedPaperCloseEntries(source);
+  const deduped = transactionHistoryLoadedFromBackend
+    ? source.map(normalizeTransactionEntry)
+    : getDedupedPaperCloseEntries(source);
   const userScoped = hasCurrentUserProfile()
     ? deduped.filter((entry) => isTransactionForCurrentUser(entry))
     : deduped;
@@ -8533,7 +8547,9 @@ function getUserScopedTransactions() {
 
 function getAllTransactionsForLifecycleChecks() {
   const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
-  return getDedupedPaperCloseEntries(source);
+  return transactionHistoryLoadedFromBackend
+    ? source.map(normalizeTransactionEntry)
+    : getDedupedPaperCloseEntries(source);
 }
 
 function getBundledTransactionEntries() {
@@ -8565,6 +8581,7 @@ async function loadLocalMockTransactionHistory() {
     replaceTransactionHistory(entries);
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
+    transactionHistoryLoadedFromBackend = false;
     sharedHistoryStatusEl.textContent = `Mock backend loaded ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     calculateSignal();
     return true;
@@ -8576,7 +8593,7 @@ async function loadLocalMockTransactionHistory() {
 
 function getRawPaperLedgerEntries() {
   const source = (transactionHistory.length ? transactionHistory : getBundledTransactionEntries()).filter(isPaperTradeEntry);
-  return getDedupedPaperCloseEntries(source);
+  return source.map(normalizeTransactionEntry);
 }
 
 function getDisplayTransactionSource() {
@@ -10728,6 +10745,7 @@ async function loadSharedTransactionHistory(manual = false) {
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
+    transactionHistoryLoadedFromBackend = true;
     sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
@@ -10740,6 +10758,7 @@ async function loadSharedTransactionHistory(manual = false) {
       ? "Backend sync failed; using local ledger"
       : `Backend offline; using local ledger. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
     await loadBundledTransactionHistory();
+    transactionHistoryLoadedFromBackend = false;
     calculateSignal();
     renderLeaderBoard();
     return false;
