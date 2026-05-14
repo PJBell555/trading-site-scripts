@@ -514,7 +514,11 @@ const DEFAULT_USER_STRATEGY = {
   breakoutParticipation: true,
   breakoutMinEdgePercent: 55,
   breakoutMinVolatilityBps: 0.8,
-  breakoutMinMoveBps: 3
+  breakoutMinMoveBps: 3,
+  trendDayDirectionalHold: true,
+  blockLongsInFallingTrend: true,
+  volatilityAwareStops: true,
+  postStopShortReentry: true
 };
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
@@ -3149,7 +3153,11 @@ function normalizeUserStrategy(strategy = {}) {
     breakoutParticipation: merged.breakoutParticipation !== false,
     breakoutMinEdgePercent: clamp(Math.round(Number(merged.breakoutMinEdgePercent) || DEFAULT_USER_STRATEGY.breakoutMinEdgePercent), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
-    breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50)
+    breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50),
+    trendDayDirectionalHold: merged.trendDayDirectionalHold !== false,
+    blockLongsInFallingTrend: merged.blockLongsInFallingTrend !== false,
+    volatilityAwareStops: merged.volatilityAwareStops !== false,
+    postStopShortReentry: merged.postStopShortReentry !== false
   };
 }
 
@@ -3341,6 +3349,10 @@ function getStrategyChangeSummary(before, after) {
   if (before.breakoutMinEdgePercent !== after.breakoutMinEdgePercent) changes.push("breakout edge minimum");
   if (before.breakoutMinVolatilityBps !== after.breakoutMinVolatilityBps) changes.push("breakout volatility minimum");
   if (before.breakoutMinMoveBps !== after.breakoutMinMoveBps) changes.push("breakout move minimum");
+  if (before.trendDayDirectionalHold !== after.trendDayDirectionalHold) changes.push(after.trendDayDirectionalHold ? "enabled trend-day directional hold" : "disabled trend-day directional hold");
+  if (before.blockLongsInFallingTrend !== after.blockLongsInFallingTrend) changes.push(after.blockLongsInFallingTrend ? "enabled falling-trend long block" : "disabled falling-trend long block");
+  if (before.volatilityAwareStops !== after.volatilityAwareStops) changes.push(after.volatilityAwareStops ? "enabled volatility-aware stops" : "disabled volatility-aware stops");
+  if (before.postStopShortReentry !== after.postStopShortReentry) changes.push(after.postStopShortReentry ? "enabled post-stop short re-entry" : "disabled post-stop short re-entry");
   return changes.length ? `Changed ${changes.join(", ")}` : "No material strategy change";
 }
 
@@ -4699,6 +4711,10 @@ function saveUserStrategySettings(user, container) {
     skillFocus: container.querySelector("[data-strategy-field='skillFocus']")?.value,
     openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value,
     regimeAware: container.querySelector("[data-strategy-field='regimeAware']")?.checked,
+    trendDayDirectionalHold: container.querySelector("[data-strategy-field='trendDayDirectionalHold']")?.checked,
+    blockLongsInFallingTrend: container.querySelector("[data-strategy-field='blockLongsInFallingTrend']")?.checked,
+    volatilityAwareStops: container.querySelector("[data-strategy-field='volatilityAwareStops']")?.checked,
+    postStopShortReentry: container.querySelector("[data-strategy-field='postStopShortReentry']")?.checked,
     flatMaxMartingaleSteps: container.querySelector("[data-strategy-field='flatMaxMartingaleSteps']")?.value,
     flatSizeMultiplier: container.querySelector("[data-strategy-field='flatSizeMultiplier']")?.value,
     flatThresholdBoost: container.querySelector("[data-strategy-field='flatThresholdBoost']")?.value,
@@ -4867,6 +4883,10 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "karpathyAutoApply", label: "Karpathy auto-apply threshold changes", value: strategy.karpathyAutoApply, type: "checkbox", on: "Cloudflare may apply recommended threshold changes", off: "Recommendation only", help: "When off, the Cloudflare scheduler records coach recommendations but does not change this user's trading threshold. When on, the scheduler can update the paper-trading entry threshold from closed-trade outcomes." },
     { key: "advisoryOutcomeLearner", label: "Advisory outcome learner", value: strategy.advisoryOutcomeLearner, type: "checkbox", on: "Learns long/short/wait from forecast outcomes", off: "Off" },
     { key: "regimeAware", label: "Regime-aware Martingale", value: strategy.regimeAware, type: "checkbox", on: "On", off: "Off" },
+    { key: "trendDayDirectionalHold", label: "Trend-day directional hold", value: strategy.trendDayDirectionalHold, type: "checkbox", on: "Hold trend-side shorts through one bounce", off: "Off", help: "When broader tape is bearish, the Cloudflare scheduler does not abandon a short on the first small stop touch unless the hard volatility buffer is also broken." },
+    { key: "blockLongsInFallingTrend", label: "Block longs in falling trend", value: strategy.blockLongsInFallingTrend, type: "checkbox", on: "Requires reversal confirmation before long", off: "Off", help: "Prevents new long entries while the day tape is falling unless microstructure shows a real reversal: improving momentum, VWAP reclaim, and enough long edge." },
+    { key: "volatilityAwareStops", label: "Volatility-aware stops", value: strategy.volatilityAwareStops, type: "checkbox", on: "Stops widen with live volatility", off: "Fixed stop width", help: "Uses live micro volatility and trend context to avoid stop levels that are too tight for the current tape." },
+    { key: "postStopShortReentry", label: "Post-stop short re-entry", value: strategy.postStopShortReentry, type: "checkbox", on: "Can re-enter short after a stopped short resumes lower", off: "Off", help: "If a short is stopped during a bounce but bearish tape resumes within the re-entry window, the scheduler may open a controlled short again." },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "flatSizeMultiplier", label: "Flat/mixed size multiplier", value: strategy.flatSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x" },
     { key: "flatThresholdBoost", label: "Flat/mixed threshold boost", value: strategy.flatThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+" },
@@ -5576,6 +5596,22 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="regimeAware" type="checkbox"${strategy.regimeAware ? " checked" : ""}>
         Regime-aware Martingale
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="trendDayDirectionalHold" type="checkbox"${strategy.trendDayDirectionalHold ? " checked" : ""} title="When broader tape is bearish, Cloudflare can hold a short through one bounce instead of treating the first stop touch as final.">
+        Trend-day directional hold <span class="profile-field-hint" title="Useful on strong down days: a short can survive a small bounce unless the hard volatility buffer is also broken.">keeps trend-side shorts alive</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="blockLongsInFallingTrend" type="checkbox"${strategy.blockLongsInFallingTrend ? " checked" : ""} title="Blocks new long entries in a falling tape unless momentum and VWAP show a real reversal.">
+        Block longs in falling trend <span class="profile-field-hint" title="Stops the trader from buying into a falling day just because one short-term tick turns green.">requires reversal confirmation</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="volatilityAwareStops" type="checkbox"${strategy.volatilityAwareStops ? " checked" : ""} title="Uses live micro volatility and trend context to widen stops when the tape is moving.">
+        Volatility-aware stops <span class="profile-field-hint" title="Avoids fixed stops that are too tight for the current volatility.">dynamic stop width</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="postStopShortReentry" type="checkbox"${strategy.postStopShortReentry ? " checked" : ""} title="If a short gets stopped during a bounce but bearish tape resumes quickly, Cloudflare may re-enter short in a controlled way.">
+        Post-stop short re-entry <span class="profile-field-hint" title="Designed for down days where a bounce stops the trade before the move continues lower.">controlled short re-entry</span>
       </label>
       <label>
         Flat max steps

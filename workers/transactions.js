@@ -2209,7 +2209,11 @@ function getServerStrategySettings(user = {}) {
     breakoutParticipation: strategy.breakoutParticipation !== false,
     breakoutMinEdgePercent: clamp(Math.round(Number(strategy.breakoutMinEdgePercent) || 55), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
-    breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50)
+    breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
+    trendDayDirectionalHold: strategy.trendDayDirectionalHold !== false,
+    blockLongsInFallingTrend: strategy.blockLongsInFallingTrend !== false,
+    volatilityAwareStops: strategy.volatilityAwareStops !== false,
+    postStopShortReentry: strategy.postStopShortReentry !== false
   };
 }
 
@@ -2900,6 +2904,102 @@ function getServerBreakoutParticipationSignal(signal, micro, strategy, advisoryB
   return null;
 }
 
+function getServerDirectionalContext(micro, advisoryBreakout = null) {
+  const upEdge = Math.round((Number.isFinite(Number(micro?.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
+  const downEdge = Math.round((Number.isFinite(Number(micro?.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+  const ret10 = Number(micro?.ret10) || 0;
+  const ret30 = Number(micro?.ret30) || 0;
+  const ret60 = Number(micro?.ret60) || 0;
+  const ret180 = Number(micro?.ret180) || 0;
+  const vwapDistance = Number(micro?.vwapDistance) || 0;
+  const volatility = Number(micro?.volatility) || 0;
+  const recentMove = Number(advisoryBreakout?.moveBps) || 0;
+  const shortShare = Number(advisoryBreakout?.shortShare) || 0;
+  const longShare = Number(advisoryBreakout?.longShare) || 0;
+  const bearishTape = Boolean(
+    micro?.ready
+    && downEdge >= 55
+    && (ret180 <= -8 || ret60 <= -4 || (ret30 < 0 && vwapDistance < 0))
+  );
+  const bullishTape = Boolean(
+    micro?.ready
+    && upEdge >= 55
+    && (ret180 >= 8 || ret60 >= 4 || (ret30 > 0 && vwapDistance > 0))
+  );
+  const bearishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove <= -8 && shortShare >= Math.max(35, longShare));
+  const bullishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove >= 8 && longShare >= Math.max(35, shortShare));
+  const isBearishTrend = bearishTape || bearishAdvisoryTape;
+  const isBullishTrend = bullishTape || bullishAdvisoryTape;
+  const longReversalConfirmed = Boolean(
+    !isBearishTrend
+    || (
+      micro?.ready
+      && upEdge >= 60
+      && ret60 >= 6
+      && ret30 > 0
+      && vwapDistance > 0
+      && volatility >= 0.8
+    )
+  );
+  const shortContinuationConfirmed = Boolean(
+    isBearishTrend
+    && (
+      (micro?.ready && downEdge >= 55 && (ret60 <= -2 || ret30 < 0 || vwapDistance < 0))
+      || bearishAdvisoryTape
+    )
+  );
+  return {
+    side: isBearishTrend && !isBullishTrend ? "short" : isBullishTrend && !isBearishTrend ? "long" : null,
+    isBearishTrend,
+    isBullishTrend,
+    longReversalConfirmed,
+    shortContinuationConfirmed,
+    upEdge,
+    downEdge,
+    ret10,
+    ret30,
+    ret60,
+    ret180,
+    vwapDistance,
+    volatility,
+    recentMove,
+    longShare,
+    shortShare
+  };
+}
+
+function shouldHoldServerDirectionalShort(openTrade, price, strategy, directionalContext) {
+  if (!strategy.trendDayDirectionalHold || openTrade.side !== "short" || !directionalContext?.shortContinuationConfirmed) return false;
+  const stopPrice = Number(openTrade.stopPrice);
+  const entryPrice = Number(openTrade.entryPrice ?? openTrade.price);
+  if (!Number.isFinite(price) || !Number.isFinite(stopPrice) || !Number.isFinite(entryPrice) || entryPrice <= 0) return false;
+  const volatilityBufferBps = clamp(Math.max(20, Number(directionalContext.volatility || 0) * 12), 20, 80);
+  const hardStop = stopPrice * (1 + (volatilityBufferBps / 10000));
+  return price < hardStop;
+}
+
+function getLatestServerClosedTrade(transactions = [], userEmail, commodity, side, action) {
+  return getClosedPaperTradesForUser(transactions, userEmail)
+    .find((entry) => normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract)) === commodity
+      && (!side || entry.side === side)
+      && (!action || entry.action === action)) || null;
+}
+
+function getServerPostStopReentrySignal(transactions, userEmail, commodity, signal, strategy, directionalContext) {
+  if (!strategy.postStopShortReentry || !directionalContext?.shortContinuationConfirmed) return null;
+  const stoppedShort = getLatestServerClosedTrade(transactions, userEmail, commodity, "short", "COVER STOP");
+  if (!stoppedShort) return null;
+  const stoppedAt = getTransactionDate(stoppedShort.closedAt || stoppedShort.time).getTime();
+  if (!Number.isFinite(stoppedAt) || Date.now() - stoppedAt > 90 * 60 * 1000) return null;
+  if (signal?.side === "long" && Number(signal.conviction) >= 58 && !directionalContext.isBearishTrend) return null;
+  return {
+    side: "short",
+    label: "Post-stop Short Re-entry",
+    conviction: Math.max(Number(signal?.conviction) || 0, 56),
+    detail: `Post-stop re-entry: prior short was stopped ${Math.round((Date.now() - stoppedAt) / 60000)} minute(s) ago, but broader tape remains bearish; down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps.`
+  };
+}
+
 function getServerRegimeAssessment(signal, micro, strategy) {
   const side = signal.side;
   const probability = side === "short" ? Number(micro?.probabilityDown) : Number(micro?.probabilityUp);
@@ -2936,14 +3036,20 @@ function getServerRegimeAssessment(signal, micro, strategy) {
   };
 }
 
-function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1) {
+function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, strategy = {}, micro = null, directionalContext = null) {
   const contractMultiplier = Number(config.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
   const marginRate = side === "short"
     ? Number(config.marginRateShort) || 1
     : Number(config.marginRateLong) || 1;
   const marginRequirement = price * contractMultiplier * marginRate;
   const targetOffset = 0.01;
-  const stopOffset = 0.0075;
+  let stopOffset = 0.0075;
+  if (strategy.volatilityAwareStops) {
+    const volatility = Number(micro?.volatility) || Number(directionalContext?.volatility) || 0;
+    const volatilityStopBps = clamp(volatility * 20, 75, 180);
+    const trendFloorBps = directionalContext?.side === side ? 110 : 75;
+    stopOffset = Math.max(stopOffset, Math.max(volatilityStopBps, trendFloorBps) / 10000);
+  }
   const targetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
   const stopPrice = side === "short" ? price * (1 + stopOffset) : price * (1 - stopOffset);
   const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1)) * clamp(Number(sizeMultiplier) || 1, 0.1, 1);
@@ -3242,6 +3348,22 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
 
+        const signal = getServerSignal(advisory);
+        const micro = (strategySettings.regimeAware
+          || strategySettings.breakoutParticipation
+          || strategySettings.trendDayDirectionalHold
+          || strategySettings.blockLongsInFallingTrend
+          || strategySettings.volatilityAwareStops
+          || strategySettings.postStopShortReentry)
+          ? await getLatestServerMicroPrediction(env, commodity)
+          : null;
+        const advisoryBreakout = (strategySettings.breakoutParticipation
+          || strategySettings.trendDayDirectionalHold
+          || strategySettings.blockLongsInFallingTrend
+          || strategySettings.postStopShortReentry)
+          ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true })
+          : null;
+        const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
         const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
         for (const openTrade of commodityOpenTrades) {
           let closeAction = null;
@@ -3255,6 +3377,11 @@ async function runPaperTradingScheduler(env, options = {}) {
           } else if (marketSchedule.isOpen) {
             closeAction = getServerExitTrigger(openTrade, price.price);
             closeReason = `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`;
+            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, price.price, strategySettings, directionalContext)) {
+              closeAction = null;
+              closeReason = "";
+              lastDecision = `${commodity}: holding short through bearish trend-day bounce`;
+            }
           }
           if (!closeAction) continue;
           const close = makeServerCloseTransaction({
@@ -3323,16 +3450,10 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
 
-        const signal = getServerSignal(advisory);
-        const micro = (strategySettings.regimeAware || strategySettings.breakoutParticipation)
-          ? await getLatestServerMicroPrediction(env, commodity)
-          : null;
         const regime = getServerRegimeAssessment(signal, micro, strategySettings);
         const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
-        const advisoryBreakout = strategySettings.breakoutParticipation
-          ? await getServerAdvisoryBreakoutContext(env, commodity, strategySettings)
-          : null;
         const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
+        const reentrySignal = getServerPostStopReentrySignal(transactions, email, commodity, signal, strategySettings, directionalContext);
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
             + (regime.enabled ? regime.thresholdBoost : 0)
@@ -3340,40 +3461,47 @@ async function runPaperTradingScheduler(env, options = {}) {
           1,
           100
         );
-        if ((!signal.side || signal.conviction < effectiveThreshold) && !breakoutSignal) {
+        if ((!signal.side || signal.conviction < effectiveThreshold) && !breakoutSignal && !reentrySignal) {
           lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
           run.skippedTrades += 1;
           continue;
         }
 
-        if (secondOpinionConsensus.blocksEntry && !breakoutSignal) {
+        if (secondOpinionConsensus.blocksEntry && !breakoutSignal && !reentrySignal) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
           run.skippedTrades += 1;
           continue;
         }
 
-        const activeSignal = breakoutSignal
+        const activeSignal = reentrySignal
+          ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
+          : breakoutSignal
           ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
           : signal;
+        if (strategySettings.blockLongsInFallingTrend && activeSignal.side === "long" && directionalContext.isBearishTrend && !directionalContext.longReversalConfirmed) {
+          lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
+          run.skippedTrades += 1;
+          continue;
+        }
         const step = exclusiveMartingale
           ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps)
           : 1;
-        if (!breakoutSignal && regime.enabled && step > regime.maxMartingaleStep) {
+        if (!breakoutSignal && !reentrySignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
           run.skippedTrades += 1;
           continue;
         }
-        if (!breakoutSignal && regime.enabled && !regime.confirmationOk) {
+        if (!breakoutSignal && !reentrySignal && regime.enabled && !regime.confirmationOk) {
           lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
           run.skippedTrades += 1;
           continue;
         }
-        const sizeMultiplier = breakoutSignal && exclusiveMartingale
+        const sizeMultiplier = (breakoutSignal || reentrySignal) && exclusiveMartingale
           ? 1
-          : breakoutSignal
+          : (breakoutSignal || reentrySignal)
             ? strategySettings.flatSizeMultiplier
             : regime.enabled ? regime.sizeMultiplier : 1;
-        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier);
+        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext);
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
@@ -3403,7 +3531,9 @@ async function runPaperTradingScheduler(env, options = {}) {
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
-          note: breakoutSignal
+          note: reentrySignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}`
+            : breakoutSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}`
             : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
         });
@@ -3429,7 +3559,9 @@ async function runPaperTradingScheduler(env, options = {}) {
         );
         run.openedTrades += 1;
         activeOpenCount += 1;
-        lastDecision = breakoutSignal
+        lastDecision = reentrySignal
+          ? `${commodity}: opened ${activeSignal.side} post-stop re-entry at ${price.price}`
+          : breakoutSignal
           ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
       }
