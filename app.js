@@ -3992,6 +3992,24 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
   return total / closedTrades.length;
 }
 
+function getMatchedClosingTransactions(entries = [], allEntries = entries) {
+  const openings = allEntries.filter(isOpeningTransaction);
+  const byOpening = new Map();
+  entries.filter(isClosingTransaction).forEach((entry) => {
+    const opening = openings.find((candidate) => closingEntryMatchesOpenTrade(entry, candidate));
+    if (!opening) return;
+    const key = getTradeIdentityKey(opening)
+      || `${getTradeLifecycleKey(opening)}|${getTransactionDate(opening.openedAt || opening.time).toISOString()}`;
+    const existing = byOpening.get(key);
+    const entryTime = getTransactionDate(entry.closedAt || entry.time).getTime();
+    const existingTime = existing ? getTransactionDate(existing.closedAt || existing.time).getTime() : 0;
+    if (!existing || entryTime > existingTime) {
+      byOpening.set(key, entry);
+    }
+  });
+  return Array.from(byOpening.values());
+}
+
 function getLeaderBoardRows() {
   if (leaderBoardSummaryLoadedAt && leaderBoardSummaryPeriod === leaderboardPeriodMode) {
     return leaderBoardSummaryRows.map((row) => {
@@ -4026,13 +4044,12 @@ function getLeaderBoardRows() {
       .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
     const rawEntries = getRawUserLeaderBoardEntries(user, cutoff)
       .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
-    const closedPnl = entries
-      .filter(isClosingTransaction)
-      .reduce((total, entry) => total + getDisplayPnl(entry), 0);
+    const closed = getMatchedClosingTransactions(entries, rawEntries.length ? rawEntries : entries);
+    const closedPnl = closed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
     const openPnl = getUserOpenPnl(user, entries);
     const totalPnl = closedPnl + openPnl;
     const tradeCount = entries.filter(isOpeningTransaction).length;
-    const closedCount = entries.filter(isClosingTransaction).length;
+    const closedCount = closed.length;
     const activeOpenCount = getUserEnabledOpenPaperTrades(user, entries).length;
     const winRate = getUserWinRate(user, entries);
     const expectancy = getUserTradeExpectancy(user, entries);
@@ -4170,13 +4187,14 @@ function createLeaderBoardTradeHistoryPanel(user) {
   const table = document.createElement("table");
   const thead = document.createElement("thead");
   const tbody = document.createElement("tbody");
-  const closedPnl = entries.filter(isClosingTransaction).reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const rawEntries = getRawUserLeaderBoardEntries(user)
+    .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity));
+  const matchedClosed = getMatchedClosingTransactions(entries, rawEntries.length ? rawEntries : entries);
+  const closedPnl = matchedClosed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
   const openTrades = getUserEnabledOpenPaperTrades(user, entries);
   const openedCount = entries.filter(isOpeningTransaction).length;
-  const closedCount = entries.filter(isClosingTransaction).length;
-  const rawRowCount = getRawUserLeaderBoardEntries(user)
-    .filter((entry) => userCanTradeCommodityForProfile(user, entry.commodity))
-    .length;
+  const closedCount = matchedClosed.length;
+  const rawRowCount = rawEntries.length;
 
   wrap.className = "leaderboard-trade-detail";
   summary.className = "ledger-totals";

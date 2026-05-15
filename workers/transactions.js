@@ -2652,6 +2652,22 @@ function getServerLeaderboardSeries(entries = []) {
     .filter((point) => Number.isFinite(point.time) && point.time > 0);
 }
 
+function getMatchedClosingTransactions(entries = [], allEntries = entries) {
+  const openings = allEntries.filter(isOpeningTransaction);
+  const byOpening = new Map();
+  entries.filter(isClosingTransaction).forEach((entry) => {
+    const opening = openings.find((candidate) => closingEntryMatchesOpenTrade(entry, candidate));
+    if (!opening) return;
+    const key = getTradeIdentityKey(opening)
+      || `${getTradeLifecycleKey(opening)}|${getTransactionDate(opening.openedAt || opening.time).toISOString()}`;
+    const existing = byOpening.get(key);
+    if (!existing || getServerEntryTime(entry) > getServerEntryTime(existing)) {
+      byOpening.set(key, entry);
+    }
+  });
+  return Array.from(byOpening.values());
+}
+
 function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapshots = {}, period = "all") {
   const cutoff = getLeaderboardCutoff(period);
   const modelSettings = normalizeServerModelSettings(settings.modelSettings);
@@ -2666,7 +2682,7 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
       return !enabledCommodities.size || enabledCommodities.has(commodity);
     });
     const periodEntries = userEntries.filter((entry) => !cutoff || getServerEntryTime(entry) >= cutoff);
-    const closed = periodEntries.filter(isClosingTransaction);
+    const closed = getMatchedClosingTransactions(periodEntries, userEntries);
     const openTrades = getEnabledCommodityOpenTrades(getOpenPaperTradesForUser(transactions, email), scheduler.commodities || []);
     const closedPnl = closed.reduce((total, entry) => total + getServerDisplayPnl(entry), 0);
     const openPnl = openTrades.reduce((total, entry) => total + getServerOpenPnl(entry, priceSnapshots), 0);
@@ -2697,7 +2713,9 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
       lastTradeTime: lastTradeTime ? new Date(lastTradeTime).toISOString() : null,
       schedulerSummary: `${scheduler.lastEvaluationAt ? scheduler.lastEvaluationAt : "Never"}: ${scheduler.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision}`,
       groupNote: "",
-      series: getServerLeaderboardSeries(periodEntries)
+      series: getServerLeaderboardSeries(periodEntries.filter((entry) => (
+        isOpeningTransaction(entry) || closed.some((close) => close === entry)
+      )))
     };
   });
 }
