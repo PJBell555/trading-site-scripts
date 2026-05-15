@@ -698,6 +698,9 @@ let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
 const leaderBoardSchedulerStatus = new Map();
 let leaderBoardSchedulerLoadedAt = 0;
+let leaderBoardSummaryRows = [];
+let leaderBoardSummaryLoadedAt = 0;
+let leaderBoardSummaryPeriod = "";
 let activeSkillSystem = "micro-predictor";
 let activeCustomSkillId = "";
 let skillSearchQuery = "";
@@ -3949,6 +3952,32 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
 }
 
 function getLeaderBoardRows() {
+  if (leaderBoardSummaryLoadedAt && leaderBoardSummaryPeriod === leaderboardPeriodMode) {
+    return leaderBoardSummaryRows.map((row) => {
+      const email = normalizeEmail(row.email);
+      const rosterUser = userRoster.find((user) => normalizeEmail(user.email) === email);
+      const user = rosterUser || normalizeUserRecord(row.user || { name: row.name, email }) || { name: row.name, email };
+      return {
+        ...row,
+        user,
+        name: row.name || user.name || "Unnamed user",
+        email: row.email || user.email || "-",
+        closedPnl: Number(row.closedPnl) || 0,
+        openPnl: Number(row.openPnl) || 0,
+        totalPnl: Number(row.totalPnl) || 0,
+        tradeCount: Number(row.tradeCount) || 0,
+        closedCount: Number(row.closedCount) || 0,
+        activeOpenCount: Number(row.activeOpenCount) || 0,
+        rawRowCount: Number(row.rawRowCount) || 0,
+        winRate: Number.isFinite(Number(row.winRate)) ? Number(row.winRate) : NaN,
+        expectancy: Number.isFinite(Number(row.expectancy)) ? Number(row.expectancy) : NaN,
+        lastTradeTime: row.lastTradeTime ? getTransactionDate(row.lastTradeTime) : null,
+        schedulerSummary: row.schedulerSummary || getUserSchedulerSummary(user),
+        groupNote: row.groupNote || getUserAccountGroupNote(user),
+        series: Array.isArray(row.series) ? row.series : []
+      };
+    });
+  }
   if (!hasFreshCloudTradingState()) return [];
   const cutoff = getLeaderBoardPeriodCutoff();
   return userRoster.map((user) => {
@@ -4211,6 +4240,27 @@ function getLeaderBoardChartValueLabel(mode = leaderboardRankMode) {
 }
 
 function getCumulativeLeaderBoardSeries(row, mode = leaderboardRankMode) {
+  if (Array.isArray(row.series) && row.series.length) {
+    const points = row.series.map((point) => {
+      const time = Number(point.time) || getTransactionDate(point.time).getTime();
+      const value = (() => {
+        if (mode === "trades") return Number(point.trades);
+        if (mode === "win-rate") return Number(point.winRate);
+        if (mode === "expectancy") return Number(point.expectancy);
+        return Number(point.closedPnl);
+      })();
+      return { time, value };
+    }).filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value));
+
+    if (points.length) {
+      points.push({
+        time: Date.now(),
+        value: getLeaderBoardDisplayValue(row, mode)
+      });
+    }
+    return points;
+  }
+
   const user = row.user;
   let total = 0;
   let opened = 0;
@@ -4295,7 +4345,7 @@ function drawLeaderBoardChart(rows) {
     context.fillStyle = "#dbeafe";
     context.font = `700 ${18 * scale}px Aptos, Segoe UI, sans-serif`;
     context.textAlign = "center";
-    context.fillText(hasFreshCloudTradingState() ? "No closed trades to chart yet" : "Waiting for server to show trades", width / 2, height / 2);
+    context.fillText((hasFreshCloudTradingState() || leaderBoardSummaryLoadedAt) ? "No closed trades to chart yet" : "Waiting for server to show trades", width / 2, height / 2);
     return;
   }
 
@@ -9326,6 +9376,10 @@ function getMasterHistoryUrl() {
   return getHistoryApiUrl();
 }
 
+function getLeaderBoardUrl() {
+  return `${getHistoryApiUrl()}/leaderboard`;
+}
+
 function isCoinbaseSandboxEnabled() {
   return window.localStorage.getItem(COINBASE_SANDBOX_KEY) !== "false";
 }
@@ -10990,13 +11044,34 @@ async function refreshLeaderBoardData() {
   if (leaderboardRefreshEl) leaderboardRefreshEl.textContent = "Refreshing";
   try {
     await Promise.all([
-      loadSharedSettings(true),
-      loadSharedTransactionHistory(true),
+      loadLeaderBoardSummary(true),
       loadLeaderBoardSchedulerStatus(true)
     ]);
   } finally {
     renderLeaderBoard();
     if (leaderboardRefreshEl) leaderboardRefreshEl.textContent = "Refresh";
+  }
+}
+
+async function loadLeaderBoardSummary(manual = false) {
+  if (!hasHistoryBackend()) return false;
+  try {
+    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}&ts=${Date.now()}`;
+    const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    if (!response.ok) throw new Error("leaderboard unavailable");
+    const payload = await response.json();
+    leaderBoardSummaryRows = Array.isArray(payload.rows) ? payload.rows : [];
+    leaderBoardSummaryLoadedAt = Date.now();
+    leaderBoardSummaryPeriod = payload.period || leaderboardPeriodMode;
+    transactionHistoryLoadedFromBackend = true;
+    renderLeaderBoard();
+    return true;
+  } catch (error) {
+    leaderBoardSummaryRows = [];
+    leaderBoardSummaryLoadedAt = 0;
+    leaderBoardSummaryPeriod = "";
+    if (manual && leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = "Leaderboard server unavailable";
+    return false;
   }
 }
 
@@ -11061,6 +11136,7 @@ async function initializeBackendState() {
 
   const historyLoad = autoSyncTransactionHistory();
   const settingsLoad = loadSharedSettings();
+  const leaderboardLoad = loadLeaderBoardSummary();
   const schedulerLoad = loadLeaderBoardSchedulerStatus();
   const advisoryLoad = loadSharedAdvisoryHistory();
   const microPredictionLoad = loadSharedMicroPredictions();
@@ -11068,6 +11144,7 @@ async function initializeBackendState() {
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
+    leaderboardLoad,
     schedulerLoad,
     advisoryLoad,
     microPredictionLoad,
@@ -13032,6 +13109,7 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
   leaderboardPeriodMode = LEADERBOARD_PERIOD_OPTIONS[nextMode] ? nextMode : LEADERBOARD_DEFAULT_PERIOD;
   saveLeaderBoardPeriodMode();
   renderLeaderBoard();
+  loadLeaderBoardSummary(true);
 });
 leaderboardUserDetailCloseEl?.addEventListener("click", closeLeaderBoardUserDetail);
 advisoryStrategyToggleEl?.addEventListener("click", toggleAdvisoryStrategyDetail);

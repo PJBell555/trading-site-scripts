@@ -2579,6 +2579,141 @@ async function handlePriceSnapshotsRoute(env, request, origin) {
   return jsonResponse(payload, 200, origin);
 }
 
+function getLeaderboardCutoff(period = "all") {
+  const now = Date.now();
+  if (period === "hour") return now - (60 * 60 * 1000);
+  if (period === "day") return now - (24 * 60 * 60 * 1000);
+  if (period === "week") return now - (7 * 24 * 60 * 60 * 1000);
+  if (period === "month") return now - (30 * 24 * 60 * 60 * 1000);
+  if (period === "year") return now - (365 * 24 * 60 * 60 * 1000);
+  return 0;
+}
+
+function getServerDisplayPnl(entry = {}) {
+  const value = Number(firstPresent(entry.netPnl, entry.pnl, entry.grossPnl));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getServerEntryTime(entry = {}) {
+  return getTransactionDate(entry.time || entry.closedAt || entry.openedAt).getTime();
+}
+
+function getServerOpenPnl(entry = {}, priceSnapshots = {}) {
+  const commodity = normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract));
+  const snapshot = priceSnapshots[commodity];
+  const livePrice = Number(snapshot?.price);
+  if (!Number.isFinite(livePrice) || livePrice <= 0) return 0;
+  const pnl = getServerTradeNetPnl({
+    ...entry,
+    entryPrice: Number(entry.entryPrice ?? entry.price),
+    contractMultiplier: Number(entry.contractMultiplier),
+    contracts: Number(entry.contracts),
+    quantity: Number(entry.quantity),
+    openFee: Number(entry.openFee),
+    estimatedExitFee: Number(entry.estimatedExitFee)
+  }, livePrice);
+  return Number.isFinite(pnl) ? pnl : 0;
+}
+
+function getServerLeaderboardSeries(entries = []) {
+  let closedPnl = 0;
+  let opened = 0;
+  let closed = 0;
+  let wins = 0;
+  return entries
+    .slice()
+    .sort((a, b) => getServerEntryTime(a) - getServerEntryTime(b))
+    .map((entry) => {
+      if (isOpeningTransaction(entry)) opened += 1;
+      if (isClosingTransaction(entry)) {
+        const pnl = getServerDisplayPnl(entry);
+        closedPnl += pnl;
+        closed += 1;
+        if (pnl > 0) wins += 1;
+      }
+      return {
+        time: getServerEntryTime(entry),
+        closedPnl,
+        trades: opened,
+        winRate: closed ? (wins / closed) * 100 : 0,
+        expectancy: closed ? closedPnl / closed : 0
+      };
+    })
+    .filter((point) => Number.isFinite(point.time) && point.time > 0);
+}
+
+function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapshots = {}, period = "all") {
+  const cutoff = getLeaderboardCutoff(period);
+  const modelSettings = normalizeServerModelSettings(settings.modelSettings);
+  const users = Array.isArray(settings.users) ? settings.users : [];
+  return users.map((user) => {
+    const email = normalizeEmail(user.email);
+    const scheduler = getUserPaperSchedulerSettings(user, {}, modelSettings);
+    const enabledCommodities = new Set((scheduler.commodities || []).map(normalizeServerCommodityId).filter(Boolean));
+    const userEntries = transactions.filter((entry) => {
+      if (getTransactionUserEmail(entry) !== email) return false;
+      const commodity = normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract));
+      return !enabledCommodities.size || enabledCommodities.has(commodity);
+    });
+    const periodEntries = userEntries.filter((entry) => !cutoff || getServerEntryTime(entry) >= cutoff);
+    const closed = periodEntries.filter(isClosingTransaction);
+    const openTrades = getEnabledCommodityOpenTrades(getOpenPaperTradesForUser(transactions, email), scheduler.commodities || []);
+    const closedPnl = closed.reduce((total, entry) => total + getServerDisplayPnl(entry), 0);
+    const openPnl = openTrades.reduce((total, entry) => total + getServerOpenPnl(entry, priceSnapshots), 0);
+    const tradeCount = periodEntries.filter(isOpeningTransaction).length;
+    const wins = closed.filter((entry) => getServerDisplayPnl(entry) > 0).length;
+    const lastTradeTime = userEntries.reduce((latest, entry) => Math.max(latest, getServerEntryTime(entry)), 0);
+
+    return {
+      user: {
+        name: user.name || email,
+        email,
+        avatarDataUrl: user.avatarDataUrl || "",
+        paperTrading: user.paperTrading || {},
+        strategy: user.strategy || {},
+        strategyHistory: user.strategyHistory || []
+      },
+      name: user.name || email,
+      email,
+      closedPnl,
+      openPnl,
+      totalPnl: closedPnl + openPnl,
+      tradeCount,
+      closedCount: closed.length,
+      activeOpenCount: openTrades.length,
+      rawRowCount: periodEntries.length,
+      winRate: closed.length ? (wins / closed.length) * 100 : null,
+      expectancy: closed.length ? closedPnl / closed.length : null,
+      lastTradeTime: lastTradeTime ? new Date(lastTradeTime).toISOString() : null,
+      schedulerSummary: `${scheduler.lastEvaluationAt ? scheduler.lastEvaluationAt : "Never"}: ${scheduler.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision}`,
+      groupNote: "",
+      series: getServerLeaderboardSeries(periodEntries)
+    };
+  });
+}
+
+async function handleLeaderBoardRoute(env, request, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+  const url = new URL(request.url);
+  const period = String(url.searchParams.get("period") || "all").toLowerCase();
+  const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+    env,
+    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+  ));
+  const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+  const priceSnapshots = await loadStoredPriceSnapshots(env);
+  const rows = getServerLeaderboardRows(settings, payload.transactions || [], priceSnapshots, period);
+  return jsonResponse({
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-leaderboard",
+    storage: "d1",
+    period,
+    rows
+  }, 200, origin);
+}
+
 async function getServerMarketPrice(env, user, commodity, advisory = null) {
   const config = getServerCommodityConfig(user, commodity);
   let live = null;
@@ -3082,6 +3217,13 @@ function getServerTradeGrossPnl(trade, exitPrice) {
   const contracts = Number(trade.contracts) > 0 ? Number(trade.contracts) : Number(trade.quantity) || 1;
   const move = trade.side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice;
   return move * multiplier * contracts;
+}
+
+function getServerTradeNetPnl(trade, exitPrice) {
+  const grossPnl = getServerTradeGrossPnl(trade, exitPrice);
+  const openFee = Number(trade.openFee) || 0;
+  const estimatedExitFee = Number(trade.estimatedExitFee) || 0;
+  return grossPnl - openFee - estimatedExitFee;
 }
 
 function getServerExitTrigger(trade, price) {
@@ -4545,6 +4687,10 @@ export default {
 
       if (url.pathname === "/prices") {
         return handlePriceSnapshotsRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/leaderboard") {
+        return handleLeaderBoardRoute(env, request, origin);
       }
 
       if (url.pathname === "/open-brain") {
