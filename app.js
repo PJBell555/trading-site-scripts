@@ -431,6 +431,8 @@ const MICRO_PREDICTION_PENDING_LOCAL_KEY = "comhedge-pending-micro-predictions-v
 const MICRO_PREDICTION_CAPTURE_KEY = "comhedge-last-micro-prediction-key-v1";
 const LEADERBOARD_RANK_KEY = "comhedge-leaderboard-rank-v2";
 const LEADERBOARD_PERIOD_KEY = "comhedge-leaderboard-period-v1";
+const LEADERBOARD_DISPLAY_CACHE_KEY = "comhedge-leaderboard-display-cache-v1";
+const LEADERBOARD_DISPLAY_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 const LOW_POWER_MODE_KEY = "comhedge-low-power-mode-v1";
 const NORMAL_SIGNAL_THROTTLE_MS = 1000;
 const LOW_POWER_SIGNAL_THROTTLE_MS = 10000;
@@ -711,6 +713,9 @@ let leaderBoardSchedulerLoadedAt = 0;
 let leaderBoardSummaryRows = [];
 let leaderBoardSummaryLoadedAt = 0;
 let leaderBoardSummaryPeriod = "";
+let leaderBoardSummaryError = "";
+let leaderBoardSummaryRefreshing = false;
+let leaderBoardSummaryFromDisplayCache = false;
 let activeSkillSystem = "micro-predictor";
 let activeCustomSkillId = "";
 let skillSearchQuery = "";
@@ -4140,6 +4145,57 @@ function saveLeaderBoardPeriodMode() {
   }
 }
 
+function getLeaderBoardDisplayCacheKey(period = leaderboardPeriodMode) {
+  return `${LEADERBOARD_DISPLAY_CACHE_KEY}:${period}`;
+}
+
+function saveLeaderBoardDisplayCache(payload = {}) {
+  try {
+    if (!leaderBoardSummaryRows.length) return;
+    const cachePayload = {
+      savedAt: leaderBoardSummaryLoadedAt || Date.now(),
+      period: leaderBoardSummaryPeriod || leaderboardPeriodMode,
+      rows: leaderBoardSummaryRows,
+      generatedAt: payload.generatedAt || payload.updatedAt || ""
+    };
+    window.sessionStorage.setItem(getLeaderBoardDisplayCacheKey(cachePayload.period), JSON.stringify(cachePayload));
+  } catch (error) {
+    // Display cache is best-effort only; Cloudflare remains the source of truth.
+  }
+}
+
+function loadLeaderBoardDisplayCache(period = leaderboardPeriodMode) {
+  try {
+    const raw = window.sessionStorage.getItem(getLeaderBoardDisplayCacheKey(period));
+    if (!raw) return false;
+    const cached = JSON.parse(raw);
+    if (!cached || cached.period !== period || !Array.isArray(cached.rows) || !cached.rows.length) return false;
+    if (Date.now() - Number(cached.savedAt || 0) > LEADERBOARD_DISPLAY_CACHE_MAX_AGE_MS) return false;
+    leaderBoardSummaryRows = cached.rows;
+    leaderBoardSummaryLoadedAt = Number(cached.savedAt) || Date.now();
+    leaderBoardSummaryPeriod = cached.period;
+    leaderBoardSummaryFromDisplayCache = true;
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function getLeaderBoardUpdatedText() {
+  if (leaderBoardSummaryError) {
+    if (leaderBoardSummaryLoadedAt) {
+      return `${leaderBoardSummaryError}; showing last server snapshot from ${new Date(leaderBoardSummaryLoadedAt).toLocaleTimeString()}`;
+    }
+    return leaderBoardSummaryError;
+  }
+  if (leaderBoardSummaryRefreshing && !leaderBoardSummaryLoadedAt) return "Loading leaderboard from server";
+  if (leaderBoardSummaryLoadedAt) {
+    const suffix = leaderBoardSummaryFromDisplayCache ? " (session snapshot)" : "";
+    return `Updated ${new Date(leaderBoardSummaryLoadedAt).toLocaleTimeString()}${suffix}`;
+  }
+  return `Updated ${new Date().toLocaleTimeString()}`;
+}
+
 function renderLeaderBoardRankControls() {
   const option = LEADERBOARD_RANK_OPTIONS[leaderboardRankMode] || LEADERBOARD_RANK_OPTIONS[LEADERBOARD_DEFAULT_RANK];
   if (leaderboardRankLabelEl) leaderboardRankLabelEl.textContent = option.label;
@@ -4404,7 +4460,10 @@ function drawLeaderBoardChart(rows) {
     context.fillStyle = "#dbeafe";
     context.font = `700 ${18 * scale}px Aptos, Segoe UI, sans-serif`;
     context.textAlign = "center";
-    context.fillText((hasFreshCloudTradingState() || leaderBoardSummaryLoadedAt) ? "No closed trades to chart yet" : "Waiting for server to show trades", width / 2, height / 2);
+    const message = leaderBoardSummaryError && !leaderBoardSummaryLoadedAt
+      ? "Waiting for server to show trades"
+      : (hasFreshCloudTradingState() || leaderBoardSummaryLoadedAt) ? "No closed trades to chart yet" : "Waiting for server to show trades";
+    context.fillText(message, width / 2, height / 2);
     return;
   }
 
@@ -4521,7 +4580,7 @@ function renderLeaderBoard() {
   if (leaderboardTopNameEl) leaderboardTopNameEl.textContent = topRow ? `${topRow.name} / ${topRow.email}` : "Waiting for trades";
   if (leaderboardActiveCountEl) leaderboardActiveCountEl.textContent = String(activeRows.length);
   if (leaderboardWinRateEl) leaderboardWinRateEl.textContent = Number.isFinite(averageWinRate) ? formatPercent(averageWinRate) : "-";
-  if (leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = `Updated ${new Date().toLocaleTimeString()}`;
+  if (leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = getLeaderBoardUpdatedText();
 
   leaderboardBodyEl.innerHTML = "";
   if (!rankedRows.length) {
@@ -11232,6 +11291,12 @@ async function refreshLeaderBoardData() {
 
 async function loadLeaderBoardSummary(manual = false) {
   if (!hasHistoryBackend()) return false;
+  if (!leaderBoardSummaryLoadedAt || leaderBoardSummaryPeriod !== leaderboardPeriodMode) {
+    loadLeaderBoardDisplayCache(leaderboardPeriodMode);
+  }
+  leaderBoardSummaryRefreshing = true;
+  leaderBoardSummaryError = "";
+  renderLeaderBoard();
   try {
     const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}&ts=${Date.now()}`;
     const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
@@ -11240,15 +11305,23 @@ async function loadLeaderBoardSummary(manual = false) {
     leaderBoardSummaryRows = Array.isArray(payload.rows) ? payload.rows : [];
     leaderBoardSummaryLoadedAt = Date.now();
     leaderBoardSummaryPeriod = payload.period || leaderboardPeriodMode;
+    leaderBoardSummaryError = "";
+    leaderBoardSummaryFromDisplayCache = false;
     transactionHistoryLoadedFromBackend = true;
+    saveLeaderBoardDisplayCache(payload);
     renderLeaderBoard();
     return true;
   } catch (error) {
-    leaderBoardSummaryRows = [];
-    leaderBoardSummaryLoadedAt = 0;
-    leaderBoardSummaryPeriod = "";
-    if (manual && leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = "Leaderboard server unavailable";
+    if (!leaderBoardSummaryLoadedAt || leaderBoardSummaryPeriod !== leaderboardPeriodMode) {
+      loadLeaderBoardDisplayCache(leaderboardPeriodMode);
+    }
+    leaderBoardSummaryError = "Leaderboard server unavailable";
+    if (manual && leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = getLeaderBoardUpdatedText();
+    renderLeaderBoard();
     return false;
+  } finally {
+    leaderBoardSummaryRefreshing = false;
+    renderLeaderBoard();
   }
 }
 
@@ -13314,6 +13387,8 @@ leaderboardPeriodControlsEl?.addEventListener("click", (event) => {
   const nextMode = button.dataset.leaderboardPeriod;
   leaderboardPeriodMode = LEADERBOARD_PERIOD_OPTIONS[nextMode] ? nextMode : LEADERBOARD_DEFAULT_PERIOD;
   saveLeaderBoardPeriodMode();
+  leaderBoardSummaryError = "";
+  loadLeaderBoardDisplayCache(leaderboardPeriodMode);
   renderLeaderBoard();
   loadLeaderBoardSummary(true);
 });
