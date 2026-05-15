@@ -283,6 +283,10 @@ const marketConfig = {
     productType: "Coinbase futures contract",
     contractExpiresAt: "2026-05-18T17:00",
     rollBeforeDays: 3,
+    contracts: [
+      { ticker: "NOLK6", productId: "NOL-18MAY26-CDE", contractMonth: "May 2026", contractExpiresAt: "2026-05-18T17:00" },
+      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00" }
+    ],
     referencePrice: null,
     contractMultiplier: 10,
     marginRateLong: 1 / 7.2,
@@ -2887,17 +2891,45 @@ function normalizeCommodityTradeTerms(terms = {}, commodityId) {
   const contractExpiresAt = String(source.contractExpiresAt || config.contractExpiresAt || "").trim();
   const rollBeforeDays = Number(source.rollBeforeDays ?? config.rollBeforeDays ?? 3);
 
-  return {
+  return getActiveCommodityContract({
     ticker,
     productId: productId || ticker,
     contractMonth,
     contractExpiresAt,
     rollBeforeDays: Number.isFinite(rollBeforeDays) ? clamp(Math.round(rollBeforeDays), 0, 30) : 3,
+    contracts: Array.isArray(config.contracts) ? config.contracts : [],
     contractMultiplier: Number.isFinite(contractMultiplier) && contractMultiplier > 0 ? contractMultiplier : 1,
     marginRateLong: Number.isFinite(marginRateLong) && marginRateLong > 0 ? marginRateLong : 1,
     marginRateShort: Number.isFinite(marginRateShort) && marginRateShort > 0 ? marginRateShort : 1,
     feePerContractSide: Number.isFinite(feePerContractSide) && feePerContractSide >= 0 ? feePerContractSide : 0,
     feeLabel: feeLabel || "Estimated fee"
+  });
+}
+
+function getActiveCommodityContract(config = {}, value = new Date()) {
+  const contracts = Array.isArray(config.contracts) ? config.contracts : [];
+  if (!contracts.length) return config;
+
+  const key = String(config.productId || config.ticker || "").toLowerCase();
+  let index = contracts.findIndex((contract) => (
+    [contract.productId, contract.ticker].some((item) => String(item || "").toLowerCase() === key)
+  ));
+  if (index < 0) index = 0;
+  const current = contracts[index] || {};
+  const expiration = current.contractExpiresAt ? new Date(current.contractExpiresAt) : null;
+  const rollBeforeMs = Math.max(0, Number(config.rollBeforeDays) || 0) * 24 * 60 * 60 * 1000;
+  const inRollWindow = expiration
+    && !Number.isNaN(expiration.getTime())
+    && value.getTime() >= expiration.getTime() - rollBeforeMs
+    && contracts[index + 1];
+  const active = inRollWindow ? contracts[index + 1] : current;
+  return {
+    ...config,
+    ...active,
+    contracts,
+    rolledFromTicker: inRollWindow ? current.ticker || config.ticker : "",
+    rolledFromProductId: inRollWindow ? current.productId || config.productId : "",
+    rollReason: inRollWindow ? `${current.ticker || "Front contract"} is inside the roll window; new entries use ${active.ticker || active.productId}.` : ""
   };
 }
 

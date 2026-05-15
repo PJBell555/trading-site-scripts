@@ -40,6 +40,10 @@ const SERVER_COMMODITIES = {
     contractMonth: "May 2026",
     contractExpiresAt: "2026-05-18T17:00",
     rollBeforeDays: 3,
+    contracts: [
+      { ticker: "NOLK6", productId: "NOL-18MAY26-CDE", contractMonth: "May 2026", contractExpiresAt: "2026-05-18T17:00" },
+      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00" }
+    ],
     contractMultiplier: 10,
     marginRateLong: 1 / 7.2,
     marginRateShort: 1 / 6.2,
@@ -2348,9 +2352,10 @@ function getServerCommodityConfig(user = {}, commodity = "oil") {
   const terms = user.commodityTradeTerms && typeof user.commodityTradeTerms === "object"
     ? user.commodityTradeTerms[commodity] || {}
     : {};
-  return {
+  return getServerActiveCommodityContract({
     ...base,
     ...terms,
+    contracts: Array.isArray(base.contracts) ? base.contracts : [],
     id: commodity,
     name: base.name,
     ticker: terms.ticker || base.ticker,
@@ -2360,7 +2365,45 @@ function getServerCommodityConfig(user = {}, commodity = "oil") {
     rollBeforeDays: Number.isFinite(Number(terms.rollBeforeDays ?? base.rollBeforeDays))
       ? clamp(Math.round(Number(terms.rollBeforeDays ?? base.rollBeforeDays)), 0, 30)
       : 3
+  });
+}
+
+function getServerActiveCommodityContract(config = {}, value = new Date()) {
+  const contracts = Array.isArray(config.contracts) ? config.contracts : [];
+  if (!contracts.length) return config;
+
+  const key = String(config.productId || config.ticker || "").toLowerCase();
+  let index = contracts.findIndex((contract) => (
+    [contract.productId, contract.ticker].some((item) => String(item || "").toLowerCase() === key)
+  ));
+  if (index < 0) index = 0;
+  const current = contracts[index] || {};
+  const expiration = current.contractExpiresAt ? new Date(current.contractExpiresAt) : null;
+  const rollBeforeMs = Math.max(0, Number(config.rollBeforeDays) || 0) * 24 * 60 * 60 * 1000;
+  const inRollWindow = expiration
+    && !Number.isNaN(expiration.getTime())
+    && value.getTime() >= expiration.getTime() - rollBeforeMs
+    && contracts[index + 1];
+  const active = inRollWindow ? contracts[index + 1] : current;
+  return {
+    ...config,
+    ...active,
+    contracts,
+    rolledFromTicker: inRollWindow ? current.ticker || config.ticker : "",
+    rolledFromProductId: inRollWindow ? current.productId || config.productId : "",
+    rollReason: inRollWindow ? `${current.ticker || "Front contract"} is inside the roll window; new entries use ${active.ticker || active.productId}.` : ""
   };
+}
+
+function getServerCommodityConfigForContract(user = {}, commodity = "oil", contractId = "") {
+  const activeConfig = getServerCommodityConfig(user, commodity);
+  const key = String(contractId || "").toLowerCase();
+  const match = (Array.isArray(activeConfig.contracts) ? activeConfig.contracts : []).find((contract) => (
+    [contract.productId, contract.ticker].some((item) => String(item || "").toLowerCase() === key)
+  ));
+  return match
+    ? { ...activeConfig, ...match, rolledFromTicker: "", rolledFromProductId: "", rollReason: "" }
+    : activeConfig;
 }
 
 async function fetchCoinbaseProductPrice(productId) {
@@ -2554,10 +2597,15 @@ async function loadStoredPriceSnapshots(env) {
 async function getPriceSnapshots(env, forceRefresh = false) {
   const stored = await loadStoredPriceSnapshots(env);
   const entries = await Promise.all(Object.values(SERVER_COMMODITIES).map(async (commodity) => {
+    const activeCommodity = getServerActiveCommodityContract(commodity);
     const existing = stored[commodity.id];
-    if (!forceRefresh && existing?.ok && isFreshPriceSnapshot(existing)) return existing;
+    const existingMatchesActiveContract = existing
+      && [existing.productId, existing.ticker].some((item) => (
+        String(item || "").toLowerCase() === String(activeCommodity.productId || activeCommodity.ticker || "").toLowerCase()
+      ));
+    if (!forceRefresh && existingMatchesActiveContract && existing?.ok && isFreshPriceSnapshot(existing)) return existing;
 
-    const snapshot = await fetchCoinbasePriceSnapshot(commodity);
+    const snapshot = await fetchCoinbasePriceSnapshot(activeCommodity);
     if (snapshot.ok || !existing) {
       await savePriceSnapshot(env, snapshot);
       return snapshot;
@@ -2742,8 +2790,8 @@ async function handleLeaderBoardRoute(env, request, origin) {
   }, 200, origin);
 }
 
-async function getServerMarketPrice(env, user, commodity, advisory = null) {
-  const config = getServerCommodityConfig(user, commodity);
+async function getServerMarketPrice(env, user, commodity, advisory = null, overrideConfig = null) {
+  const config = overrideConfig || getServerCommodityConfig(user, commodity);
   let live = null;
   try {
     const snapshot = await fetchCoinbasePriceSnapshot(config);
@@ -2766,7 +2814,10 @@ async function getServerMarketPrice(env, user, commodity, advisory = null) {
     const stored = await loadStoredPriceSnapshots(env);
     const snapshot = stored[commodity];
     const snapshotPrice = Number(snapshot?.price);
-    if (snapshot?.ok && Number.isFinite(snapshotPrice) && snapshotPrice > 0 && isFreshPriceSnapshot(snapshot)) {
+    const snapshotMatchesContract = !snapshot
+      || !config.productId
+      || [snapshot.productId, snapshot.ticker].some((item) => String(item || "").toLowerCase() === String(config.productId || config.ticker || "").toLowerCase());
+    if (snapshot?.ok && snapshotMatchesContract && Number.isFinite(snapshotPrice) && snapshotPrice > 0 && isFreshPriceSnapshot(snapshot)) {
       return {
         price: snapshotPrice,
         source: "Cloudflare price snapshot",
@@ -3469,6 +3520,13 @@ function getUserMarketScheduleStatus(settings, value = new Date()) {
 }
 
 function getServerContractRollStatus(config, value = new Date()) {
+  if (config?.rolledFromTicker || config?.rolledFromProductId) {
+    return {
+      shouldOpen: true,
+      shouldFlatten: false,
+      detail: config.rollReason || `${config.ticker || "Contract"} selected as the active rolled contract.`
+    };
+  }
   const expiration = config?.contractExpiresAt ? new Date(config.contractExpiresAt) : null;
   if (!expiration || Number.isNaN(expiration.getTime())) {
     return { shouldOpen: true, shouldFlatten: false, detail: "No contract expiration configured." };
@@ -3676,19 +3734,28 @@ async function runPaperTradingScheduler(env, options = {}) {
         const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
         const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
         for (const openTrade of commodityOpenTrades) {
+          const openTradeConfig = getServerCommodityConfigForContract(user, commodity, openTrade.contract || config.ticker);
+          const openTradePrice = openTradeConfig.productId === config.productId
+            ? price
+            : await getServerMarketPrice(env, user, commodity, advisory, openTradeConfig);
+          if (!openTradePrice) {
+            lastDecision = `${commodity}: skipped close, no fresh price for ${openTrade.contract || openTradeConfig.ticker}`;
+            continue;
+          }
+          const openTradeRoll = getServerContractRollStatus(openTradeConfig);
           let closeAction = null;
           let closeReason = "";
-          if (marketSchedule.isOpen && contractRoll.shouldFlatten) {
+          if (marketSchedule.isOpen && openTradeRoll.shouldFlatten) {
             closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
-            closeReason = contractRoll.detail;
+            closeReason = openTradeRoll.detail;
           } else if (marketSchedule.flattenWindow) {
             closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
             closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
           } else if (marketSchedule.isOpen) {
-            applyServerProfitLockStop(openTrade, price.price, strategySettings, directionalContext);
-            closeAction = getServerExitTrigger(openTrade, price.price);
-            closeReason = `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`;
-            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, price.price, strategySettings, directionalContext)) {
+            applyServerProfitLockStop(openTrade, openTradePrice.price, strategySettings, directionalContext);
+            closeAction = getServerExitTrigger(openTrade, openTradePrice.price);
+            closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via ${openTradePrice.source}`;
+            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, openTradePrice.price, strategySettings, directionalContext)) {
               closeAction = null;
               closeReason = "";
               lastDecision = `${commodity}: holding short through bearish trend-day bounce`;
@@ -3699,9 +3766,9 @@ async function runPaperTradingScheduler(env, options = {}) {
             user,
             email,
             commodity,
-            config,
+            config: openTradeConfig,
             openTrade,
-            price,
+            price: openTradePrice,
             action: closeAction,
             note: closeReason
           });
@@ -3709,7 +3776,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           await recordOpenBrainServerEvent(
             env,
             "paper-trade",
-            `${close.action} ${close.contract} at ${price.price.toFixed(2)} with net P/L ${Number(close.pnl || 0).toFixed(2)}`,
+            `${close.action} ${close.contract} at ${openTradePrice.price.toFixed(2)} with net P/L ${Number(close.pnl || 0).toFixed(2)}`,
             {
               id: `memory-${getTransactionKey(close)}`,
               source: "cloudflare-paper-scheduler",
@@ -3727,7 +3794,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           );
           run.closedTrades += 1;
           activeOpenCount = Math.max(0, activeOpenCount - 1);
-          lastDecision = `${commodity}: closed ${openTrade.side} at ${price.price}`;
+          lastDecision = `${commodity}: closed ${openTrade.side} at ${openTradePrice.price}`;
         }
 
         if (!marketSchedule.isOpen) {
