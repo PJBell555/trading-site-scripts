@@ -2213,7 +2213,17 @@ function getServerStrategySettings(user = {}) {
     trendDayDirectionalHold: strategy.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: strategy.blockLongsInFallingTrend !== false,
     volatilityAwareStops: strategy.volatilityAwareStops !== false,
-    postStopShortReentry: strategy.postStopShortReentry !== false
+    postStopShortReentry: strategy.postStopShortReentry !== false,
+    trendDayBias: strategy.trendDayBias !== false,
+    noChaseEntries: strategy.noChaseEntries !== false,
+    pullbackEntryRequired: strategy.pullbackEntryRequired !== false,
+    profitLockTrailingStop: strategy.profitLockTrailingStop !== false,
+    missedOpportunityLearner: strategy.missedOpportunityLearner !== false,
+    noChaseMoveBps: clamp(Number(strategy.noChaseMoveBps) || 18, 0, 100),
+    pullbackMinRetraceBps: clamp(Number(strategy.pullbackMinRetraceBps) || 2, 0, 30),
+    profitLockMinMoveBps: clamp(Number(strategy.profitLockMinMoveBps) || 10, 0, 100),
+    profitLockGivebackPct: clamp(Number(strategy.profitLockGivebackPct) || 35, 5, 80),
+    missedOpportunityMoveBps: clamp(Number(strategy.missedOpportunityMoveBps) || 20, 5, 200)
   };
 }
 
@@ -3116,6 +3126,112 @@ function shouldHoldServerDirectionalShort(openTrade, price, strategy, directiona
   return price < hardStop;
 }
 
+function applyServerProfitLockStop(openTrade, price, strategy, directionalContext) {
+  if (!strategy.profitLockTrailingStop) return null;
+  const currentPrice = Number(price);
+  const entryPrice = Number(openTrade.entryPrice ?? openTrade.price);
+  const currentStop = Number(openTrade.stopPrice);
+  if (!Number.isFinite(currentPrice) || !Number.isFinite(entryPrice) || !Number.isFinite(currentStop) || entryPrice <= 0) return null;
+
+  const favorableMoveBps = openTrade.side === "short"
+    ? ((entryPrice - currentPrice) / entryPrice) * 10000
+    : ((currentPrice - entryPrice) / entryPrice) * 10000;
+  const minMoveBps = Math.max(Number(strategy.profitLockMinMoveBps) || 0, (Number(directionalContext?.volatility) || 0) * 6);
+  if (favorableMoveBps < minMoveBps) return null;
+
+  const givebackPct = clamp(Number(strategy.profitLockGivebackPct) || 35, 5, 80) / 100;
+  const lockedMoveBps = favorableMoveBps * (1 - givebackPct);
+  const lockedStop = openTrade.side === "short"
+    ? entryPrice * (1 - (lockedMoveBps / 10000))
+    : entryPrice * (1 + (lockedMoveBps / 10000));
+  const improved = openTrade.side === "short"
+    ? lockedStop < currentStop && lockedStop < entryPrice
+    : lockedStop > currentStop && lockedStop > entryPrice;
+  if (!improved) return null;
+
+  openTrade.stopPrice = lockedStop;
+  openTrade.note = `${openTrade.note || ""} Profit-lock trailing stop moved to ${lockedStop.toFixed(2)} after ${favorableMoveBps.toFixed(2)} bps favorable move.`.trim();
+  return {
+    stopPrice: lockedStop,
+    favorableMoveBps,
+    minMoveBps
+  };
+}
+
+function getServerEntryQualityGate(activeSignal, price, strategy, directionalContext, breakoutSignal = null, reentrySignal = null) {
+  if (!activeSignal?.side) return { ok: true, reason: "" };
+  if (reentrySignal) return { ok: true, reason: "post-stop re-entry override" };
+
+  const side = activeSignal.side;
+  const ret10 = Number(directionalContext?.ret10) || 0;
+  const ret30 = Number(directionalContext?.ret30) || 0;
+  const ret60 = Number(directionalContext?.ret60) || 0;
+  const ret180 = Number(directionalContext?.ret180) || 0;
+  const vwapDistance = Number(directionalContext?.vwapDistance) || 0;
+  const volatility = Number(directionalContext?.volatility) || 0;
+  const noChaseMoveBps = Number(strategy.noChaseMoveBps) || 0;
+  const pullbackMinRetraceBps = Number(strategy.pullbackMinRetraceBps) || 0;
+
+  if (strategy.trendDayBias) {
+    if (side === "short" && directionalContext?.isBullishTrend && !(ret30 < 0 && vwapDistance < 0)) {
+      return { ok: false, reason: `trend-day bias blocks short while tape is bullish; need breakdown below VWAP and negative 30s momentum.` };
+    }
+    if (side === "long" && directionalContext?.isBearishTrend && !directionalContext?.longReversalConfirmed) {
+      return { ok: false, reason: `trend-day bias blocks long while tape is bearish; need reversal confirmation.` };
+    }
+  }
+
+  if (strategy.noChaseEntries && !breakoutSignal) {
+    if (side === "long" && ret180 >= noChaseMoveBps && ret10 > 0 && ret30 > 0) {
+      return { ok: false, reason: `no-chase rule blocks long after ${ret180.toFixed(2)} bps fast rise; wait for pullback/reclaim.` };
+    }
+    if (side === "short" && ret180 <= -noChaseMoveBps && ret10 < 0 && ret30 < 0) {
+      return { ok: false, reason: `no-chase rule blocks short after ${ret180.toFixed(2)} bps fast drop; wait for bounce/failure.` };
+    }
+  }
+
+  if (strategy.pullbackEntryRequired && !breakoutSignal) {
+    const minimumVolatility = Math.max(0.5, Math.min(2, volatility || 0.5));
+    const longPullbackReclaim = ret60 >= 0 && ret30 <= -pullbackMinRetraceBps && ret10 > 0 && vwapDistance >= 0 && volatility >= minimumVolatility;
+    const shortBounceFailure = ret60 <= 0 && ret30 >= pullbackMinRetraceBps && ret10 < 0 && vwapDistance <= 0 && volatility >= minimumVolatility;
+    if (side === "long" && directionalContext?.isBullishTrend && !longPullbackReclaim) {
+      return { ok: false, reason: `pullback entry waits for a long retest/reclaim; current 10s ${ret10.toFixed(2)} bps, 30s ${ret30.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps.` };
+    }
+    if (side === "short" && directionalContext?.isBearishTrend && !shortBounceFailure) {
+      return { ok: false, reason: `pullback entry waits for a short bounce/failure; current 10s ${ret10.toFixed(2)} bps, 30s ${ret30.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps.` };
+    }
+  }
+
+  return { ok: true, reason: "entry quality accepted" };
+}
+
+async function recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy, directionalContext, advisoryBreakout, reason }) {
+  if (!strategy.missedOpportunityLearner || !advisoryBreakout?.ready) return;
+  const moveBps = Number(advisoryBreakout.moveBps) || Number(directionalContext?.recentMove) || 0;
+  if (Math.abs(moveBps) < (Number(strategy.missedOpportunityMoveBps) || 20)) return;
+  const side = moveBps > 0 ? "long" : "short";
+  const eventKey = `missed-${normalizeEmail(email)}-${commodity}-${side}-${new Date().toISOString().slice(0, 13)}`;
+  await recordOpenBrainServerEvent(
+    env,
+    "missed-opportunity",
+    `Missed ${side} opportunity in ${commodity}: price moved ${moveBps.toFixed(2)} bps but no trade opened. Reason: ${reason}`,
+    {
+      id: eventKey,
+      source: "cloudflare-paper-scheduler",
+      userEmail: email,
+      userName: user?.name || "",
+      commodity,
+      side,
+      price: price?.price,
+      signal: signal?.label || "",
+      conviction: signal?.conviction || 0,
+      moveBps,
+      reason,
+      tags: ["missed-opportunity", commodity, side]
+    }
+  );
+}
+
 function getLatestServerClosedTrade(transactions = [], userEmail, commodity, side, action) {
   return getClosedPaperTradesForUser(transactions, userEmail)
     .find((entry) => normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract)) === commodity
@@ -3499,13 +3615,22 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.volatilityAwareStops
-          || strategySettings.postStopShortReentry)
+          || strategySettings.postStopShortReentry
+          || strategySettings.trendDayBias
+          || strategySettings.noChaseEntries
+          || strategySettings.pullbackEntryRequired
+          || strategySettings.profitLockTrailingStop
+          || strategySettings.missedOpportunityLearner)
           ? await getLatestServerMicroPrediction(env, commodity)
           : null;
         const advisoryBreakout = (strategySettings.breakoutParticipation
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
-          || strategySettings.postStopShortReentry)
+          || strategySettings.postStopShortReentry
+          || strategySettings.trendDayBias
+          || strategySettings.noChaseEntries
+          || strategySettings.pullbackEntryRequired
+          || strategySettings.missedOpportunityLearner)
           ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true })
           : null;
         const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
@@ -3520,6 +3645,7 @@ async function runPaperTradingScheduler(env, options = {}) {
             closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
             closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
           } else if (marketSchedule.isOpen) {
+            applyServerProfitLockStop(openTrade, price.price, strategySettings, directionalContext);
             closeAction = getServerExitTrigger(openTrade, price.price);
             closeReason = `Server scheduler closed ${config.name} ${openTrade.side} via ${price.source}`;
             if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, price.price, strategySettings, directionalContext)) {
@@ -3608,12 +3734,14 @@ async function runPaperTradingScheduler(env, options = {}) {
         );
         if ((!signal.side || signal.conviction < effectiveThreshold) && !breakoutSignal && !reentrySignal) {
           lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
+          await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
         }
 
         if (secondOpinionConsensus.blocksEntry && !breakoutSignal && !reentrySignal) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
+          await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
         }
@@ -3625,6 +3753,14 @@ async function runPaperTradingScheduler(env, options = {}) {
           : signal;
         if (strategySettings.blockLongsInFallingTrend && activeSignal.side === "long" && directionalContext.isBearishTrend && !directionalContext.longReversalConfirmed) {
           lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
+          await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
+          run.skippedTrades += 1;
+          continue;
+        }
+        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal, reentrySignal);
+        if (!entryQuality.ok) {
+          lastDecision = `${commodity}: ${entryQuality.reason}`;
+          await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
         }

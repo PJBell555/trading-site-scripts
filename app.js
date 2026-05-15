@@ -519,7 +519,17 @@ const DEFAULT_USER_STRATEGY = {
   trendDayDirectionalHold: true,
   blockLongsInFallingTrend: true,
   volatilityAwareStops: true,
-  postStopShortReentry: true
+  postStopShortReentry: true,
+  trendDayBias: true,
+  noChaseEntries: true,
+  pullbackEntryRequired: true,
+  profitLockTrailingStop: true,
+  missedOpportunityLearner: true,
+  noChaseMoveBps: 18,
+  pullbackMinRetraceBps: 2,
+  profitLockMinMoveBps: 10,
+  profitLockGivebackPct: 35,
+  missedOpportunityMoveBps: 20
 };
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
@@ -3161,7 +3171,17 @@ function normalizeUserStrategy(strategy = {}) {
     trendDayDirectionalHold: merged.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: merged.blockLongsInFallingTrend !== false,
     volatilityAwareStops: merged.volatilityAwareStops !== false,
-    postStopShortReentry: merged.postStopShortReentry !== false
+    postStopShortReentry: merged.postStopShortReentry !== false,
+    trendDayBias: merged.trendDayBias !== false,
+    noChaseEntries: merged.noChaseEntries !== false,
+    pullbackEntryRequired: merged.pullbackEntryRequired !== false,
+    profitLockTrailingStop: merged.profitLockTrailingStop !== false,
+    missedOpportunityLearner: merged.missedOpportunityLearner !== false,
+    noChaseMoveBps: clamp(Number(merged.noChaseMoveBps) || DEFAULT_USER_STRATEGY.noChaseMoveBps, 0, 100),
+    pullbackMinRetraceBps: clamp(Number(merged.pullbackMinRetraceBps) || DEFAULT_USER_STRATEGY.pullbackMinRetraceBps, 0, 30),
+    profitLockMinMoveBps: clamp(Number(merged.profitLockMinMoveBps) || DEFAULT_USER_STRATEGY.profitLockMinMoveBps, 0, 100),
+    profitLockGivebackPct: clamp(Number(merged.profitLockGivebackPct) || DEFAULT_USER_STRATEGY.profitLockGivebackPct, 5, 80),
+    missedOpportunityMoveBps: clamp(Number(merged.missedOpportunityMoveBps) || DEFAULT_USER_STRATEGY.missedOpportunityMoveBps, 5, 200)
   };
 }
 
@@ -3235,14 +3255,25 @@ const STRATEGY_HISTORY_FIELDS = [
   ["breakoutParticipation", "Breakout participation"],
   ["breakoutMinEdgePercent", "Breakout minimum edge"],
   ["breakoutMinVolatilityBps", "Breakout minimum volatility"],
-  ["breakoutMinMoveBps", "Breakout minimum move"]
+  ["breakoutMinMoveBps", "Breakout minimum move"],
+  ["trendDayBias", "Trend-day bias"],
+  ["noChaseEntries", "No-chase entries"],
+  ["pullbackEntryRequired", "Pullback entry required"],
+  ["profitLockTrailingStop", "Profit-lock trailing stop"],
+  ["missedOpportunityLearner", "Missed-opportunity learner"],
+  ["noChaseMoveBps", "No-chase move"],
+  ["pullbackMinRetraceBps", "Pullback minimum retrace"],
+  ["profitLockMinMoveBps", "Profit-lock minimum move"],
+  ["profitLockGivebackPct", "Profit-lock giveback"],
+  ["missedOpportunityMoveBps", "Missed-opportunity move"]
 ];
 
 function formatStrategyFieldValue(key, value) {
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (key.toLowerCase().includes("percent")) return `${value}%`;
   if (key.toLowerCase().includes("volatility")) return `${formatNumberInput(value, 2)} bps`;
-  if (key === "breakoutMinMoveBps") return `${formatNumberInput(value, 2)} bps`;
+  if (key === "breakoutMinMoveBps" || key === "noChaseMoveBps" || key === "pullbackMinRetraceBps" || key === "profitLockMinMoveBps" || key === "missedOpportunityMoveBps") return `${formatNumberInput(value, 2)} bps`;
+  if (key === "profitLockGivebackPct") return `${formatNumberInput(value, 0)}%`;
   if (key === "flatSizeMultiplier") return `${formatNumberInput(value, 2)}x`;
   return String(value ?? "");
 }
@@ -3357,6 +3388,16 @@ function getStrategyChangeSummary(before, after) {
   if (before.blockLongsInFallingTrend !== after.blockLongsInFallingTrend) changes.push(after.blockLongsInFallingTrend ? "enabled falling-trend long block" : "disabled falling-trend long block");
   if (before.volatilityAwareStops !== after.volatilityAwareStops) changes.push(after.volatilityAwareStops ? "enabled volatility-aware stops" : "disabled volatility-aware stops");
   if (before.postStopShortReentry !== after.postStopShortReentry) changes.push(after.postStopShortReentry ? "enabled post-stop short re-entry" : "disabled post-stop short re-entry");
+  if (before.trendDayBias !== after.trendDayBias) changes.push(after.trendDayBias ? "enabled trend-day bias" : "disabled trend-day bias");
+  if (before.noChaseEntries !== after.noChaseEntries) changes.push(after.noChaseEntries ? "enabled no-chase entries" : "disabled no-chase entries");
+  if (before.pullbackEntryRequired !== after.pullbackEntryRequired) changes.push(after.pullbackEntryRequired ? "enabled pullback entry requirement" : "disabled pullback entry requirement");
+  if (before.profitLockTrailingStop !== after.profitLockTrailingStop) changes.push(after.profitLockTrailingStop ? "enabled profit-lock trailing stop" : "disabled profit-lock trailing stop");
+  if (before.missedOpportunityLearner !== after.missedOpportunityLearner) changes.push(after.missedOpportunityLearner ? "enabled missed-opportunity learner" : "disabled missed-opportunity learner");
+  if (before.noChaseMoveBps !== after.noChaseMoveBps) changes.push("no-chase move threshold");
+  if (before.pullbackMinRetraceBps !== after.pullbackMinRetraceBps) changes.push("pullback retrace minimum");
+  if (before.profitLockMinMoveBps !== after.profitLockMinMoveBps) changes.push("profit-lock minimum move");
+  if (before.profitLockGivebackPct !== after.profitLockGivebackPct) changes.push("profit-lock giveback");
+  if (before.missedOpportunityMoveBps !== after.missedOpportunityMoveBps) changes.push("missed-opportunity threshold");
   return changes.length ? `Changed ${changes.join(", ")}` : "No material strategy change";
 }
 
@@ -4784,6 +4825,11 @@ function saveUserStrategySettings(user, container) {
     blockLongsInFallingTrend: container.querySelector("[data-strategy-field='blockLongsInFallingTrend']")?.checked,
     volatilityAwareStops: container.querySelector("[data-strategy-field='volatilityAwareStops']")?.checked,
     postStopShortReentry: container.querySelector("[data-strategy-field='postStopShortReentry']")?.checked,
+    trendDayBias: container.querySelector("[data-strategy-field='trendDayBias']")?.checked,
+    noChaseEntries: container.querySelector("[data-strategy-field='noChaseEntries']")?.checked,
+    pullbackEntryRequired: container.querySelector("[data-strategy-field='pullbackEntryRequired']")?.checked,
+    profitLockTrailingStop: container.querySelector("[data-strategy-field='profitLockTrailingStop']")?.checked,
+    missedOpportunityLearner: container.querySelector("[data-strategy-field='missedOpportunityLearner']")?.checked,
     flatMaxMartingaleSteps: container.querySelector("[data-strategy-field='flatMaxMartingaleSteps']")?.value,
     flatSizeMultiplier: container.querySelector("[data-strategy-field='flatSizeMultiplier']")?.value,
     flatThresholdBoost: container.querySelector("[data-strategy-field='flatThresholdBoost']")?.value,
@@ -4794,7 +4840,12 @@ function saveUserStrategySettings(user, container) {
     breakoutParticipation: container.querySelector("[data-strategy-field='breakoutParticipation']")?.checked,
     breakoutMinEdgePercent: container.querySelector("[data-strategy-field='breakoutMinEdgePercent']")?.value,
     breakoutMinVolatilityBps: container.querySelector("[data-strategy-field='breakoutMinVolatilityBps']")?.value,
-    breakoutMinMoveBps: container.querySelector("[data-strategy-field='breakoutMinMoveBps']")?.value
+    breakoutMinMoveBps: container.querySelector("[data-strategy-field='breakoutMinMoveBps']")?.value,
+    noChaseMoveBps: container.querySelector("[data-strategy-field='noChaseMoveBps']")?.value,
+    pullbackMinRetraceBps: container.querySelector("[data-strategy-field='pullbackMinRetraceBps']")?.value,
+    profitLockMinMoveBps: container.querySelector("[data-strategy-field='profitLockMinMoveBps']")?.value,
+    profitLockGivebackPct: container.querySelector("[data-strategy-field='profitLockGivebackPct']")?.value,
+    missedOpportunityMoveBps: container.querySelector("[data-strategy-field='missedOpportunityMoveBps']")?.value
   });
 
   const changed = recordUserStrategyChange(user, before, strategy);
@@ -4956,6 +5007,11 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "blockLongsInFallingTrend", label: "Block longs in falling trend", value: strategy.blockLongsInFallingTrend, type: "checkbox", on: "Requires reversal confirmation before long", off: "Off", help: "Prevents new long entries while the day tape is falling unless microstructure shows a real reversal: improving momentum, VWAP reclaim, and enough long edge." },
     { key: "volatilityAwareStops", label: "Volatility-aware stops", value: strategy.volatilityAwareStops, type: "checkbox", on: "Stops widen with live volatility", off: "Fixed stop width", help: "Uses live micro volatility and trend context to avoid stop levels that are too tight for the current tape." },
     { key: "postStopShortReentry", label: "Post-stop short re-entry", value: strategy.postStopShortReentry, type: "checkbox", on: "Can re-enter short after a stopped short resumes lower", off: "Off", help: "If a short is stopped during a bounce but bearish tape resumes within the re-entry window, the scheduler may open a controlled short again." },
+    { key: "trendDayBias", label: "Trend-day bias", value: strategy.trendDayBias, type: "checkbox", on: "Avoids counter-trend entries", off: "Off", help: "Keeps the scheduler aligned with the broader tape: avoid shorts in bullish trend days and avoid longs in bearish trend days unless breakdown/reversal confirmation appears." },
+    { key: "noChaseEntries", label: "No-chase entries", value: strategy.noChaseEntries, type: "checkbox", on: "Waits after fast moves", off: "Off", help: "Prevents entering after a fast move has already run. The scheduler waits for a pullback/reclaim instead of buying the high or shorting the low." },
+    { key: "pullbackEntryRequired", label: "Pullback entry required", value: strategy.pullbackEntryRequired, type: "checkbox", on: "Requires retest/reclaim or bounce/failure", off: "Off", help: "Separates advisory direction from execution. A long bias waits for pullback/reclaim; a short bias waits for bounce/failure." },
+    { key: "profitLockTrailingStop", label: "Profit-lock trailing stop", value: strategy.profitLockTrailingStop, type: "checkbox", on: "Moves stop after favorable move", off: "Off", help: "When an open trade moves far enough in favor, Cloudflare raises/lowers the stop to lock some of the move instead of leaving the original stop unchanged." },
+    { key: "missedOpportunityLearner", label: "Missed-opportunity learner", value: strategy.missedOpportunityLearner, type: "checkbox", on: "Logs strong moves missed by execution", off: "Off", help: "Records when price makes a large move but the scheduler did not enter, so we can study bad timing separately from bad direction." },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "flatSizeMultiplier", label: "Flat/mixed size multiplier", value: strategy.flatSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x" },
     { key: "flatThresholdBoost", label: "Flat/mixed threshold boost", value: strategy.flatThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+" },
@@ -4967,6 +5023,11 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "breakoutMinEdgePercent", label: "Breakout minimum edge", value: strategy.breakoutMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%", help: "Minimum micro predictor probability required before the breakout override can participate. Applies to both long and short breakouts." },
     { key: "breakoutMinVolatilityBps", label: "Breakout minimum volatility", value: strategy.breakoutMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps", help: "Minimum live tick volatility required. This prevents breakout trades in dead or flat tape." },
     { key: "breakoutMinMoveBps", label: "Breakout minimum move", value: strategy.breakoutMinMoveBps, type: "number", min: 0, max: 50, step: 0.1, suffix: " bps", help: "Minimum 60-second directional move. Positive move can trigger long, negative move can trigger short." },
+    { key: "noChaseMoveBps", label: "No-chase move threshold", value: strategy.noChaseMoveBps, type: "number", min: 0, max: 100, step: 0.1, suffix: " bps", help: "If the recent move is larger than this threshold, the scheduler will not enter in the same direction without a pullback." },
+    { key: "pullbackMinRetraceBps", label: "Pullback minimum retrace", value: strategy.pullbackMinRetraceBps, type: "number", min: 0, max: 30, step: 0.1, suffix: " bps", help: "Minimum short pullback or bounce required before entering with the trend." },
+    { key: "profitLockMinMoveBps", label: "Profit-lock minimum move", value: strategy.profitLockMinMoveBps, type: "number", min: 0, max: 100, step: 0.1, suffix: " bps", help: "Minimum favorable move before the scheduler can move the stop to lock profit." },
+    { key: "profitLockGivebackPct", label: "Profit-lock giveback", value: strategy.profitLockGivebackPct, type: "number", min: 5, max: 80, step: 1, suffix: "%", help: "How much of the favorable move the trailing stop is allowed to give back." },
+    { key: "missedOpportunityMoveBps", label: "Missed-opportunity move", value: strategy.missedOpportunityMoveBps, type: "number", min: 5, max: 200, step: 1, suffix: " bps", help: "Minimum move size before a missed opportunity is logged to Open Brain." },
     { key: "skillsAccess", label: "Skills context", value: strategy.skillsAccess, type: "checkbox", on: strategy.skillFocus, off: "Disabled" },
     { key: "openBrainAccess", label: "Open Brain context", value: strategy.openBrainAccess, type: "checkbox", on: "Enabled", off: "Disabled" }
   ];
@@ -5241,6 +5302,10 @@ function renderAdvisorDecisionDetail(signal = lastPrimarySignal, tradePlan = las
     {
       title: "Regime and microstructure",
       body: `Regime is ${regime.regime || "unknown"}. Edge ${regime.edgePercent ?? "-"}%, volatility ${Number(regime.volatility || 0).toFixed(2)} bps, momentum ${regime.momentumAligned ? "aligned" : "not aligned"}. Flat or mixed tape can add threshold requirements and reduce recovery sizing.`
+    },
+    {
+      title: "Execution quality gates",
+      body: `Trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
     },
     {
       title: "Cloudflare scheduler",
@@ -5682,6 +5747,26 @@ function createUserProfilePanel(user) {
         <input data-strategy-field="postStopShortReentry" type="checkbox"${strategy.postStopShortReentry ? " checked" : ""} title="If a short gets stopped during a bounce but bearish tape resumes quickly, Cloudflare may re-enter short in a controlled way.">
         Post-stop short re-entry <span class="profile-field-hint" title="Designed for down days where a bounce stops the trade before the move continues lower.">controlled short re-entry</span>
       </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="trendDayBias" type="checkbox"${strategy.trendDayBias ? " checked" : ""} title="Keeps new entries aligned with the broader tape instead of fighting a clear trend day.">
+        Trend-day bias <span class="profile-field-hint" title="Avoids shorts in bullish trend days and avoids longs in bearish trend days unless the tape confirms a real reversal or breakdown.">avoids counter-trend entries</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="noChaseEntries" type="checkbox"${strategy.noChaseEntries ? " checked" : ""} title="Blocks entries after a fast move has already run, unless breakout participation explicitly confirms it.">
+        No-chase entries <span class="profile-field-hint" title="Prevents buying the high or shorting the low. The scheduler waits for a pullback/reclaim or bounce/failure.">waits after fast moves</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="pullbackEntryRequired" type="checkbox"${strategy.pullbackEntryRequired ? " checked" : ""} title="Requires the execution tape to show a retest/reclaim for longs or bounce/failure for shorts.">
+        Pullback entry required <span class="profile-field-hint" title="Separates the advisory direction from the execution entry so the trade waits for a better price location.">requires retest confirmation</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="profitLockTrailingStop" type="checkbox"${strategy.profitLockTrailingStop ? " checked" : ""} title="Moves the stop after a favorable move so winning trades are less likely to become full stop losses.">
+        Profit-lock trailing stop <span class="profile-field-hint" title="When price moves far enough in favor, Cloudflare moves the stop toward a partial locked profit.">protects favorable moves</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="missedOpportunityLearner" type="checkbox"${strategy.missedOpportunityLearner ? " checked" : ""} title="Logs strong moves the scheduler missed so we can study bad execution timing separately from bad forecasts.">
+        Missed-opportunity learner <span class="profile-field-hint" title="Writes a Cloudflare Open Brain memory when price makes a large move but no trade opens.">logs missed moves</span>
+      </label>
       <label>
         Flat max steps
         <input data-strategy-field="flatMaxMartingaleSteps" type="number" min="1" max="8" step="1" value="${strategy.flatMaxMartingaleSteps}">
@@ -5725,6 +5810,26 @@ function createUserProfilePanel(user) {
       <label>
         Breakout min 60s move bps <span class="profile-field-hint" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">?</span>
         <input data-strategy-field="breakoutMinMoveBps" type="number" min="0" max="50" step="0.1" value="${formatNumberInput(strategy.breakoutMinMoveBps, 2)}" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">
+      </label>
+      <label>
+        No-chase move bps <span class="profile-field-hint" title="If the recent move is already larger than this, the scheduler waits instead of chasing.">?</span>
+        <input data-strategy-field="noChaseMoveBps" type="number" min="0" max="100" step="0.1" value="${formatNumberInput(strategy.noChaseMoveBps, 2)}" title="If the recent move is already larger than this, the scheduler waits instead of chasing.">
+      </label>
+      <label>
+        Pullback minimum retrace bps <span class="profile-field-hint" title="Minimum pullback or bounce required before entering with a trend.">?</span>
+        <input data-strategy-field="pullbackMinRetraceBps" type="number" min="0" max="30" step="0.1" value="${formatNumberInput(strategy.pullbackMinRetraceBps, 2)}" title="Minimum pullback or bounce required before entering with a trend.">
+      </label>
+      <label>
+        Profit-lock minimum move bps <span class="profile-field-hint" title="Minimum favorable move before Cloudflare can trail the stop.">?</span>
+        <input data-strategy-field="profitLockMinMoveBps" type="number" min="0" max="100" step="0.1" value="${formatNumberInput(strategy.profitLockMinMoveBps, 2)}" title="Minimum favorable move before Cloudflare can trail the stop.">
+      </label>
+      <label>
+        Profit-lock giveback % <span class="profile-field-hint" title="How much of a favorable move the trailing stop may give back.">?</span>
+        <input data-strategy-field="profitLockGivebackPct" type="number" min="5" max="80" step="1" value="${formatNumberInput(strategy.profitLockGivebackPct, 0)}" title="How much of a favorable move the trailing stop may give back.">
+      </label>
+      <label>
+        Missed-opportunity move bps <span class="profile-field-hint" title="Minimum move size before the missed-opportunity learner records a Cloudflare memory.">?</span>
+        <input data-strategy-field="missedOpportunityMoveBps" type="number" min="5" max="200" step="1" value="${formatNumberInput(strategy.missedOpportunityMoveBps, 0)}" title="Minimum move size before the missed-opportunity learner records a Cloudflare memory.">
       </label>
       <label class="profile-strategy-wide">
         Strategy definition <span class="profile-field-hint">notes only until mapped to executable fields</span>
