@@ -357,9 +357,11 @@ const DEFAULT_SECOND_OPINION_ANALYST_SKILLS = [
 const latestPrices = new Map();
 const latestPriceTimes = new Map();
 const latestPriceSources = new Map();
+const latestPriceProductIds = new Map();
 const confirmedLivePrices = new Map();
 const confirmedLivePriceTimes = new Map();
 const confirmedLivePriceSources = new Map();
+const confirmedLivePriceProductIds = new Map();
 const priceTickHistory = new Map();
 const productMinimums = new Map();
 const advisorySideState = new Map();
@@ -685,6 +687,7 @@ let snapshotPricesPromise = null;
 let snapshotPricesLoadedAt = 0;
 let activePriceSocket = null;
 let activePriceSocketCommodity = null;
+let activePriceSocketProductId = "";
 let activePriceSocketReconnectTimer = null;
 let lowPowerMode = true;
 let signalRecalcTimer = null;
@@ -7990,6 +7993,38 @@ function getEffectiveCommodityConfig(commodity, user = getCurrentUserProfile()) 
   };
 }
 
+function getActivePriceProductId(commodity) {
+  const config = getEffectiveCommodityConfig(commodity);
+  return String(config.productId || config.ticker || "").trim();
+}
+
+function getStoredPriceProductId(commodity) {
+  return String(
+    confirmedLivePriceProductIds.get(commodity)
+      || latestPriceProductIds.get(commodity)
+      || ""
+  ).trim();
+}
+
+function isStoredPriceForActiveContract(commodity) {
+  const activeProductId = getActivePriceProductId(commodity).toLowerCase();
+  if (!activeProductId) return true;
+  const storedProductId = getStoredPriceProductId(commodity).toLowerCase();
+  return storedProductId === activeProductId;
+}
+
+function clearCommodityPriceCache(commodity) {
+  latestPrices.delete(commodity);
+  latestPriceTimes.delete(commodity);
+  latestPriceSources.delete(commodity);
+  latestPriceProductIds.delete(commodity);
+  confirmedLivePrices.delete(commodity);
+  confirmedLivePriceTimes.delete(commodity);
+  confirmedLivePriceSources.delete(commodity);
+  confirmedLivePriceProductIds.delete(commodity);
+  productMinimums.delete(commodity);
+}
+
 function getContractMultiplier(config) {
   return Number(config?.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
 }
@@ -8015,6 +8050,7 @@ function getEstimatedFees(config, contracts, sides = 2) {
 }
 
 function isUsableMarketPrice(commodity) {
+  if (!isStoredPriceForActiveContract(commodity)) return false;
   const price = confirmedLivePrices.has(commodity)
     ? confirmedLivePrices.get(commodity)
     : latestPrices.get(commodity);
@@ -8048,14 +8084,17 @@ function getUsableMarketPriceSource(commodity) {
 
 function rememberConfirmedLivePrice(commodity, price, source) {
   if (!Number.isFinite(price) || price <= 0) return;
+  const productId = getActivePriceProductId(commodity);
   const now = new Date();
   rememberPriceTick(commodity, price, now);
   latestPrices.set(commodity, price);
   latestPriceTimes.set(commodity, now);
   latestPriceSources.set(commodity, source);
+  latestPriceProductIds.set(commodity, productId);
   confirmedLivePrices.set(commodity, price);
   confirmedLivePriceTimes.set(commodity, now);
   confirmedLivePriceSources.set(commodity, source);
+  confirmedLivePriceProductIds.set(commodity, productId);
   queueLivePricePaint(commodity);
 }
 
@@ -8383,6 +8422,14 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
 async function refreshCoinbasePrice(commodity, options = {}) {
   const runCloseSweep = options.runCloseSweep !== false;
   const forceRefresh = options.force === true;
+  const config = getEffectiveCommodityConfig(commodity);
+  if (!config) return;
+  const activeProductId = String(config.productId || config.ticker || "").trim();
+  const socketProductMatches = activePriceSocketProductId === activeProductId;
+  if (!isStoredPriceForActiveContract(commodity)) {
+    clearCommodityPriceCache(commodity);
+    closeCoinbaseWebSocket();
+  }
   const lastWebSocketUpdate = latestPriceTimes.get(commodity);
   const webSocketFresh = lastWebSocketUpdate
     && Date.now() - getTransactionDate(lastWebSocketUpdate).getTime() <= COINBASE_WS_STALE_MS;
@@ -8391,6 +8438,7 @@ async function refreshCoinbasePrice(commodity, options = {}) {
     !forceRefresh &&
     latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
     activePriceSocketCommodity === commodity &&
+    socketProductMatches &&
     activePriceSocket?.readyState === WebSocket.OPEN &&
     webSocketFresh
   ) {
@@ -8401,15 +8449,12 @@ async function refreshCoinbasePrice(commodity, options = {}) {
     latestPriceSources.get(commodity) === "Coinbase WebSocket" &&
     activePriceSocketCommodity === commodity &&
     activePriceSocket?.readyState === WebSocket.OPEN &&
-    !webSocketFresh
+    (!webSocketFresh || !socketProductMatches)
   ) {
     latestPriceSources.set(commodity, "Coinbase WebSocket stale");
     closeCoinbaseWebSocket();
     connectCoinbaseWebSocket(commodity);
   }
-
-  const config = marketConfig[commodity];
-  if (!config) return;
 
   try {
     const response = await fetch(`https://api.coinbase.com/api/v3/brokerage/market/products/${config.productId}/ticker?ts=${Date.now()}`, {
@@ -8442,19 +8487,22 @@ function closeCoinbaseWebSocket() {
   }
 
   activePriceSocketCommodity = null;
+  activePriceSocketProductId = "";
 }
 
 function connectCoinbaseWebSocket(commodity) {
-  const config = marketConfig[commodity];
+  const config = getEffectiveCommodityConfig(commodity);
 
   if (!config || config.productType !== "Coinbase futures contract") {
     closeCoinbaseWebSocket();
     return;
   }
+  const productId = String(config.productId || config.ticker || "").trim();
 
   if (
     activePriceSocket &&
     activePriceSocketCommodity === commodity &&
+    activePriceSocketProductId === productId &&
     [WebSocket.CONNECTING, WebSocket.OPEN].includes(activePriceSocket.readyState)
   ) {
     return;
@@ -8462,6 +8510,7 @@ function connectCoinbaseWebSocket(commodity) {
 
   closeCoinbaseWebSocket();
   activePriceSocketCommodity = commodity;
+  activePriceSocketProductId = productId;
 
   try {
     const socket = new WebSocket(COINBASE_WS_URL);
@@ -8469,8 +8518,8 @@ function connectCoinbaseWebSocket(commodity) {
 
     socket.onopen = () => {
       const subscriptions = [
-        { type: "subscribe", channel: "ticker", product_ids: [config.productId] },
-        { type: "subscribe", channel: "heartbeats", product_ids: [config.productId] }
+        { type: "subscribe", channel: "ticker", product_ids: [productId] },
+        { type: "subscribe", channel: "heartbeats", product_ids: [productId] }
       ];
 
       subscriptions.forEach((message) => socket.send(JSON.stringify(message)));
@@ -8486,6 +8535,7 @@ function connectCoinbaseWebSocket(commodity) {
 
       const socketPrice = getCoinbaseWebSocketPrice(data);
       if (!socketPrice) return;
+      if (activePriceSocketProductId !== productId) return;
 
       rememberConfirmedLivePrice(commodity, socketPrice, "Coinbase WebSocket");
       refreshCoinbaseProductDetails(commodity, socketPrice);
@@ -8501,6 +8551,7 @@ function connectCoinbaseWebSocket(commodity) {
     socket.onclose = () => {
       if (activePriceSocket !== socket) return;
       activePriceSocket = null;
+      activePriceSocketProductId = "";
 
       if (commoditySelect.value === commodity) {
         if (latestPriceSources.get(commodity) === "Coinbase WebSocket") {
@@ -8519,12 +8570,17 @@ function connectCoinbaseWebSocket(commodity) {
 
 async function refreshSnapshotPrice(commodity) {
   try {
+    const activeProductId = getActivePriceProductId(commodity).toLowerCase();
     const data = await loadSnapshotPrices();
     const snapshot = data?.prices?.[commodity];
     const snapshotPrice = Number(snapshot?.price);
+    const snapshotProductId = String(snapshot?.productId || snapshot?.ticker || "").toLowerCase();
 
     if (!Number.isFinite(snapshotPrice) || snapshotPrice <= 0) {
       throw new Error("snapshot price unavailable");
+    }
+    if (activeProductId && snapshotProductId !== activeProductId) {
+      throw new Error("snapshot contract does not match active contract");
     }
 
     latestPrices.set(commodity, snapshotPrice);
@@ -8532,6 +8588,8 @@ async function refreshSnapshotPrice(commodity) {
     rememberPriceTick(commodity, snapshotPrice, snapshotTime);
     latestPriceTimes.set(commodity, snapshotTime);
     latestPriceSources.set(commodity, snapshot.ok ? "Cloudflare snapshot" : "Unavailable snapshot");
+    latestPriceProductIds.set(commodity, snapshot.productId || snapshot.ticker || getActivePriceProductId(commodity));
+    confirmedLivePriceProductIds.set(commodity, snapshot.productId || snapshot.ticker || getActivePriceProductId(commodity));
     queueLivePricePaint(commodity, { immediate: true });
 
     const minimumTradeValue = Number(snapshot.minimumTradeValue);
@@ -8552,7 +8610,7 @@ async function refreshSnapshotPrice(commodity) {
 async function refreshCoinbaseProductDetails(commodity, livePrice) {
   if (productMinimums.has(commodity)) return;
 
-  const config = marketConfig[commodity];
+  const config = getEffectiveCommodityConfig(commodity);
   if (!config) return;
 
   try {
