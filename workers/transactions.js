@@ -3150,6 +3150,9 @@ function applyServerProfitLockStop(openTrade, price, strategy, directionalContex
   const entryPrice = Number(openTrade.entryPrice ?? openTrade.price);
   const currentStop = Number(openTrade.stopPrice);
   if (!Number.isFinite(currentPrice) || !Number.isFinite(entryPrice) || !Number.isFinite(currentStop) || entryPrice <= 0) return null;
+  if (!Number.isFinite(Number(openTrade.originalStopPrice))) {
+    openTrade.originalStopPrice = currentStop;
+  }
 
   const favorableMoveBps = openTrade.side === "short"
     ? ((entryPrice - currentPrice) / entryPrice) * 10000
@@ -3162,17 +3165,22 @@ function applyServerProfitLockStop(openTrade, price, strategy, directionalContex
   const lockedStop = openTrade.side === "short"
     ? entryPrice * (1 - (lockedMoveBps / 10000))
     : entryPrice * (1 + (lockedMoveBps / 10000));
+  const minimumNetProfit = 0.25;
+  const lockedNetPnl = getServerTradeNetPnl(openTrade, lockedStop);
+  if (!Number.isFinite(lockedNetPnl) || lockedNetPnl < minimumNetProfit) return null;
   const improved = openTrade.side === "short"
     ? lockedStop < currentStop && lockedStop < entryPrice
     : lockedStop > currentStop && lockedStop > entryPrice;
   if (!improved) return null;
 
   openTrade.stopPrice = lockedStop;
+  openTrade.profitLockStopPrice = lockedStop;
   openTrade.note = `${openTrade.note || ""} Profit-lock trailing stop moved to ${lockedStop.toFixed(2)} after ${favorableMoveBps.toFixed(2)} bps favorable move.`.trim();
   return {
     stopPrice: lockedStop,
     favorableMoveBps,
-    minMoveBps
+    minMoveBps,
+    lockedNetPnl
   };
 }
 
@@ -3362,11 +3370,16 @@ function getServerTradeNetPnl(trade, exitPrice) {
 
 function getServerExitTrigger(trade, price) {
   const targetPrice = Number(trade.targetPrice);
-  const stopPrice = Number(trade.stopPrice);
+  const stopPrice = Number(trade.originalStopPrice ?? trade.stopPrice);
+  const profitLockStopPrice = Number(trade.profitLockStopPrice);
   if (!Number.isFinite(price) || !Number.isFinite(targetPrice) || !Number.isFinite(stopPrice)) return null;
   const hitTarget = trade.side === "short" ? price <= targetPrice : price >= targetPrice;
   const hitStop = trade.side === "short" ? price >= stopPrice : price <= stopPrice;
+  const hitProfitLock = Number.isFinite(profitLockStopPrice)
+    ? trade.side === "short" ? price >= profitLockStopPrice : price <= profitLockStopPrice
+    : false;
   if (hitTarget) return trade.side === "short" ? "COVER TARGET" : "SELL TARGET";
+  if (hitProfitLock) return trade.side === "short" ? "COVER PROFIT LOCK" : "SELL PROFIT LOCK";
   if (hitStop) return trade.side === "short" ? "COVER STOP" : "SELL STOP";
   return null;
 }
@@ -3504,6 +3517,8 @@ function makeServerCloseTransaction({ user, email, commodity, config, openTrade,
     entryPrice: Number(openTrade.entryPrice ?? openTrade.price),
     targetPrice: Number(openTrade.targetPrice),
     stopPrice: Number(openTrade.stopPrice),
+    originalStopPrice: Number(openTrade.originalStopPrice ?? openTrade.stopPrice),
+    profitLockStopPrice: Number(openTrade.profitLockStopPrice),
     exitPrice: price.price,
     contractMultiplier: Number(openTrade.contractMultiplier) || config.contractMultiplier,
     contracts: Number(openTrade.contracts) || 1,
@@ -3819,6 +3834,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           targetEntryPrice: price.price,
           targetPrice: terms.targetPrice,
           stopPrice: terms.stopPrice,
+          originalStopPrice: terms.stopPrice,
           contractMultiplier: terms.contractMultiplier,
           contracts: terms.contracts,
           marginRequirement: terms.marginRequirement,

@@ -4293,6 +4293,14 @@ select {
   color: var(--danger);
 }
 
+.history-table .current-mark-price {
+  color: var(--info, #5aa7ff);
+}
+
+.history-table .protective-stop-cell {
+  color: var(--muted);
+}
+
 ol {
   padding-left: 22px;
   line-height: 1.6;

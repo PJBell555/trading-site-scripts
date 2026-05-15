@@ -6264,10 +6264,19 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       Number.isFinite(Number(openTrade.entryPrice)) ? formatPrice(Number(openTrade.entryPrice)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
-      Number.isFinite(Number(openTrade.stopPrice)) ? formatPrice(Number(openTrade.stopPrice)) : UNAVAILABLE_TEXT,
-      UNAVAILABLE_TEXT
+      "__STOP_LOSS__",
+      null
     ].forEach((value) => {
       const cell = document.createElement("td");
+      if (value === "__STOP_LOSS__") {
+        row.append(buildStopLossCell(openTrade));
+        return;
+      }
+      if (value === null) {
+        const markCell = buildOpenTradeMarkCell(openTrade);
+        row.append(markCell);
+        return;
+      }
       cell.textContent = value;
       row.append(cell);
     });
@@ -6360,6 +6369,43 @@ function buildUnrealizedPnlCell(openTrade, livePrice) {
   return cell;
 }
 
+function getOpenTradeMarkPrice(entry = {}) {
+  if (isClosingTransaction(entry) || entry.closedAt) return NaN;
+  const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
+  const livePrice = getUsableMarketPrice(commodity);
+  return Number.isFinite(Number(livePrice)) && Number(livePrice) > 0 ? Number(livePrice) : NaN;
+}
+
+function buildOpenTradeMarkCell(entry = {}) {
+  const cell = document.createElement("td");
+  const markPrice = getOpenTradeMarkPrice(entry);
+  if (!Number.isFinite(markPrice)) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    return cell;
+  }
+  cell.className = "current-mark-price";
+  cell.title = "Current live mark price, not a filled exit price.";
+  cell.textContent = `${formatPrice(markPrice)} mark`;
+  return cell;
+}
+
+function getStopLossDisplayPrice(entry = {}) {
+  const stopLoss = Number(entry.originalStopPrice ?? entry.stopLossPrice ?? entry.initialStopPrice ?? entry.stopPrice);
+  return Number.isFinite(stopLoss) ? stopLoss : NaN;
+}
+
+function buildStopLossCell(entry = {}) {
+  const cell = document.createElement("td");
+  const stopLoss = getStopLossDisplayPrice(entry);
+  cell.textContent = Number.isFinite(stopLoss) ? formatPrice(stopLoss) : UNAVAILABLE_TEXT;
+  const profitLock = Number(entry.profitLockStopPrice);
+  if (Number.isFinite(profitLock)) {
+    cell.title = `Original stop loss. Profit-lock exit guard is ${formatPrice(profitLock)}.`;
+    cell.classList.add("protective-stop-cell");
+  }
+  return cell;
+}
+
 function appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   if (!transactionHistoryEl) return;
   try {
@@ -6394,11 +6440,19 @@ function appendSimplePaperHistoryRows(entries) {
       Number.isFinite(Number(entry?.price)) ? formatPrice(Number(entry.price)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
       Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
-      Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
-      Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : UNAVAILABLE_TEXT,
+      "__STOP_LOSS__",
+      Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : null,
       Number.isFinite(pnl) ? formatSignedMoney(pnl) : "-"
     ].forEach((value, index) => {
       const cell = document.createElement("td");
+      if (index === 8 && value === "__STOP_LOSS__") {
+        row.append(buildStopLossCell(entry));
+        return;
+      }
+      if (index === 9 && value === null) {
+        row.append(buildOpenTradeMarkCell(entry));
+        return;
+      }
       cell.textContent = value;
       if (index === 10) {
         if (pnl > 0) cell.className = "gain";
@@ -11711,7 +11765,7 @@ function getPaperDecision(signal, tradePlan, openTrade) {
   if (openTrade) {
     return {
       title: `${formatSide(openTrade.side)} trade open`,
-      detail: `Watching ${priceText} against target ${formatPrice(openTrade.targetPrice)} and stop ${formatPrice(openTrade.stopPrice)}.`
+      detail: `Watching ${priceText} against target ${formatPrice(openTrade.targetPrice)} and stop loss ${formatPrice(getStopLossDisplayPrice(openTrade))}.`
     };
   }
 
@@ -12118,7 +12172,19 @@ function getEntryDetail(entry) {
   const targetEntryPrice = Number(entry.targetEntryPrice ?? openingEntry?.targetEntryPrice);
   const exitPrice = Number(entry.exitPrice ?? closingEntry?.exitPrice ?? (isClosingTransaction(entry) ? entry.price : NaN));
   const targetPrice = Number(entry.targetPrice ?? openingEntry?.targetPrice ?? closingEntry?.targetPrice ?? (closingAction.includes("TARGET") ? exitPrice : NaN));
-  const stopPrice = Number(entry.stopPrice ?? openingEntry?.stopPrice ?? closingEntry?.stopPrice ?? (closingAction.includes("STOP") ? exitPrice : NaN));
+  const stopPrice = Number(
+    entry.originalStopPrice ??
+    openingEntry?.originalStopPrice ??
+    closingEntry?.originalStopPrice ??
+    entry.stopLossPrice ??
+    openingEntry?.stopLossPrice ??
+    closingEntry?.stopLossPrice ??
+    entry.stopPrice ??
+    openingEntry?.stopPrice ??
+    closingEntry?.stopPrice ??
+    (closingAction.includes("STOP") ? exitPrice : NaN)
+  );
+  const profitLockStopPrice = Number(entry.profitLockStopPrice ?? openingEntry?.profitLockStopPrice ?? closingEntry?.profitLockStopPrice);
   const hasStoredContractCount = Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts) > 0;
   const contracts = hasStoredContractCount
     ? Number(entry.contracts ?? openingEntry?.contracts ?? closingEntry?.contracts)
@@ -12164,6 +12230,7 @@ function getEntryDetail(entry) {
     targetEntryPrice,
     targetPrice,
     stopPrice,
+    profitLockStopPrice,
     exitPrice,
     contracts,
     contractMultiplier,
@@ -12222,7 +12289,8 @@ function renderTransactionDetail(entry) {
     ["Target entry", Number.isFinite(detail.targetEntryPrice) ? formatPrice(detail.targetEntryPrice) : "-"],
     ["Actual exit", Number.isFinite(detail.exitPrice) ? formatPrice(detail.exitPrice) : entry.pnl === 0 ? "Open" : "-"],
     ["Target exit", Number.isFinite(detail.targetPrice) ? formatPrice(detail.targetPrice) : "-"],
-    ["Stop", Number.isFinite(detail.stopPrice) ? formatPrice(detail.stopPrice) : "-"],
+    ["Stop loss", Number.isFinite(detail.stopPrice) ? formatPrice(detail.stopPrice) : "-"],
+    ["Profit-lock exit guard", Number.isFinite(detail.profitLockStopPrice) ? formatPrice(detail.profitLockStopPrice) : "-"],
     ["Contracts", Number.isFinite(detail.contracts) ? `${detail.contracts} x ${detail.contractMultiplier} units` : "-"],
     ["Notional exposure", Number.isFinite(detail.notionalValue) ? formatMoney(detail.notionalValue) : "-"],
     ["Margin/contract", Number.isFinite(detail.marginRequirement) ? formatMoney(detail.marginRequirement) : "-"],
@@ -12324,7 +12392,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   if (openTrade) {
-    paperTradeSummaryEl.textContent = `Open ${openTrade.side} ${openTrade.contract}: step ${openTrade.martingaleStep}, ${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}, entry ${formatPrice(openTrade.entryPrice)}, target ${formatPrice(openTrade.targetPrice)}, stop ${formatPrice(openTrade.stopPrice)}, est. fees ${formatMoney(openTrade.totalEstimatedFees || 0)}.`;
+    const profitLock = Number(openTrade.profitLockStopPrice);
+    paperTradeSummaryEl.textContent = `Open ${openTrade.side} ${openTrade.contract}: step ${openTrade.martingaleStep}, ${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}, entry ${formatPrice(openTrade.entryPrice)}, target ${formatPrice(openTrade.targetPrice)}, stop loss ${formatPrice(getStopLossDisplayPrice(openTrade))}${Number.isFinite(profitLock) ? `, profit-lock exit guard ${formatPrice(profitLock)}` : ""}, est. fees ${formatMoney(openTrade.totalEstimatedFees || 0)}.`;
   } else if (staleStopTrade) {
     paperTradeSummaryEl.textContent = `Ledger has an unclosed ${staleStopTrade.side} trade from ${formatTradeTime(staleStopTrade.time)} with stop ${formatPrice(Number(staleStopTrade.stopPrice))}; reconciling before the next trade.`;
   } else {
@@ -12459,8 +12528,8 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         getTransactionEntryPriceDisplay(entry),
         formatMoney(entry.capital),
         Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
-        Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
-        Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : UNAVAILABLE_TEXT,
+        "__STOP_LOSS__",
+        Number.isFinite(exitPriceValue) ? formatPrice(exitPriceValue) : null,
         formatSignedMoney(displayPnl)
       ];
 
@@ -12497,6 +12566,12 @@ function renderPaperTrading(commodity, signal, tradePlan) {
             calculateSignal();
           });
           cell.append(toggle);
+        } else if (index === 8 && value === "__STOP_LOSS__") {
+          row.append(buildStopLossCell(entry));
+          return;
+        } else if (index === 9 && value === null) {
+          row.append(buildOpenTradeMarkCell(entry));
+          return;
         } else {
           cell.textContent = value;
         }
@@ -12528,11 +12603,19 @@ function renderPaperTrading(commodity, signal, tradePlan) {
         getTransactionEntryPriceDisplay(entry || {}),
         Number.isFinite(Number(entry?.capital)) ? formatMoney(Number(entry.capital)) : "-",
         Number.isFinite(Number(entry?.targetPrice)) ? formatPrice(Number(entry.targetPrice)) : UNAVAILABLE_TEXT,
-        Number.isFinite(Number(entry?.stopPrice)) ? formatPrice(Number(entry.stopPrice)) : UNAVAILABLE_TEXT,
-        Number.isFinite(Number(entry?.exitPrice)) ? formatPrice(Number(entry.exitPrice)) : UNAVAILABLE_TEXT,
+        "__STOP_LOSS__",
+        Number.isFinite(Number(entry?.exitPrice)) ? formatPrice(Number(entry.exitPrice)) : null,
         Number.isFinite(Number(entry?.pnl)) ? formatSignedMoney(Number(entry.pnl)) : "-"
       ].forEach((value, index) => {
         const cell = document.createElement("td");
+        if (index === 8 && value === "__STOP_LOSS__") {
+          row.append(buildStopLossCell(entry));
+          return;
+        }
+        if (index === 9 && value === null) {
+          row.append(buildOpenTradeMarkCell(entry));
+          return;
+        }
         cell.textContent = value;
         if (index === 10) {
           const pnl = Number(entry?.pnl);
