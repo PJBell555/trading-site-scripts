@@ -3299,19 +3299,26 @@ function getServerRegimeAssessment(signal, micro, strategy) {
   );
   const flat = !micro?.ready || !side || edgePercent < strategy.trendingMinEdgePercent || volatility < strategy.trendingMinVolatilityBps || !momentumAligned || vwapDistance < 0.8;
   const regime = trending ? "trending" : flat ? "flat" : "mixed";
+  const highEdgeVolatilitySetup = Boolean(side)
+    && edgePercent >= Math.max(65, Number(strategy.flatMinEdgePercent || 56) + 8)
+    && volatility >= Math.max(1.2, Number(strategy.flatMinVolatilityBps || 0.8) * 1.5);
   return {
     enabled: strategy.regimeAware,
     regime,
     edgePercent,
     volatility,
     momentumAligned,
+    highEdgeVolatilitySetup,
     maxMartingaleStep: regime === "trending" ? strategy.martingaleSteps : strategy.flatMaxMartingaleSteps,
     sizeMultiplier: regime === "trending" ? 1 : strategy.flatSizeMultiplier,
     thresholdBoost: regime === "trending" ? 0 : strategy.flatThresholdBoost,
     confirmationOk: regime === "trending" || (
-      edgePercent >= strategy.flatMinEdgePercent
-      && volatility >= strategy.flatMinVolatilityBps
-      && momentumAligned
+      highEdgeVolatilitySetup
+      || (
+        edgePercent >= strategy.flatMinEdgePercent
+        && volatility >= strategy.flatMinVolatilityBps
+        && momentumAligned
+      )
     )
   };
 }
@@ -3850,7 +3857,7 @@ async function runPaperTradingScheduler(env, options = {}) {
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}`
             : breakoutSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}`
-            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps; ${secondOpinionConsensus.detail}`
+            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
         await recordOpenBrainServerEvent(

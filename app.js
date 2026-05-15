@@ -6347,7 +6347,12 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   const signalSide = getSignalSide(signal);
   const hasExecutablePrice = Boolean(tradePlan?.priceReady && signalSide);
   const clearsThreshold = signalSide && signal.conviction >= tradePlan.entryThreshold;
-  const action = signalSide && !clearsThreshold
+  const blockedTitle = decision?.title && String(decision.title).startsWith("No trade:")
+    ? String(decision.title).replace(/^No trade:\s*/i, "")
+    : "";
+  const action = blockedTitle
+    ? `Blocked: ${blockedTitle}`
+    : signalSide && !clearsThreshold
     ? `Waiting ${signal.conviction}/${tradePlan.entryThreshold}`
     : signalSide
     ? `${signalSide === "short" ? "Sell short" : "Buy"} queued`
@@ -7874,6 +7879,9 @@ function getSignalExplanation(signal, tradePlan) {
   if (tradePlan.regime?.enabled && tradePlan.regime.blocksWeakSetup) {
     return `Waiting because the ${tradePlan.regime.regime} regime marks this as a weak setup; edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`;
   }
+  if (tradePlan.regime?.enabled && tradePlan.regime.highEdgeVolatilitySetup && tradePlan.regime.regime !== "trending") {
+    return `${formatSide(side)} is tradable despite ${tradePlan.regime.regime} tape because edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`;
+  }
   if (tradePlan.regime?.enabled && !tradePlan.regime.confirmationOk) {
     return `Waiting because ${tradePlan.regime.regime} confirmation is incomplete; the strategy requires trend, VWAP, momentum, and volatility to agree.`;
   }
@@ -7915,6 +7923,9 @@ function getRegimeAssessment(signal, strategy = getCurrentUserStrategy()) {
     && volatility >= strategy.trendingMinVolatilityBps;
   const flat = !micro.ready || !side || edgeNearFlat || lowVolatility || choppy;
   const regime = trending ? "trending" : flat ? "flat" : "mixed";
+  const highEdgeVolatilitySetup = Boolean(side)
+    && edgePercent >= Math.max(65, Number(strategy.flatMinEdgePercent || DEFAULT_USER_STRATEGY.flatMinEdgePercent) + 8)
+    && volatility >= Math.max(1.2, Number(strategy.flatMinVolatilityBps || DEFAULT_USER_STRATEGY.flatMinVolatilityBps) * 1.5);
 
   return {
     enabled: strategy.regimeAware !== false,
@@ -7922,14 +7933,18 @@ function getRegimeAssessment(signal, strategy = getCurrentUserStrategy()) {
     edgePercent,
     volatility,
     momentumAligned,
+    highEdgeVolatilitySetup,
     maxMartingaleStep: regime === "trending" ? getCurrentMartingaleMaxStep() : strategy.flatMaxMartingaleSteps,
     sizeMultiplier: regime === "trending" ? 1 : strategy.flatSizeMultiplier,
     thresholdBoost: regime === "trending" ? 0 : strategy.flatThresholdBoost,
-    blocksWeakSetup: regime !== "trending" && gradeSignal(signal, 1.2) === "C",
+    blocksWeakSetup: regime !== "trending" && gradeSignal(signal, 1.2) === "C" && !highEdgeVolatilitySetup,
     confirmationOk: regime === "trending" || (
-      edgePercent >= strategy.flatMinEdgePercent
-      && volatility >= strategy.flatMinVolatilityBps
-      && momentumAligned
+      highEdgeVolatilitySetup
+      || (
+        edgePercent >= strategy.flatMinEdgePercent
+        && volatility >= strategy.flatMinVolatilityBps
+        && momentumAligned
+      )
     )
   };
 }
@@ -8237,7 +8252,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const rewardRisk = Number.isFinite(risk) && risk > 0 ? reward / risk : 0;
   const setupGrade = gradeSignal(signal, rewardRisk);
   const regime = getRegimeAssessment(signal, userStrategy);
-  regime.blocksWeakSetup = regime.regime !== "trending" && setupGrade === "C";
+  regime.blocksWeakSetup = regime.regime !== "trending" && setupGrade === "C" && !regime.highEdgeVolatilitySetup;
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
