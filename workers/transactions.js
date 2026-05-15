@@ -2223,15 +2223,18 @@ function getClosedPaperTradesForUser(transactions = [], userEmail) {
     .sort((a, b) => getTransactionDate(b.time) - getTransactionDate(a.time));
 }
 
-function getNextServerMartingaleStep(transactions = [], userEmail, maxStep = 4) {
-  const closed = getClosedPaperTradesForUser(transactions, userEmail);
-  let highestLosingStep = 0;
-  for (const entry of closed) {
-    if (Number(entry.pnl) >= 0) break;
-    highestLosingStep = Math.max(highestLosingStep, Number(entry.step) || 1);
-  }
-  if (!highestLosingStep) return 1;
-  return highestLosingStep >= maxStep ? 1 : Math.min(maxStep, highestLosingStep + 1);
+function getNextServerMartingaleStep(transactions = [], userEmail, maxStep = 4, commodity = "") {
+  const normalizedCommodity = normalizeServerCommodityId(commodity);
+  const closed = getClosedPaperTradesForUser(transactions, userEmail)
+    .filter((entry) => {
+      if (!normalizedCommodity) return true;
+      return normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract)) === normalizedCommodity;
+    });
+  const latest = closed[0];
+  if (!latest || Number(latest.pnl) >= 0) return 1;
+
+  const latestStep = clamp(Math.round(Number(latest.step) || 1), 1, maxStep);
+  return latestStep >= maxStep ? 1 : Math.min(maxStep, latestStep + 1);
 }
 
 function getServerLossStreak(closed = []) {
@@ -3484,7 +3487,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
         const step = exclusiveMartingale
-          ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps)
+          ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps, commodity)
           : 1;
         if (!breakoutSignal && !reentrySignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
@@ -3705,13 +3708,23 @@ function canonicalizeSettingsPayload(settings = defaultSettingsPayload()) {
   Object.entries(profiles).forEach(([key, profile]) => {
     const email = normalizeEmail(profile?.email || key);
     if (!email) return;
+    const normalizedProfile = profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {};
     profilesByEmail[email] = {
       ...(profilesByEmail[email] || {}),
-      ...(profile && typeof profile === "object" && !Array.isArray(profile) ? profile : {}),
+      ...normalizedProfile,
       email,
-      name: email === "peterambiel@gmail.com" ? "Peter Ambiel" : profile?.name || profilesByEmail[email]?.name || "",
-      mergedFrom: normalizeMergedFrom([...(profilesByEmail[email]?.mergedFrom || []), ...(profile?.mergedFrom || [])], email)
+      name: email === "peterambiel@gmail.com" ? "Peter Ambiel" : normalizedProfile.name || profilesByEmail[email]?.name || "",
+      mergedFrom: normalizeMergedFrom([...(profilesByEmail[email]?.mergedFrom || []), ...(normalizedProfile.mergedFrom || [])], email)
     };
+    const existingUser = usersByEmail.get(email) || {};
+    usersByEmail.set(email, {
+      ...normalizedProfile,
+      ...existingUser,
+      email,
+      name: email === "peterambiel@gmail.com" ? "Peter Ambiel" : existingUser.name || normalizedProfile.name || email,
+      avatarDataUrl: existingUser.avatarDataUrl || normalizedProfile.avatarDataUrl || "",
+      mergedFrom: normalizeMergedFrom([...(normalizedProfile.mergedFrom || []), ...(existingUser.mergedFrom || [])], email)
+    });
   });
 
   return {

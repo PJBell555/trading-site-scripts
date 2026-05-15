@@ -367,6 +367,7 @@ const BACKEND_SETTINGS_SYNC_MS = 120000;
 const BACKEND_ADVISORY_SYNC_MS = 300000;
 const BACKEND_FAILURE_BACKOFF_MS = 300000;
 const BACKEND_REQUEST_TIMEOUT_MS = 10000;
+const CLOUD_SOURCE_FETCH_TIMEOUT_MS = 30000;
 const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
 const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
 const CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED = true;
@@ -3577,6 +3578,24 @@ function mergeSharedUserProfiles(profiles) {
   if (!profiles || typeof profiles !== "object" || Array.isArray(profiles)) return false;
 
   let changed = false;
+  const usersByEmail = new Map(userRoster.map((user) => [normalizeEmail(user.email), user]));
+  Object.entries(profiles).forEach(([profileEmail, profile]) => {
+    const email = normalizeEmail(profileEmail || profile?.email);
+    if (!email || usersByEmail.has(email) || !profile || typeof profile !== "object") return;
+
+    const normalized = normalizeUserRecord({
+      ...profile,
+      email,
+      name: profile.name || profile.displayName || email.split("@")[0],
+      avatarDataUrl: profile.avatarDataUrl || "",
+      enabled: profile.enabled !== false
+    });
+    if (!normalized) return;
+    userRoster.push(normalized);
+    usersByEmail.set(email, normalized);
+    changed = true;
+  });
+
   userRoster.forEach((user) => {
     const profile = profiles[normalizeEmail(user.email)];
     if (!profile || typeof profile !== "object") return;
@@ -9431,7 +9450,7 @@ async function loadSharedSettings(manual = false) {
   backendSettingsSyncInFlight = true;
 
   try {
-    const response = await fetchWithTimeout(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
@@ -9486,7 +9505,7 @@ async function saveSharedSettings() {
         users: getSharedUsersPayload(),
         userProfiles: getSharedUserProfilesPayload()
       })
-    });
+    }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("settings save failed");
 
     const data = await response.json();
@@ -10918,7 +10937,7 @@ async function loadSharedTransactionHistory(manual = false) {
 
   try {
     sharedHistoryStatusEl.textContent = "Syncing backend";
-    const response = await fetchWithTimeout(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" });
+    const response = await fetchWithTimeout(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("master history unavailable");
 
     const data = await response.json();
