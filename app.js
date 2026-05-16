@@ -11412,7 +11412,8 @@ async function loadLeaderBoardSummary(manual = false) {
   leaderBoardSummaryError = "";
   renderLeaderBoard();
   try {
-    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}&ts=${Date.now()}`;
+    const refreshParam = manual ? "&refresh=1" : "";
+    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${refreshParam}&ts=${Date.now()}`;
     const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("leaderboard unavailable");
     const payload = await response.json();

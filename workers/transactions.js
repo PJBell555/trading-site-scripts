@@ -2648,6 +2648,19 @@ function getLeaderboardCutoff(period = "all") {
   return 0;
 }
 
+const LEADERBOARD_PERIODS = ["all", "hour", "day", "week", "month", "year"];
+const LEADERBOARD_SUMMARY_CACHE_PREFIX = "leaderboard-summary";
+const LEADERBOARD_SUMMARY_MAX_AGE_MS = 10 * 60 * 1000;
+
+function normalizeLeaderboardPeriod(period = "all") {
+  const normalized = String(period || "all").toLowerCase();
+  return LEADERBOARD_PERIODS.includes(normalized) ? normalized : "all";
+}
+
+function getLeaderboardSummaryCacheKey(period = "all") {
+  return `${LEADERBOARD_SUMMARY_CACHE_PREFIX}:${normalizeLeaderboardPeriod(period)}`;
+}
+
 function getServerDisplayPnl(entry = {}) {
   const value = Number(firstPresent(entry.netPnl, entry.pnl, entry.grossPnl));
   return Number.isFinite(value) ? value : 0;
@@ -2718,7 +2731,8 @@ function getMatchedClosingTransactions(entries = [], allEntries = entries) {
 }
 
 function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapshots = {}, period = "all") {
-  const cutoff = getLeaderboardCutoff(period);
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const cutoff = getLeaderboardCutoff(normalizedPeriod);
   const modelSettings = normalizeServerModelSettings(settings.modelSettings);
   const users = Array.isArray(settings.users) ? settings.users : [];
   return users.map((user) => {
@@ -2769,26 +2783,80 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
   });
 }
 
-async function handleLeaderBoardRoute(env, request, origin) {
-  if (request.method !== "GET") {
-    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+function buildServerLeaderboardSummary(settings = {}, transactions = [], priceSnapshots = {}, period = "all", source = "cloudflare-d1-leaderboard") {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  return {
+    generatedAt: new Date().toISOString(),
+    source,
+    storage: "d1",
+    period: normalizedPeriod,
+    rows: getServerLeaderboardRows(settings, transactions, priceSnapshots, normalizedPeriod)
+  };
+}
+
+async function saveLeaderboardSummaryCache(env, settings = {}, transactions = [], priceSnapshots = {}, periods = LEADERBOARD_PERIODS) {
+  const normalizedPeriods = Array.from(new Set((Array.isArray(periods) ? periods : LEADERBOARD_PERIODS).map(normalizeLeaderboardPeriod)));
+  for (const period of normalizedPeriods) {
+    await saveRuntimeDocumentD1(
+      env,
+      getLeaderboardSummaryCacheKey(period),
+      buildServerLeaderboardSummary(settings, transactions, priceSnapshots, period, "cloudflare-d1-leaderboard-cache")
+    );
   }
-  const url = new URL(request.url);
-  const period = String(url.searchParams.get("period") || "all").toLowerCase();
+}
+
+async function loadLeaderboardSummaryCache(env, period = "all", { allowStale = true } = {}) {
+  const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const cached = await getRuntimeDocumentD1(env, getLeaderboardSummaryCacheKey(normalizedPeriod), null);
+  if (!cached || !Array.isArray(cached.rows)) return null;
+  const generatedAt = getTransactionDate(cached.generatedAt).getTime();
+  const ageMs = Number.isFinite(generatedAt) ? Date.now() - generatedAt : Number.POSITIVE_INFINITY;
+  const fresh = ageMs <= LEADERBOARD_SUMMARY_MAX_AGE_MS;
+  if (!fresh && !allowStale) return null;
+  return {
+    ...cached,
+    source: fresh ? cached.source || "cloudflare-d1-leaderboard-cache" : "cloudflare-d1-leaderboard-cache-stale",
+    cacheAgeMs: Number.isFinite(ageMs) ? ageMs : null,
+    stale: !fresh
+  };
+}
+
+async function refreshLeaderboardSummaryCache(env, periods = LEADERBOARD_PERIODS) {
   const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
     env,
     await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
   ));
   const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
   const priceSnapshots = await loadStoredPriceSnapshots(env);
-  const rows = getServerLeaderboardRows(settings, payload.transactions || [], priceSnapshots, period);
-  return jsonResponse({
-    generatedAt: new Date().toISOString(),
-    source: "cloudflare-d1-leaderboard",
-    storage: "d1",
-    period,
-    rows
-  }, 200, origin);
+  await saveLeaderboardSummaryCache(env, settings, payload.transactions || [], priceSnapshots, periods);
+  return buildServerLeaderboardSummary(settings, payload.transactions || [], priceSnapshots, normalizeLeaderboardPeriod(periods[0]), "cloudflare-d1-leaderboard-refreshed");
+}
+
+async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+  const url = new URL(request.url);
+  const period = normalizeLeaderboardPeriod(url.searchParams.get("period") || "all");
+  const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
+  const cached = !forceRefresh ? await loadLeaderboardSummaryCache(env, period, { allowStale: true }) : null;
+  if (cached && !cached.stale) {
+    return jsonResponse(cached, 200, origin);
+  }
+  if (cached && ctx?.waitUntil) {
+    ctx.waitUntil(refreshLeaderboardSummaryCache(env, [period]).catch((error) => {
+      console.error("leaderboard cache refresh failed", error);
+    }));
+    return jsonResponse(cached, 200, origin);
+  }
+
+  try {
+    const fresh = await refreshLeaderboardSummaryCache(env, [period]);
+    return jsonResponse(fresh, 200, origin);
+  } catch (error) {
+    if (cached) return jsonResponse({ ...cached, error: error.message }, 200, origin);
+    throw error;
+  }
 }
 
 async function getServerMarketPrice(env, user, commodity, advisory = null, overrideConfig = null) {
@@ -4073,6 +4141,8 @@ async function runPaperTradingScheduler(env, options = {}) {
       generatedAt: new Date().toISOString(),
       source: "cloudflare-d1-shared-settings"
     });
+    const priceSnapshots = await loadStoredPriceSnapshots(env);
+    await saveLeaderboardSummaryCache(env, settings, transactions, priceSnapshots);
     run.status = "completed";
   } catch (error) {
     run.status = "failed";
@@ -4319,7 +4389,7 @@ async function mergeUserStrategyRecordsD1(env, settings = {}) {
   };
 }
 
-async function handleD1Settings(env, request, origin) {
+async function handleD1Settings(env, request, origin, ctx = null) {
   if (request.method === "GET") {
     const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
     const enrichedSettings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, settings));
@@ -4340,6 +4410,18 @@ async function handleD1Settings(env, request, origin) {
   const settings = canonicalizeSettingsPayload(mergeSettingsPayload(current, body));
   await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, settings);
   await upsertUserStrategyRecordsD1(env, settings);
+  const refresh = async () => {
+    const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+    const priceSnapshots = await loadStoredPriceSnapshots(env);
+    await saveLeaderboardSummaryCache(env, settings, payload.transactions || [], priceSnapshots);
+  };
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(refresh().catch((error) => {
+      console.error("leaderboard cache refresh after settings save failed", error);
+    }));
+  } else {
+    await refresh();
+  }
 
   return jsonResponse({
     commit: null,
@@ -4712,9 +4794,9 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
   }, 200, origin);
 }
 
-async function handleSettingsRoute(env, request, origin) {
+async function handleSettingsRoute(env, request, origin, ctx = null) {
   if (hasRuntimeStore(env)) {
-    return handleD1Settings(env, request, origin);
+    return handleD1Settings(env, request, origin, ctx);
   }
 
   if (request.method === "GET") {
@@ -4879,7 +4961,7 @@ async function handleActualTradesRoute(env, request, origin) {
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const origin = getAllowedOrigin(request, env);
     const url = new URL(request.url);
 
@@ -5013,7 +5095,7 @@ export default {
       }
 
       if (url.pathname === "/settings") {
-        return handleSettingsRoute(env, request, origin);
+        return handleSettingsRoute(env, request, origin, ctx);
       }
 
       if (url.pathname === "/settings/strategy-change") {
@@ -5037,7 +5119,7 @@ export default {
       }
 
       if (url.pathname === "/leaderboard") {
-        return handleLeaderBoardRoute(env, request, origin);
+        return handleLeaderBoardRoute(env, request, origin, ctx);
       }
 
       if (url.pathname === "/open-brain") {
