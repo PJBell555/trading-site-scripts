@@ -127,6 +127,9 @@ const llmVerificationBody = document.querySelector("#llm-verification-body");
 const signalBadge = document.querySelector("#signal-badge");
 const signalStabilityStrip = document.querySelector("#signal-stability-strip");
 const signalExplanationEl = document.querySelector("#signal-explanation");
+const advisoryMarketStatusCardEl = document.querySelector("#advisory-market-status-card");
+const advisoryMarketStatusEl = document.querySelector("#advisory-market-status");
+const advisoryMarketDetailEl = document.querySelector("#advisory-market-detail");
 const convictionEl = document.querySelector("#conviction");
 const localConvictionUpdatedEl = document.querySelector("#local-conviction-updated");
 const llmConvictionEl = document.querySelector("#llm-conviction");
@@ -374,6 +377,7 @@ const BACKEND_ADVISORY_SYNC_MS = 300000;
 const BACKEND_FAILURE_BACKOFF_MS = 300000;
 const BACKEND_REQUEST_TIMEOUT_MS = 10000;
 const CLOUD_SOURCE_FETCH_TIMEOUT_MS = 30000;
+const ADVISORY_SUMMARY_TIMEOUT_MS = 5000;
 const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
 const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
 const CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED = true;
@@ -967,6 +971,7 @@ function setActiveSection(section) {
   if (noticeEl) noticeEl.hidden = section !== "home";
   if (section === "advisories") {
     renderCurrentUserStrategy();
+    loadSharedAdvisorySummary();
     queueAdvisoryChartRender({ immediate: true });
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
@@ -6389,12 +6394,15 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
   }
 
   const signalSide = getSignalSide(signal);
+  const marketStatus = getFuturesMarketStatus();
   const hasExecutablePrice = Boolean(tradePlan?.priceReady && signalSide);
   const clearsThreshold = signalSide && signal.conviction >= tradePlan.entryThreshold;
   const blockedTitle = decision?.title && String(decision.title).startsWith("No trade:")
     ? String(decision.title).replace(/^No trade:\s*/i, "")
     : "";
-  const action = blockedTitle
+  const action = !marketStatus.isOpen
+    ? "Market closed"
+    : blockedTitle
     ? `Blocked: ${blockedTitle}`
     : signalSide && !clearsThreshold
     ? `Waiting ${signal.conviction}/${tradePlan.entryThreshold}`
@@ -6410,6 +6418,12 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     ? `Conviction ${signal.conviction} cleared the threshold ${tradePlan.entryThreshold}. The bot will fire a ${signalSide} order on the next tick.`
     : "Advisory has no directional signal yet (Wait). The bot only opens long or short trades.";
   const detailTooltip = decision.detail || actionTooltip;
+  const statusValue = !marketStatus.isOpen
+    ? `Market closed: ${marketStatus.shortLabel}`
+    : decision.title;
+  const statusTooltip = !marketStatus.isOpen
+    ? marketStatus.detail
+    : detailTooltip;
 
   row.className = "transaction-row queued-trade-row";
   appendStateCell(row, "Q", "Queued / waiting");
@@ -6423,11 +6437,15 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
     { value: hasExecutablePrice ? formatMoney(tradePlan.nextCapital) : UNAVAILABLE_TEXT, title: null },
     { value: hasExecutablePrice ? formatPrice(tradePlan.targetPrice) : UNAVAILABLE_TEXT, title: null },
     { value: hasExecutablePrice && Number.isFinite(Number(tradePlan.stopLoss)) ? formatPrice(Number(tradePlan.stopLoss)) : UNAVAILABLE_TEXT, title: null },
-    { value: UNAVAILABLE_TEXT, title: null },
-    { value: decision.title, title: detailTooltip }
+    { value: "__CURRENT_MARK__", title: null },
+    { value: statusValue, title: statusTooltip }
   ];
   queuedCells.forEach(({ value, title }) => {
     const cell = document.createElement("td");
+    if (value === "__CURRENT_MARK__") {
+      row.append(buildLiveMarkCellForCommodity(commodity));
+      return;
+    }
     cell.textContent = value;
     if (title) cell.title = title;
     row.append(cell);
@@ -6494,6 +6512,19 @@ function buildOpenTradeMarkCell(entry = {}) {
   cell.className = "current-mark-price";
   cell.title = "Current live mark price, not a filled exit price.";
   cell.textContent = `${formatPrice(markPrice)} mark`;
+  return cell;
+}
+
+function buildLiveMarkCellForCommodity(commodity) {
+  const cell = document.createElement("td");
+  const markPrice = getUsableMarketPrice(commodity);
+  if (!Number.isFinite(Number(markPrice)) || Number(markPrice) <= 0) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    return cell;
+  }
+  cell.className = "current-mark-price";
+  cell.title = "Current live mark price, not a filled exit price.";
+  cell.textContent = `${formatPrice(Number(markPrice))} mark`;
   return cell;
 }
 
@@ -7991,6 +8022,15 @@ function getRegimeAssessment(signal, strategy = getCurrentUserStrategy()) {
       )
     )
   };
+}
+
+function renderAdvisoryMarketStatus(status = getFuturesMarketStatus()) {
+  if (!advisoryMarketStatusCardEl || !advisoryMarketStatusEl || !advisoryMarketDetailEl) return;
+  advisoryMarketStatusCardEl.dataset.open = String(status.isOpen);
+  advisoryMarketStatusEl.textContent = status.isOpen
+    ? "Coinbase NOL market open"
+    : `Coinbase NOL market closed - ${status.shortLabel}`;
+  advisoryMarketDetailEl.textContent = `${status.detail} NOL futures trade Sunday-Friday, 6:00 PM-5:00 PM ET, with a daily 5:00-6:00 PM ET break.`;
 }
 
 function getEffectiveCommodityConfig(commodity, user = getCurrentUserProfile()) {
@@ -9928,6 +9968,45 @@ function getAdvisoryHistoryUrl() {
   return `${getHistoryApiUrl()}/advisories`;
 }
 
+function getAdvisorySummaryUrl() {
+  return `${getAdvisoryHistoryUrl()}?summary=1`;
+}
+
+function applyAdvisorySummaryPrices(prices = {}) {
+  Object.entries(prices || {}).forEach(([commodity, snapshot]) => {
+    const normalizedCommodity = normalizeCommodityId(commodity);
+    const snapshotPrice = Number(snapshot?.price);
+    if (!normalizedCommodity || !Number.isFinite(snapshotPrice) || snapshotPrice <= 0) return;
+    const activeProductId = getActivePriceProductId(normalizedCommodity).toLowerCase();
+    const snapshotProductId = String(snapshot.productId || snapshot.ticker || "").toLowerCase();
+    if (activeProductId && snapshotProductId && activeProductId !== snapshotProductId) return;
+
+    latestPrices.set(normalizedCommodity, snapshotPrice);
+    const snapshotTime = new Date(snapshot.fetchedAt || Date.now());
+    latestPriceTimes.set(normalizedCommodity, snapshotTime);
+    latestPriceSources.set(normalizedCommodity, snapshot.ok ? "Cloudflare advisory summary" : "Cloudflare advisory summary stale");
+    latestPriceProductIds.set(normalizedCommodity, snapshot.productId || snapshot.ticker || getActivePriceProductId(normalizedCommodity));
+    rememberPriceTick(normalizedCommodity, snapshotPrice, snapshotTime);
+  });
+}
+
+async function loadSharedAdvisorySummary(manual = false) {
+  if (!hasHistoryBackend()) return false;
+  try {
+    const refreshParam = manual ? "&refresh=1" : "";
+    const response = await fetchWithTimeout(`${getAdvisorySummaryUrl()}${refreshParam}&ts=${Date.now()}`, { cache: "no-store" }, ADVISORY_SUMMARY_TIMEOUT_MS);
+    if (!response.ok) throw new Error("advisory summary unavailable");
+    const data = await response.json();
+    mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
+    applyAdvisorySummaryPrices(data?.prices || {});
+    renderAdvisoryChart();
+    queueSignalRecalculation("advisory-summary", { immediate: true });
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 function mergeAdvisoryHistory(entries = []) {
   const byKey = new Map(advisoryHistory.map((entry) => [entry.snapshotKey, entry]));
 
@@ -11503,6 +11582,7 @@ async function initializeBackendState() {
   const settingsLoad = loadSharedSettings();
   const leaderboardLoad = loadLeaderBoardSummary();
   const schedulerLoad = loadLeaderBoardSchedulerStatus();
+  const advisorySummaryLoad = loadSharedAdvisorySummary();
   const advisoryLoad = loadSharedAdvisoryHistory();
   const microPredictionLoad = loadSharedMicroPredictions();
   const openBrainLoad = loadOpenBrainEventsFromBackend();
@@ -11511,10 +11591,11 @@ async function initializeBackendState() {
     settingsLoad,
     leaderboardLoad,
     schedulerLoad,
-    advisoryLoad,
+    advisorySummaryLoad,
     microPredictionLoad,
     openBrainLoad
   ]);
+  advisoryLoad.catch(() => {});
 
   calculateSignal();
   closeOnlyPaperSweep();
@@ -12920,6 +13001,7 @@ function calculateSignal() {
   signalBadge.style.background = primarySignal.color;
   updateSignalStabilityStrip(primarySignal);
   if (signalExplanationEl) signalExplanationEl.textContent = getSignalExplanation(primarySignal, tradePlan);
+  renderAdvisoryMarketStatus(getFuturesMarketStatus());
   const localBaselineSource = primarySignal.manualOverride === null ? "local heuristic" : "LLM/manual baseline";
   const adjustmentText = primarySignal.karpathyAdjustment
     ? `, Karpathy ${primarySignal.karpathyAdjustment > 0 ? "+" : ""}${primarySignal.karpathyAdjustment}`

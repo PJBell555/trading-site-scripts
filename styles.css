@@ -3230,6 +3230,34 @@ select {
   max-width: 760px;
 }
 
+.market-status-card {
+  border: 1px solid rgba(94, 234, 212, 0.28);
+  background: rgba(20, 184, 166, 0.08);
+  border-radius: 8px;
+  margin: 0 0 14px;
+  padding: 12px 14px;
+}
+
+.market-status-card[data-open="false"] {
+  border-color: rgba(245, 158, 11, 0.35);
+  background: rgba(120, 83, 24, 0.22);
+}
+
+.market-status-card strong {
+  display: block;
+  color: #e6edf7;
+  font-size: 1rem;
+  margin-top: 2px;
+}
+
+.market-status-card small {
+  color: #b8c7df;
+  display: block;
+  font-weight: 800;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+
 .score-row {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

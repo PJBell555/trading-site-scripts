@@ -2651,6 +2651,8 @@ function getLeaderboardCutoff(period = "all") {
 const LEADERBOARD_PERIODS = ["all", "hour", "day", "week", "month", "year"];
 const LEADERBOARD_SUMMARY_CACHE_PREFIX = "leaderboard-summary";
 const LEADERBOARD_SUMMARY_MAX_AGE_MS = 10 * 60 * 1000;
+const ADVISORY_SUMMARY_CACHE_KEY = "advisory-summary";
+const ADVISORY_SUMMARY_MAX_AGE_MS = 2 * 60 * 1000;
 
 function normalizeLeaderboardPeriod(period = "all") {
   const normalized = String(period || "all").toLowerCase();
@@ -2852,6 +2854,80 @@ async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
 
   try {
     const fresh = await refreshLeaderboardSummaryCache(env, [period]);
+    return jsonResponse(fresh, 200, origin);
+  } catch (error) {
+    if (cached) return jsonResponse({ ...cached, error: error.message }, 200, origin);
+    throw error;
+  }
+}
+
+async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summary") {
+  const rows = await env.DB.prepare(`
+    SELECT payload_json
+    FROM advisory_snapshots
+    ORDER BY snapshot_time DESC
+    LIMIT 400
+  `).all();
+  const byCommodity = new Map();
+  getResults(rows)
+    .map((row) => parseStoredJson(row.payload_json))
+    .filter(Boolean)
+    .forEach((snapshot) => {
+      const commodity = normalizeServerCommodityId(snapshot.commodity || "oil");
+      if (!commodity || byCommodity.has(commodity)) return;
+      byCommodity.set(commodity, snapshot);
+    });
+
+  const marketStatus = getUserMarketScheduleStatus(normalizeMarketCalendarSettings({}));
+  const prices = await loadStoredPriceSnapshots(env);
+  return {
+    generatedAt: new Date().toISOString(),
+    source,
+    storage: "d1",
+    snapshots: Array.from(byCommodity.values()),
+    prices,
+    marketStatus
+  };
+}
+
+async function saveAdvisorySummaryCache(env) {
+  const summary = await buildAdvisorySummary(env, "cloudflare-d1-advisory-summary-cache");
+  await saveRuntimeDocumentD1(env, ADVISORY_SUMMARY_CACHE_KEY, summary);
+  return summary;
+}
+
+async function loadAdvisorySummaryCache(env, { allowStale = true } = {}) {
+  const cached = await getRuntimeDocumentD1(env, ADVISORY_SUMMARY_CACHE_KEY, null);
+  if (!cached || !Array.isArray(cached.snapshots)) return null;
+  const generatedAt = getTransactionDate(cached.generatedAt).getTime();
+  const ageMs = Number.isFinite(generatedAt) ? Date.now() - generatedAt : Number.POSITIVE_INFINITY;
+  const fresh = ageMs <= ADVISORY_SUMMARY_MAX_AGE_MS;
+  if (!fresh && !allowStale) return null;
+  return {
+    ...cached,
+    source: fresh ? cached.source || "cloudflare-d1-advisory-summary-cache" : "cloudflare-d1-advisory-summary-cache-stale",
+    cacheAgeMs: Number.isFinite(ageMs) ? ageMs : null,
+    stale: !fresh
+  };
+}
+
+async function handleAdvisorySummaryRoute(env, request, origin, ctx = null) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+  const url = new URL(request.url);
+  const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
+  const cached = !forceRefresh ? await loadAdvisorySummaryCache(env, { allowStale: true }) : null;
+  if (cached && !cached.stale) return jsonResponse(cached, 200, origin);
+  if (cached && ctx?.waitUntil) {
+    ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {
+      console.error("advisory summary cache refresh failed", error);
+    }));
+    return jsonResponse(cached, 200, origin);
+  }
+
+  try {
+    const fresh = await saveAdvisorySummaryCache(env);
     return jsonResponse(fresh, 200, origin);
   } catch (error) {
     if (cached) return jsonResponse({ ...cached, error: error.message }, 200, origin);
@@ -4143,6 +4219,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     });
     const priceSnapshots = await loadStoredPriceSnapshots(env);
     await saveLeaderboardSummaryCache(env, settings, transactions, priceSnapshots);
+    await saveAdvisorySummaryCache(env);
     run.status = "completed";
   } catch (error) {
     run.status = "failed";
@@ -4569,8 +4646,12 @@ async function handleD1UserCapitalUpdate(env, request, origin) {
   return jsonResponse({ storage: "d1", applied, settings: nextSettings }, 200, origin);
 }
 
-async function handleD1Advisories(env, request, origin) {
+async function handleD1Advisories(env, request, origin, ctx = null) {
   if (request.method === "GET") {
+    const url = new URL(request.url);
+    if (url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true") {
+      return handleAdvisorySummaryRoute(env, request, origin, ctx);
+    }
     const payload = await loadAdvisoryPayloadD1(env);
     return jsonResponse({ ...payload, storage: "d1" }, 200, origin);
   }
@@ -4598,6 +4679,11 @@ async function handleD1Advisories(env, request, origin) {
   const snapshots = mergeAdvisorySnapshots(current.snapshots, newSnapshots);
   await upsertAdvisorySnapshotsD1(env, snapshots);
   const saved = await loadAdvisoryPayloadD1(env);
+  if (ctx?.waitUntil) {
+    ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {
+      console.error("advisory summary cache save failed", error);
+    }));
+  }
 
   return jsonResponse({
     commit: null,
@@ -4839,9 +4925,9 @@ async function handleSettingsRoute(env, request, origin, ctx = null) {
   }, 200, origin);
 }
 
-async function handleAdvisoriesRoute(env, request, origin) {
+async function handleAdvisoriesRoute(env, request, origin, ctx = null) {
   if (hasRuntimeStore(env)) {
-    return handleD1Advisories(env, request, origin);
+    return handleD1Advisories(env, request, origin, ctx);
   }
 
   if (request.method === "GET") {
@@ -5107,7 +5193,7 @@ export default {
       }
 
       if (url.pathname === "/advisories") {
-        return handleAdvisoriesRoute(env, request, origin);
+        return handleAdvisoriesRoute(env, request, origin, ctx);
       }
 
       if (url.pathname === "/micro-predictions") {
