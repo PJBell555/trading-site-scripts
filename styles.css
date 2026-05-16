@@ -4325,6 +4325,10 @@ select {
   color: var(--info, #5aa7ff);
 }
 
+.history-table .historical-open-exit {
+  color: var(--muted);
+}
+
 .history-table .protective-stop-cell {
   color: var(--muted);
 }

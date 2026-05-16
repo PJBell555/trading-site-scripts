@@ -6497,6 +6497,7 @@ function buildUnrealizedPnlCell(openTrade, livePrice) {
 
 function getOpenTradeMarkPrice(entry = {}) {
   if (isClosingTransaction(entry) || entry.closedAt) return NaN;
+  if (getTransactionStateCode(entry) !== "O") return NaN;
   const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
   const livePrice = getUsableMarketPrice(commodity);
   return Number.isFinite(Number(livePrice)) && Number(livePrice) > 0 ? Number(livePrice) : NaN;
@@ -6504,6 +6505,12 @@ function getOpenTradeMarkPrice(entry = {}) {
 
 function buildOpenTradeMarkCell(entry = {}) {
   const cell = document.createElement("td");
+  if (getTransactionStateCode(entry) !== "O") {
+    cell.textContent = "Closed later";
+    cell.className = "historical-open-exit";
+    cell.title = "This opening row is already matched to a later close. The filled exit appears on the closing row.";
+    return cell;
+  }
   const markPrice = getOpenTradeMarkPrice(entry);
   if (!Number.isFinite(markPrice)) {
     cell.textContent = UNAVAILABLE_TEXT;
