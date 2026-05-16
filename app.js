@@ -15,6 +15,16 @@ const accessErrorEl = document.querySelector("#access-error");
 const appShellEl = document.querySelector("#app-shell");
 const heroEl = document.querySelector("header.hero");
 const noticeEl = document.querySelector(".notice");
+const homeMarketPreviewEl = document.querySelector("#home-market-preview");
+const homeMarketTitleEl = document.querySelector("#home-market-title");
+const homeMarketDetailEl = document.querySelector("#home-market-detail");
+const homeMarketContractEl = document.querySelector("#home-market-contract");
+const homeMarketPriceEl = document.querySelector("#home-market-price");
+const homeMarketSourceEl = document.querySelector("#home-market-source");
+const homeMarketSwitcherEl = document.querySelector("#home-market-switcher");
+const homeMarketChartEl = document.querySelector("#home-market-chart");
+const homeMarketRangesEl = document.querySelector("#home-market-ranges");
+const homeMarketAlertsEl = document.querySelector("#home-market-alerts");
 const menuButtons = document.querySelectorAll("[data-section-target]");
 const appSections = document.querySelectorAll("[data-app-section]");
 const userManagementStatusEl = document.querySelector("#user-management-status");
@@ -486,6 +496,14 @@ const ADVISORY_PERIODS = {
   month: 31 * 24 * 60 * 60 * 1000,
   year: 366 * 24 * 60 * 60 * 1000
 };
+const HOME_MARKET_PERIODS = {
+  hour: { label: "1H", ms: 60 * 60 * 1000 },
+  day: { label: "1D", ms: 24 * 60 * 60 * 1000 },
+  week: { label: "1W", ms: 7 * 24 * 60 * 60 * 1000 },
+  month: { label: "1M", ms: 31 * 24 * 60 * 60 * 1000 },
+  all: { label: "All", ms: null }
+};
+const HOME_MARKET_REFRESH_MS = 60000;
 const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
 const ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES = 8;
 const ADVISORY_OUTCOME_LEARNER_SAMPLE_SIZE = 160;
@@ -709,6 +727,10 @@ let historyFiltersTouched = false;
 let expandedTransactionId = null;
 let advisoryCommodityFilter = "oil";
 let advisoryPeriodFilter = "hour";
+let homeMarketCommodity = "oil";
+let homeMarketPeriod = "day";
+let homeMarketRefreshTimer = null;
+let lastHomeMarketRenderAt = 0;
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
@@ -969,6 +991,8 @@ function setActiveSection(section) {
 
   if (heroEl) heroEl.hidden = section !== "home";
   if (noticeEl) noticeEl.hidden = section !== "home";
+  if (homeMarketPreviewEl) homeMarketPreviewEl.hidden = section !== "home";
+  if (section === "home") refreshHomeMarketPreview();
   if (section === "advisories") {
     renderCurrentUserStrategy();
     loadSharedAdvisorySummary();
@@ -10007,6 +10031,7 @@ async function loadSharedAdvisorySummary(manual = false) {
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
     applyAdvisorySummaryPrices(data?.prices || {});
     renderAdvisoryChart();
+    renderHomeMarketPreview();
     queueSignalRecalculation("advisory-summary", { immediate: true });
     return true;
   } catch (error) {
@@ -11075,6 +11100,280 @@ function drawChartMessage(context, canvas, message) {
   context.font = "700 28px Aptos, Segoe UI, sans-serif";
   context.textAlign = "center";
   context.fillText(message, canvas.width / 2, canvas.height / 2);
+}
+
+function getHomeMarketPeriodStart() {
+  const option = HOME_MARKET_PERIODS[homeMarketPeriod] || HOME_MARKET_PERIODS.day;
+  return option.ms ? Date.now() - option.ms : 0;
+}
+
+function getHomeMarketSamples() {
+  const start = getHomeMarketPeriodStart();
+  const byTime = new Map();
+
+  advisoryHistory
+    .filter((entry) => {
+      const time = getTransactionDate(entry.time).getTime();
+      const price = Number(entry.price);
+      return entry.commodity === homeMarketCommodity
+        && Number.isFinite(time)
+        && time >= start
+        && Number.isFinite(price)
+        && price > 0;
+    })
+    .forEach((entry) => {
+      const time = getTransactionDate(entry.time).getTime();
+      const bucket = Math.floor(time / 60000);
+      const price = Number(entry.price);
+      byTime.set(bucket, {
+        time,
+        price
+      });
+    });
+
+  const currentPrice = confirmedLivePrices.has(homeMarketCommodity)
+    ? confirmedLivePrices.get(homeMarketCommodity)
+    : latestPrices.get(homeMarketCommodity);
+  const currentTime = confirmedLivePriceTimes.has(homeMarketCommodity)
+    ? confirmedLivePriceTimes.get(homeMarketCommodity)
+    : latestPriceTimes.get(homeMarketCommodity);
+  const currentTimestamp = getTransactionDate(currentTime || new Date()).getTime();
+  if (Number.isFinite(currentPrice) && currentPrice > 0 && Number.isFinite(currentTimestamp)) {
+    byTime.set(Math.floor(currentTimestamp / 60000), {
+      time: currentTimestamp,
+      price: currentPrice
+    });
+  }
+
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+function renderHomeMarketControls() {
+  if (homeMarketSwitcherEl && !homeMarketSwitcherEl.children.length) {
+    commodities.forEach(({ id, name }) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.homeMarketCommodity = id;
+      button.textContent = name;
+      homeMarketSwitcherEl.append(button);
+    });
+  }
+
+  if (homeMarketRangesEl && !homeMarketRangesEl.children.length) {
+    Object.entries(HOME_MARKET_PERIODS).forEach(([key, option]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.homeMarketPeriod = key;
+      button.textContent = option.label;
+      homeMarketRangesEl.append(button);
+    });
+  }
+
+  homeMarketSwitcherEl?.querySelectorAll("[data-home-market-commodity]").forEach((button) => {
+    button.dataset.active = String(button.dataset.homeMarketCommodity === homeMarketCommodity);
+  });
+  homeMarketRangesEl?.querySelectorAll("[data-home-market-period]").forEach((button) => {
+    button.dataset.active = String(button.dataset.homeMarketPeriod === homeMarketPeriod);
+  });
+}
+
+function getHomeMarketChange(samples) {
+  if (samples.length < 2) return { value: 0, percent: 0 };
+  const first = samples[0].price;
+  const last = samples[samples.length - 1].price;
+  const value = last - first;
+  return {
+    value,
+    percent: first ? (value / first) * 100 : 0
+  };
+}
+
+function renderHomeMarketAlerts(config) {
+  if (!homeMarketAlertsEl) return;
+  homeMarketAlertsEl.innerHTML = "";
+
+  const expiry = config.contractExpiresAt ? getTransactionDate(config.contractExpiresAt) : null;
+  if (expiry && !Number.isNaN(expiry.getTime())) {
+    const msUntilExpiry = expiry.getTime() - Date.now();
+    const expiryCard = document.createElement("article");
+    expiryCard.className = "home-market-alert";
+    expiryCard.dataset.kind = "expiry";
+    const title = document.createElement("strong");
+    const detail = document.createElement("p");
+    if (config.rolledFromTicker) {
+      title.textContent = "Contract roll active";
+      detail.textContent = `${config.rolledFromTicker} is inside the roll window. ComHedge now follows ${config.ticker || config.productId} (${config.contractMonth}) for new advisory prices and paper trades.`;
+    } else if (msUntilExpiry > 0 && msUntilExpiry <= 7 * 24 * 60 * 60 * 1000) {
+      title.textContent = `This contract expires in ${formatDuration(msUntilExpiry)}`;
+      detail.textContent = `${config.ticker || config.productId} expires ${formatTradeTime(expiry)}. The profile roll window controls when ComHedge moves to the next month.`;
+    } else {
+      title.textContent = `${config.ticker || config.productId || "Contract"} active`;
+      detail.textContent = config.contractMonth ? `${config.contractMonth} contract selected.` : "Front contract selected.";
+    }
+    expiryCard.append(title, detail);
+    homeMarketAlertsEl.append(expiryCard);
+  }
+
+  const marketStatus = getFuturesMarketStatus();
+  const marketCard = document.createElement("article");
+  marketCard.className = "home-market-alert";
+  marketCard.dataset.kind = marketStatus.isOpen ? "open" : "closed";
+  const marketTitle = document.createElement("strong");
+  const marketDetail = document.createElement("p");
+  marketTitle.textContent = marketStatus.isOpen ? "Market is open" : "Market is closed";
+  marketDetail.textContent = marketStatus.isOpen
+    ? `${marketStatus.detail} Trading pauses daily from 5 PM-6 PM ET.`
+    : `${marketStatus.detail} Trading resumes before new paper entries can open.`;
+  marketCard.append(marketTitle, marketDetail);
+  homeMarketAlertsEl.append(marketCard);
+}
+
+function drawHomeMarketChart(samples) {
+  if (!homeMarketChartEl) return;
+
+  const rect = homeMarketChartEl.getBoundingClientRect();
+  const scale = window.devicePixelRatio || 1;
+  const width = Math.max(640, Math.round((rect.width || 900) * scale));
+  const height = Math.max(300, Math.round((rect.height || 320) * scale));
+  homeMarketChartEl.width = width;
+  homeMarketChartEl.height = height;
+
+  const context = homeMarketChartEl.getContext("2d");
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, width, height);
+
+  if (!samples.length) {
+    context.fillStyle = "#334155";
+    context.font = `700 ${20 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.textAlign = "center";
+    context.fillText("Waiting for server price history", width / 2, height / 2);
+    return;
+  }
+
+  const padding = { top: 20 * scale, right: 34 * scale, bottom: 58 * scale, left: 34 * scale };
+  const volumeHeight = 42 * scale;
+  const plotHeight = height - padding.top - padding.bottom - volumeHeight;
+  const plotWidth = width - padding.left - padding.right;
+  const times = samples.map((sample) => sample.time);
+  const prices = samples.map((sample) => sample.price);
+  const minTime = Math.min(...times);
+  const maxTime = Math.max(...times);
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const range = Math.max(maxPrice - minPrice, maxPrice * 0.006, 0.5);
+  const minY = minPrice - range * 0.16;
+  const maxY = maxPrice + range * 0.16;
+  const yRange = Math.max(maxY - minY, 0.01);
+  const positive = prices[prices.length - 1] >= prices[0];
+  const lineColor = positive ? "#00875f" : "#dc2626";
+  const fillColor = positive ? "rgba(0, 135, 95, 0.12)" : "rgba(220, 38, 38, 0.12)";
+  const xFor = (time) => padding.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
+  const yFor = (price) => padding.top + (1 - ((price - minY) / yRange)) * plotHeight;
+  const zeroY = yFor(prices[0]);
+
+  context.strokeStyle = "rgba(15, 23, 42, 0.36)";
+  context.setLineDash([2 * scale, 8 * scale]);
+  context.beginPath();
+  context.moveTo(padding.left, zeroY);
+  context.lineTo(width - padding.right, zeroY);
+  context.stroke();
+  context.setLineDash([]);
+
+  context.beginPath();
+  prices.forEach((price, index) => {
+    const x = xFor(times[index]);
+    const y = yFor(price);
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.lineTo(xFor(times[times.length - 1]), padding.top + plotHeight);
+  context.lineTo(xFor(times[0]), padding.top + plotHeight);
+  context.closePath();
+  context.fillStyle = fillColor;
+  context.fill();
+
+  context.beginPath();
+  prices.forEach((price, index) => {
+    const x = xFor(times[index]);
+    const y = yFor(price);
+    if (index === 0) context.moveTo(x, y);
+    else context.lineTo(x, y);
+  });
+  context.strokeStyle = lineColor;
+  context.lineWidth = 3 * scale;
+  context.stroke();
+
+  context.fillStyle = "#475569";
+  context.font = `${13 * scale}px Aptos, Segoe UI, sans-serif`;
+  context.textAlign = "right";
+  context.fillText(formatPrice(maxPrice), width - padding.right, yFor(maxPrice) - 8 * scale);
+  context.textAlign = "left";
+  context.fillText(formatPrice(minPrice), padding.left, yFor(minPrice) + 18 * scale);
+
+  const volumeTop = height - padding.bottom + 18 * scale;
+  const maxMove = Math.max(...samples.map((sample, index) => (
+    index === 0 ? 0 : Math.abs(sample.price - samples[index - 1].price)
+  )), 0.01);
+  const barCount = Math.min(26, samples.length);
+  const step = Math.max(1, Math.floor(samples.length / barCount));
+  const selected = samples.filter((_, index) => index % step === 0).slice(-barCount);
+  const barGap = 6 * scale;
+  const barWidth = Math.max(4 * scale, (plotWidth - (selected.length - 1) * barGap) / Math.max(selected.length, 1));
+  selected.forEach((sample, index) => {
+    const previous = index > 0 ? selected[index - 1].price : sample.price;
+    const move = Math.abs(sample.price - previous);
+    const barHeight = Math.max(7 * scale, (move / maxMove) * 34 * scale);
+    const x = padding.left + index * (barWidth + barGap);
+    context.fillStyle = "rgba(148, 163, 184, 0.42)";
+    context.fillRect(x, volumeTop + 34 * scale - barHeight, barWidth, barHeight);
+  });
+}
+
+function renderHomeMarketPreview() {
+  if (!homeMarketPreviewEl) return;
+  renderHomeMarketControls();
+
+  const commodity = commodities.find(({ id }) => id === homeMarketCommodity) || commodities[0];
+  const config = getEffectiveCommodityConfig(commodity.id);
+  const samples = getHomeMarketSamples();
+  const latest = samples[samples.length - 1];
+  const change = getHomeMarketChange(samples);
+  const positive = change.value >= 0;
+
+  if (homeMarketTitleEl) homeMarketTitleEl.textContent = `${commodity.name} Futures`;
+  if (homeMarketContractEl) {
+    homeMarketContractEl.textContent = [config.ticker, config.contractMonth].filter(Boolean).join(" / ") || "Reference";
+  }
+  if (homeMarketPriceEl) {
+    homeMarketPriceEl.textContent = latest ? formatPrice(latest.price) : UNAVAILABLE_TEXT;
+    homeMarketPriceEl.dataset.direction = positive ? "up" : "down";
+  }
+  if (homeMarketDetailEl) {
+    const rangeLabel = HOME_MARKET_PERIODS[homeMarketPeriod]?.label || "1D";
+    homeMarketDetailEl.textContent = latest
+      ? `${positive ? "Up" : "Down"} ${formatSignedMoney(change.value)} (${formatPercent(change.percent)}) over ${rangeLabel}`
+      : "Waiting for Cloudflare price history.";
+    homeMarketDetailEl.dataset.direction = positive ? "up" : "down";
+  }
+  if (homeMarketSourceEl) {
+    const updatedAt = latest ? formatPriceTime(latest.time) : "not available";
+    homeMarketSourceEl.textContent = `Server snapshot / ${updatedAt} / refreshes about once per minute`;
+  }
+
+  drawHomeMarketChart(samples);
+  renderHomeMarketAlerts(config);
+  lastHomeMarketRenderAt = Date.now();
+}
+
+async function refreshHomeMarketPreview() {
+  if (!homeMarketPreviewEl || activeSection !== "home") return;
+  renderHomeMarketPreview();
+  const tasks = [];
+  if (hasHistoryBackend()) tasks.push(loadSharedAdvisorySummary());
+  tasks.push(loadSnapshotPrices().then((data) => applyAdvisorySummaryPrices(data?.prices || {})));
+  await Promise.allSettled(tasks);
+  renderHomeMarketPreview();
 }
 
 function renderAdvisoryChart() {
@@ -13572,6 +13871,23 @@ advisoryPeriodFiltersEl.addEventListener("click", (event) => {
 });
 syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(true));
 advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
+homeMarketSwitcherEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-home-market-commodity]");
+  if (!button) return;
+  const commodity = normalizeCommodityId(button.dataset.homeMarketCommodity);
+  if (!commodity) return;
+  homeMarketCommodity = commodity;
+  renderHomeMarketPreview();
+  refreshHomeMarketPreview();
+});
+homeMarketRangesEl?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-home-market-period]");
+  if (!button) return;
+  const period = HOME_MARKET_PERIODS[button.dataset.homeMarketPeriod] ? button.dataset.homeMarketPeriod : "day";
+  homeMarketPeriod = period;
+  renderHomeMarketPreview();
+  refreshHomeMarketPreview();
+});
 cleanHistoryEl.addEventListener("click", cleanSharedTransactionHistory);
 exportHistoryEl.addEventListener("click", downloadSharedHistory);
 leaderboardRefreshEl?.addEventListener("click", () => {
@@ -13812,11 +14128,13 @@ function initializeApp() {
   window.setInterval(autoSyncTransactionHistory, BACKEND_TRANSACTION_SYNC_MS);
   window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
   window.setInterval(loadSharedMicroPredictions, BACKEND_ADVISORY_SYNC_MS);
+  homeMarketRefreshTimer = window.setInterval(refreshHomeMarketPreview, HOME_MARKET_REFRESH_MS);
   window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
   window.setInterval(heartbeatCurrentSession, SESSION_HEARTBEAT_MS);
   // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
   window.setInterval(() => queuePaperSweep(), Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
   window.addEventListener("resize", () => {
+    renderHomeMarketPreview();
     queueAdvisoryChartRender();
     renderLeaderBoard();
   });

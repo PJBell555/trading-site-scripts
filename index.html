@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ComHedge 2</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg?v=comhedge-arrow-1">
-  <link rel="stylesheet" href="./styles.css?v=comhedge-consensus-gate-1">
+  <link rel="stylesheet" href="./styles.css?v=comhedge-home-market-preview-20260516-1">
 </head>
 <body>
   <section class="access-gate" id="access-gate" aria-label="ComHedge 2 password access">
@@ -96,6 +96,27 @@
         <span>
           Educational use only. This tool offers market commentary, not personalized investment advice, and it does not place trades or guarantee outcomes.
         </span>
+      </section>
+
+      <section class="home-market-preview" id="home-market-preview" aria-label="Coinbase futures market preview">
+        <div class="home-market-head">
+          <div>
+            <p class="eyebrow">Coinbase futures preview</p>
+            <h2 id="home-market-title">Oil futures</h2>
+            <p id="home-market-detail">Waiting for Cloudflare price history.</p>
+          </div>
+          <div class="home-market-price">
+            <span id="home-market-contract">-</span>
+            <strong id="home-market-price">Not available</strong>
+            <small id="home-market-source">Updates about once per minute.</small>
+          </div>
+        </div>
+        <div class="home-market-switcher" id="home-market-switcher" aria-label="Select commodity chart"></div>
+        <div class="home-market-chart-shell">
+          <canvas id="home-market-chart" width="1200" height="420" aria-label="Commodity price preview chart"></canvas>
+        </div>
+        <div class="home-market-ranges" id="home-market-ranges" aria-label="Chart time range"></div>
+        <div class="home-market-alerts" id="home-market-alerts" aria-label="Market status alerts"></div>
       </section>
 
     <section class="band leaderboard-page" data-app-section="leaderboard" aria-label="ComHedge leader board">
@@ -1738,6 +1759,6 @@
   </datalist>
 
   <script src="./transactions-data.js?v=comhedge-ledger-local-preview-1"></script>
-  <script src="./app.js?v=comhedge-june-oil-roll-price-contract-20260515-1"></script>
+  <script src="./app.js?v=comhedge-home-market-preview-20260516-1"></script>
 </body>
 </html>
