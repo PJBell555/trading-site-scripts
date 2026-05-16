@@ -4740,6 +4740,104 @@ ol {
   grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
 }
 
+.app-shell[data-active-section="home"] .app-main {
+  padding-top: 10px;
+}
+
+.app-shell[data-active-section="home"] .hero {
+  align-items: center;
+  gap: 18px;
+  padding: 14px 18px;
+}
+
+.app-shell[data-active-section="home"] .hero .eyebrow {
+  margin-bottom: 6px;
+  font-size: 0.68rem;
+}
+
+.app-shell[data-active-section="home"] .hero h1 {
+  max-width: 18ch;
+  font-size: clamp(1.8rem, 3.15vw, 3.05rem);
+  line-height: 0.98;
+}
+
+.app-shell[data-active-section="home"] .hero .lede {
+  margin-top: 10px;
+  max-width: 62ch;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+
+.app-shell[data-active-section="home"] .hero-stats {
+  gap: 10px;
+}
+
+.app-shell[data-active-section="home"] .hero-stats div {
+  padding: 10px 12px;
+}
+
+.app-shell[data-active-section="home"] .hero-stats strong {
+  font-size: 1.08rem;
+  line-height: 1.25;
+}
+
+.app-shell[data-active-section="home"] .notice {
+  align-items: center;
+  margin-top: 8px;
+  padding: 9px 12px;
+  font-size: 0.78rem;
+}
+
+.app-shell[data-active-section="home"] .home-market-preview {
+  margin-top: 8px;
+  padding: 16px 20px 16px;
+}
+
+.app-shell[data-active-section="home"] .home-market-head h2 {
+  font-size: clamp(1.45rem, 2.3vw, 2rem);
+}
+
+.app-shell[data-active-section="home"] .home-market-head .eyebrow {
+  margin-bottom: 6px;
+  font-size: 0.66rem;
+}
+
+.app-shell[data-active-section="home"] .home-market-detail {
+  margin-top: 4px;
+  font-size: 0.82rem;
+}
+
+.app-shell[data-active-section="home"] .home-market-price strong {
+  font-size: clamp(1.85rem, 3.1vw, 2.75rem);
+}
+
+.app-shell[data-active-section="home"] .home-market-price small {
+  font-size: 0.72rem;
+}
+
+.app-shell[data-active-section="home"] .home-market-switcher {
+  gap: 7px;
+  margin-top: 12px;
+}
+
+.app-shell[data-active-section="home"] .home-market-switcher button {
+  padding: 7px 10px;
+  font-size: 0.82rem;
+}
+
+.app-shell[data-active-section="home"] .home-market-chart-shell {
+  margin-top: 10px;
+  height: clamp(330px, 43vw, 470px);
+}
+
+.app-shell[data-active-section="home"] .home-market-ranges {
+  margin-top: 8px;
+}
+
+.app-shell[data-active-section="home"] .home-market-ranges button {
+  min-height: 34px;
+}
+
 /* Dark theme readability: avoid low-contrast gray-on-gray in dense panels. */
 .app-main .risk-box label,
 .app-main .risk-box .stat-label,
