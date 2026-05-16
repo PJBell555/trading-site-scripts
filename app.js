@@ -524,6 +524,7 @@ const DEFAULT_USER_STRATEGY = {
   breakoutMinEdgePercent: 55,
   breakoutMinVolatilityBps: 0.8,
   breakoutMinMoveBps: 3,
+  trendCaptureMode: true,
   trendDayDirectionalHold: true,
   blockLongsInFallingTrend: true,
   volatilityAwareStops: true,
@@ -3208,6 +3209,7 @@ function normalizeUserStrategy(strategy = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(merged.breakoutMinEdgePercent) || DEFAULT_USER_STRATEGY.breakoutMinEdgePercent), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
     breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50),
+    trendCaptureMode: merged.trendCaptureMode !== false,
     trendDayDirectionalHold: merged.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: merged.blockLongsInFallingTrend !== false,
     volatilityAwareStops: merged.volatilityAwareStops !== false,
@@ -3424,6 +3426,7 @@ function getStrategyChangeSummary(before, after) {
   if (before.breakoutMinEdgePercent !== after.breakoutMinEdgePercent) changes.push("breakout edge minimum");
   if (before.breakoutMinVolatilityBps !== after.breakoutMinVolatilityBps) changes.push("breakout volatility minimum");
   if (before.breakoutMinMoveBps !== after.breakoutMinMoveBps) changes.push("breakout move minimum");
+  if (before.trendCaptureMode !== after.trendCaptureMode) changes.push(after.trendCaptureMode ? "enabled trend capture mode" : "disabled trend capture mode");
   if (before.trendDayDirectionalHold !== after.trendDayDirectionalHold) changes.push(after.trendDayDirectionalHold ? "enabled trend-day directional hold" : "disabled trend-day directional hold");
   if (before.blockLongsInFallingTrend !== after.blockLongsInFallingTrend) changes.push(after.blockLongsInFallingTrend ? "enabled falling-trend long block" : "disabled falling-trend long block");
   if (before.volatilityAwareStops !== after.volatilityAwareStops) changes.push(after.volatilityAwareStops ? "enabled volatility-aware stops" : "disabled volatility-aware stops");
@@ -4953,6 +4956,7 @@ function saveUserStrategySettings(user, container) {
     breakoutMinEdgePercent: container.querySelector("[data-strategy-field='breakoutMinEdgePercent']")?.value,
     breakoutMinVolatilityBps: container.querySelector("[data-strategy-field='breakoutMinVolatilityBps']")?.value,
     breakoutMinMoveBps: container.querySelector("[data-strategy-field='breakoutMinMoveBps']")?.value,
+    trendCaptureMode: container.querySelector("[data-strategy-field='trendCaptureMode']")?.checked,
     noChaseMoveBps: container.querySelector("[data-strategy-field='noChaseMoveBps']")?.value,
     pullbackMinRetraceBps: container.querySelector("[data-strategy-field='pullbackMinRetraceBps']")?.value,
     profitLockMinMoveBps: container.querySelector("[data-strategy-field='profitLockMinMoveBps']")?.value,
@@ -5135,6 +5139,7 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "breakoutMinEdgePercent", label: "Breakout minimum edge", value: strategy.breakoutMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%", help: "Minimum micro predictor probability required before the breakout override can participate. Applies to both long and short breakouts." },
     { key: "breakoutMinVolatilityBps", label: "Breakout minimum volatility", value: strategy.breakoutMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps", help: "Minimum live tick volatility required. This prevents breakout trades in dead or flat tape." },
     { key: "breakoutMinMoveBps", label: "Breakout minimum move", value: strategy.breakoutMinMoveBps, type: "number", min: 0, max: 50, step: 0.1, suffix: " bps", help: "Minimum 60-second directional move. Positive move can trigger long, negative move can trigger short." },
+    { key: "trendCaptureMode", label: "Trend capture mode", value: strategy.trendCaptureMode, type: "checkbox", on: "Follows confirmed trend days", off: "Off", help: "Lets the Cloudflare scheduler stay with a clear directional day, re-enter after trend-side stopouts, and avoid treating every pullback as a reason to abandon the broader move. Martingale sizing still works the normal way." },
     { key: "noChaseMoveBps", label: "No-chase move threshold", value: strategy.noChaseMoveBps, type: "number", min: 0, max: 100, step: 0.1, suffix: " bps", help: "If the recent move is larger than this threshold, the scheduler will not enter in the same direction without a pullback." },
     { key: "pullbackMinRetraceBps", label: "Pullback minimum retrace", value: strategy.pullbackMinRetraceBps, type: "number", min: 0, max: 30, step: 0.1, suffix: " bps", help: "Minimum short pullback or bounce required before entering with the trend." },
     { key: "profitLockMinMoveBps", label: "Profit-lock minimum move", value: strategy.profitLockMinMoveBps, type: "number", min: 0, max: 100, step: 0.1, suffix: " bps", help: "Minimum favorable move before the scheduler can move the stop to lock profit." },
@@ -5417,7 +5422,7 @@ function renderAdvisorDecisionDetail(signal = lastPrimarySignal, tradePlan = las
     },
     {
       title: "Execution quality gates",
-      body: `Trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
+      body: `Trend capture mode is ${strategy.trendCaptureMode ? "on" : "off"}, trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
     },
     {
       title: "Cloudflare scheduler",
@@ -5862,6 +5867,10 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="trendDayBias" type="checkbox"${strategy.trendDayBias ? " checked" : ""} title="Keeps new entries aligned with the broader tape instead of fighting a clear trend day.">
         Trend-day bias <span class="profile-field-hint" title="Avoids shorts in bullish trend days and avoids longs in bearish trend days unless the tape confirms a real reversal or breakdown.">avoids counter-trend entries</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="trendCaptureMode" type="checkbox"${strategy.trendCaptureMode ? " checked" : ""} title="Lets Cloudflare stay with a confirmed trend day and re-enter after trend-side stopouts without changing the Martingale step rules.">
+        Trend capture mode <span class="profile-field-hint" title="Designed for days like a sustained oil run from low to high: use live microstructure and advisory tape to keep trading with the broader move instead of waiting only for the slow advisory threshold.">follows confirmed trend days</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="noChaseEntries" type="checkbox"${strategy.noChaseEntries ? " checked" : ""} title="Blocks entries after a fast move has already run, unless breakout participation explicitly confirms it.">

@@ -2214,6 +2214,7 @@ function getServerStrategySettings(user = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(strategy.breakoutMinEdgePercent) || 55), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
     breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
+    trendCaptureMode: strategy.trendCaptureMode !== false,
     trendDayDirectionalHold: strategy.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: strategy.blockLongsInFallingTrend !== false,
     volatilityAwareStops: strategy.volatilityAwareStops !== false,
@@ -3165,11 +3166,19 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
       || bearishAdvisoryTape
     )
   );
+  const longContinuationConfirmed = Boolean(
+    isBullishTrend
+    && (
+      (micro?.ready && upEdge >= 55 && (ret60 >= 2 || ret30 > 0 || vwapDistance > 0))
+      || bullishAdvisoryTape
+    )
+  );
   return {
     side: isBearishTrend && !isBullishTrend ? "short" : isBullishTrend && !isBearishTrend ? "long" : null,
     isBearishTrend,
     isBullishTrend,
     longReversalConfirmed,
+    longContinuationConfirmed,
     shortContinuationConfirmed,
     upEdge,
     downEdge,
@@ -3193,6 +3202,16 @@ function shouldHoldServerDirectionalShort(openTrade, price, strategy, directiona
   const volatilityBufferBps = clamp(Math.max(20, Number(directionalContext.volatility || 0) * 12), 20, 80);
   const hardStop = stopPrice * (1 + (volatilityBufferBps / 10000));
   return price < hardStop;
+}
+
+function shouldHoldServerDirectionalLong(openTrade, price, strategy, directionalContext) {
+  if (!strategy.trendCaptureMode || openTrade.side !== "long" || !directionalContext?.longContinuationConfirmed) return false;
+  const stopPrice = Number(openTrade.stopPrice);
+  const entryPrice = Number(openTrade.entryPrice ?? openTrade.price);
+  if (!Number.isFinite(price) || !Number.isFinite(stopPrice) || !Number.isFinite(entryPrice) || entryPrice <= 0) return false;
+  const volatilityBufferBps = clamp(Math.max(20, Number(directionalContext.volatility || 0) * 12), 20, 80);
+  const hardStop = stopPrice * (1 - (volatilityBufferBps / 10000));
+  return price > hardStop;
 }
 
 function applyServerProfitLockStop(openTrade, price, strategy, directionalContext) {
@@ -3282,6 +3301,55 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
   return { ok: true, reason: "entry quality accepted" };
 }
 
+function getServerTrendCaptureSignal(signal, micro, strategy, directionalContext, advisoryBreakout = null) {
+  if (!strategy.trendCaptureMode || !directionalContext) return null;
+  const advisorySide = signal?.side || null;
+  const advisoryConviction = Number(signal?.conviction) || 0;
+  const minEdge = Math.max(55, Math.min(Number(strategy.breakoutMinEdgePercent) || 55, Number(strategy.trendingMinEdgePercent) || 58));
+  const minVolatility = Math.max(0.5, Number(strategy.breakoutMinVolatilityBps) || 0.8);
+  const minMove = Math.max(4, Number(strategy.breakoutMinMoveBps) || 3);
+  const longMoveConfirmed = directionalContext.ret60 >= minMove
+    || directionalContext.ret180 >= minMove
+    || directionalContext.recentMove >= minMove
+    || directionalContext.longShare >= 55;
+  const shortMoveConfirmed = directionalContext.ret60 <= -minMove
+    || directionalContext.ret180 <= -minMove
+    || directionalContext.recentMove <= -minMove
+    || directionalContext.shortShare >= 55;
+
+  if (
+    directionalContext.longContinuationConfirmed
+    && directionalContext.upEdge >= minEdge
+    && directionalContext.volatility >= minVolatility
+    && longMoveConfirmed
+    && !(advisorySide === "short" && advisoryConviction >= 65)
+  ) {
+    return {
+      side: "long",
+      label: "Trend Capture Long",
+      conviction: Math.max(advisoryConviction, minEdge),
+      detail: `Trend capture: bullish day tape, up edge ${directionalContext.upEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
+    };
+  }
+
+  if (
+    directionalContext.shortContinuationConfirmed
+    && directionalContext.downEdge >= minEdge
+    && directionalContext.volatility >= minVolatility
+    && shortMoveConfirmed
+    && !(advisorySide === "long" && advisoryConviction >= 65)
+  ) {
+    return {
+      side: "short",
+      label: "Trend Capture Short",
+      conviction: Math.max(advisoryConviction, minEdge),
+      detail: `Trend capture: bearish day tape, down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
+    };
+  }
+
+  return null;
+}
+
 async function recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy, directionalContext, advisoryBreakout, reason }) {
   if (!strategy.missedOpportunityLearner || !advisoryBreakout?.ready) return;
   const moveBps = Number(advisoryBreakout.moveBps) || Number(directionalContext?.recentMove) || 0;
@@ -3317,18 +3385,38 @@ function getLatestServerClosedTrade(transactions = [], userEmail, commodity, sid
 }
 
 function getServerPostStopReentrySignal(transactions, userEmail, commodity, signal, strategy, directionalContext) {
-  if (!strategy.postStopShortReentry || !directionalContext?.shortContinuationConfirmed) return null;
-  const stoppedShort = getLatestServerClosedTrade(transactions, userEmail, commodity, "short", "COVER STOP");
-  if (!stoppedShort) return null;
-  const stoppedAt = getTransactionDate(stoppedShort.closedAt || stoppedShort.time).getTime();
-  if (!Number.isFinite(stoppedAt) || Date.now() - stoppedAt > 90 * 60 * 1000) return null;
-  if (signal?.side === "long" && Number(signal.conviction) >= 58 && !directionalContext.isBearishTrend) return null;
-  return {
-    side: "short",
-    label: "Post-stop Short Re-entry",
-    conviction: Math.max(Number(signal?.conviction) || 0, 56),
-    detail: `Post-stop re-entry: prior short was stopped ${Math.round((Date.now() - stoppedAt) / 60000)} minute(s) ago, but broader tape remains bearish; down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps.`
-  };
+  if (strategy.postStopShortReentry && directionalContext?.shortContinuationConfirmed) {
+    const stoppedShort = getLatestServerClosedTrade(transactions, userEmail, commodity, "short", "COVER STOP");
+    if (stoppedShort) {
+      const stoppedAt = getTransactionDate(stoppedShort.closedAt || stoppedShort.time).getTime();
+      if (Number.isFinite(stoppedAt) && Date.now() - stoppedAt <= 90 * 60 * 1000) {
+        if (!(signal?.side === "long" && Number(signal.conviction) >= 58 && !directionalContext.isBearishTrend)) {
+          return {
+            side: "short",
+            label: "Post-stop Short Re-entry",
+            conviction: Math.max(Number(signal?.conviction) || 0, 56),
+            detail: `Post-stop re-entry: prior short was stopped ${Math.round((Date.now() - stoppedAt) / 60000)} minute(s) ago, but broader tape remains bearish; down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps.`
+          };
+        }
+      }
+    }
+  }
+
+  if (strategy.trendCaptureMode && directionalContext?.longContinuationConfirmed) {
+    const stoppedLong = getLatestServerClosedTrade(transactions, userEmail, commodity, "long", "SELL STOP");
+    if (!stoppedLong) return null;
+    const stoppedAt = getTransactionDate(stoppedLong.closedAt || stoppedLong.time).getTime();
+    if (!Number.isFinite(stoppedAt) || Date.now() - stoppedAt > 90 * 60 * 1000) return null;
+    if (signal?.side === "short" && Number(signal.conviction) >= 58 && !directionalContext.isBullishTrend) return null;
+    return {
+      side: "long",
+      label: "Post-stop Long Re-entry",
+      conviction: Math.max(Number(signal?.conviction) || 0, 56),
+      detail: `Trend capture re-entry: prior long was stopped ${Math.round((Date.now() - stoppedAt) / 60000)} minute(s) ago, but broader tape remains bullish; up edge ${directionalContext.upEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps.`
+    };
+  }
+
+  return null;
 }
 
 function getServerRegimeAssessment(signal, micro, strategy) {
@@ -3710,6 +3798,7 @@ async function runPaperTradingScheduler(env, options = {}) {
         const signal = getServerSignal(advisory);
         const micro = (strategySettings.regimeAware
           || strategySettings.breakoutParticipation
+          || strategySettings.trendCaptureMode
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.volatilityAwareStops
@@ -3722,6 +3811,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? await getLatestServerMicroPrediction(env, commodity)
           : null;
         const advisoryBreakout = (strategySettings.breakoutParticipation
+          || strategySettings.trendCaptureMode
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.postStopShortReentry
@@ -3759,6 +3849,11 @@ async function runPaperTradingScheduler(env, options = {}) {
               closeAction = null;
               closeReason = "";
               lastDecision = `${commodity}: holding short through bearish trend-day bounce`;
+            }
+            if (closeAction === "SELL STOP" && shouldHoldServerDirectionalLong(openTrade, openTradePrice.price, strategySettings, directionalContext)) {
+              closeAction = null;
+              closeReason = "";
+              lastDecision = `${commodity}: holding long through bullish trend-day pullback`;
             }
           }
           if (!closeAction) continue;
@@ -3832,6 +3927,8 @@ async function runPaperTradingScheduler(env, options = {}) {
         const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
         const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
         const reentrySignal = getServerPostStopReentrySignal(transactions, email, commodity, signal, strategySettings, directionalContext);
+        const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
+        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal;
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
             + (regime.enabled ? regime.thresholdBoost : 0)
@@ -3839,14 +3936,14 @@ async function runPaperTradingScheduler(env, options = {}) {
           1,
           100
         );
-        if ((!signal.side || signal.conviction < effectiveThreshold) && !breakoutSignal && !reentrySignal) {
+        if ((!signal.side || signal.conviction < effectiveThreshold) && !directionalOverrideSignal) {
           lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
         }
 
-        if (secondOpinionConsensus.blocksEntry && !breakoutSignal && !reentrySignal) {
+        if (secondOpinionConsensus.blocksEntry && !directionalOverrideSignal) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
@@ -3857,6 +3954,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
           : breakoutSignal
           ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
+          : trendCaptureSignal
+          ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
           : signal;
         if (strategySettings.blockLongsInFallingTrend && activeSignal.side === "long" && directionalContext.isBearishTrend && !directionalContext.longReversalConfirmed) {
           lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
@@ -3864,7 +3963,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           run.skippedTrades += 1;
           continue;
         }
-        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal, reentrySignal);
+        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal, reentrySignal);
         if (!entryQuality.ok) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
@@ -3874,19 +3973,19 @@ async function runPaperTradingScheduler(env, options = {}) {
         const step = exclusiveMartingale
           ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps, commodity)
           : 1;
-        if (!breakoutSignal && !reentrySignal && regime.enabled && step > regime.maxMartingaleStep) {
+        if (!directionalOverrideSignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
           run.skippedTrades += 1;
           continue;
         }
-        if (!breakoutSignal && !reentrySignal && regime.enabled && !regime.confirmationOk) {
+        if (!directionalOverrideSignal && regime.enabled && !regime.confirmationOk) {
           lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
           run.skippedTrades += 1;
           continue;
         }
-        const sizeMultiplier = (breakoutSignal || reentrySignal) && exclusiveMartingale
+        const sizeMultiplier = directionalOverrideSignal && exclusiveMartingale
           ? 1
-          : (breakoutSignal || reentrySignal)
+          : directionalOverrideSignal
             ? strategySettings.flatSizeMultiplier
             : regime.enabled ? regime.sizeMultiplier : 1;
         const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext);
@@ -3924,6 +4023,8 @@ async function runPaperTradingScheduler(env, options = {}) {
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}`
             : breakoutSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}`
+            : trendCaptureSignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}`
             : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
@@ -3952,6 +4053,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? `${commodity}: opened ${activeSignal.side} post-stop re-entry at ${price.price}`
           : breakoutSignal
           ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
+          : trendCaptureSignal
+          ? `${commodity}: opened ${activeSignal.side} trend capture at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
       }
 
