@@ -717,6 +717,7 @@ let signalRecalcTimer = null;
 let lastSignalRecalcAt = 0;
 let chartRenderTimer = null;
 let lastChartRenderAt = 0;
+let advisorySectionRefreshTimer = null;
 let paperSweepTimer = null;
 let lastPaperSweepAt = 0;
 let livePricePaintTimer = null;
@@ -880,6 +881,16 @@ function queueAdvisoryChartRender(options = {}) {
   }, delay);
 }
 
+function scheduleAdvisorySectionRefresh() {
+  if (advisorySectionRefreshTimer) return;
+  advisorySectionRefreshTimer = window.setTimeout(() => {
+    advisorySectionRefreshTimer = null;
+    if (activeSection !== "advisories") return;
+    queueAdvisoryChartRender();
+    loadSharedAdvisorySummary();
+  }, 160);
+}
+
 function queuePaperSweep(options = {}) {
   const immediate = options.immediate === true;
   const now = Date.now();
@@ -994,9 +1005,11 @@ function setActiveSection(section) {
   if (homeMarketPreviewEl) homeMarketPreviewEl.hidden = section !== "home";
   if (section === "home") refreshHomeMarketPreview();
   if (section === "advisories") {
+    paintLivePriceFields(commoditySelect.value);
+    renderAdvisoryMarketStatus();
     renderCurrentUserStrategy();
-    loadSharedAdvisorySummary();
-    queueAdvisoryChartRender({ immediate: true });
+    queueSignalRecalculation("advisory-open");
+    scheduleAdvisorySectionRefresh();
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") renderOpenBrainMemory();
@@ -7789,9 +7802,10 @@ function getEasternMarketParts(value = new Date()) {
 }
 
 function getFuturesMarketStatus(value = new Date()) {
-  const { day, minutes } = getEasternMarketParts(value);
+  const dateValue = getTransactionDate(value);
+  const { day, minutes } = getEasternMarketParts(dateValue);
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
-  const todayDate = formatEasternDate(value);
+  const todayDate = formatEasternDate(dateValue);
   const isMaintenanceBreak = day >= 1 && day <= 4 && minutes >= 17 * 60 && minutes < 18 * 60;
   const isOpen = (day === 0 && minutes >= 18 * 60)
     || (day >= 1 && day <= 4 && !isMaintenanceBreak)
@@ -7821,7 +7835,7 @@ function getFuturesMarketStatus(value = new Date()) {
   }
 
   const opensToday = day === 0 && minutes < 18 * 60;
-  const nextSundayDate = formatEasternDate(opensToday ? value : addDays(value, (7 - day) % 7));
+  const nextSundayDate = formatEasternDate(opensToday ? dateValue : addDays(dateValue, (7 - day) % 7));
   return {
     isOpen: false,
     label: "Market closed",
@@ -10030,9 +10044,13 @@ async function loadSharedAdvisorySummary(manual = false) {
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
     applyAdvisorySummaryPrices(data?.prices || {});
-    renderAdvisoryChart();
-    renderHomeMarketPreview();
-    queueSignalRecalculation("advisory-summary", { immediate: true });
+    if (activeSection === "advisories") {
+      queueAdvisoryChartRender();
+      queueSignalRecalculation("advisory-summary");
+    }
+    if (activeSection === "home") {
+      renderHomeMarketPreview();
+    }
     return true;
   } catch (error) {
     return false;
@@ -10130,7 +10148,7 @@ async function flushPendingAdvisorySnapshots() {
 async function loadSharedAdvisoryHistory(manual = false) {
   if (!hasHistoryBackend()) {
     advisoryHistoryStatusEl.textContent = "Shared advisory log required";
-    renderAdvisoryChart();
+    if (activeSection === "advisories") queueAdvisoryChartRender();
     return false;
   }
   if (!manual && isBackendBackoffActive(nextBackendAdvisorySyncAt)) return false;
@@ -10145,7 +10163,7 @@ async function loadSharedAdvisoryHistory(manual = false) {
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
     advisoryHistoryStatusEl.textContent = `Shared advisory log synced ${advisoryHistory.length} sample${advisoryHistory.length === 1 ? "" : "s"}`;
-    renderAdvisoryChart();
+    if (activeSection === "advisories") queueAdvisoryChartRender();
     nextBackendAdvisorySyncAt = 0;
     await flushPendingAdvisorySnapshots();
     return true;
@@ -10155,7 +10173,7 @@ async function loadSharedAdvisoryHistory(manual = false) {
     advisoryHistoryStatusEl.textContent = advisoryHistory.length
       ? `Shared advisory log offline; using ${advisoryHistory.length} cached sample${advisoryHistory.length === 1 ? "" : "s"}${pendingCount ? `, ${pendingCount} queued for central save` : ""}; ${getBackendBackoffText(nextBackendAdvisorySyncAt)}`
       : manual ? "Shared advisory log sync failed" : "Shared advisory log offline";
-    renderAdvisoryChart();
+    if (activeSection === "advisories") queueAdvisoryChartRender();
     return false;
   } finally {
     backendAdvisorySyncInFlight = false;
@@ -10184,7 +10202,7 @@ async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : snapshots);
     const remainingPending = clearPendingAdvisorySnapshots(snapshots);
     advisoryHistoryStatusEl.textContent = `Shared advisory log saved ${advisoryHistory.length} samples${remainingPending ? `; ${remainingPending} still queued` : ""}`;
-    renderAdvisoryChart();
+    if (activeSection === "advisories") queueAdvisoryChartRender();
     return true;
   } catch (error) {
     nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
@@ -10542,6 +10560,7 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
 
 function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
   if (!tradePlan.priceReady) return;
+  if (!getFuturesMarketStatus().isOpen) return;
 
   const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
   const batchKey = `${commodity}|${minute}`;
@@ -10554,7 +10573,7 @@ function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
     buildAdvisorySnapshot(commodity, ADVISORY_HORIZON, baseSignals, tradePlan.livePrice, tradePlan.priceSource)
   ];
   mergeAdvisoryHistory(snapshots);
-  renderAdvisoryChart();
+  if (activeSection === "advisories") queueAdvisoryChartRender();
   saveSharedAdvisorySnapshots(snapshots);
 }
 
@@ -10730,10 +10749,12 @@ function evaluateAdvisorySamples(samples, options = {}) {
     )) || sorted[index + 1];
 
     if (!future) return null;
+    if (!getFuturesMarketStatus(entryTime).isOpen || !getFuturesMarketStatus(future.time).isOpen) return null;
 
     const startPrice = Number(entry.price);
     const endPrice = Number(future.price);
     if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice)) return null;
+    if (startPrice === endPrice && isActionableAdvisoryTone(entry.tone)) return null;
 
     const move = endPrice - startPrice;
     const threshold = getCorrectnessThreshold(startPrice);
