@@ -7375,14 +7375,16 @@ function rememberPriceTick(commodity, price, value = new Date()) {
   const time = getTransactionDate(value).getTime();
   if (!Number.isFinite(time)) return;
 
-  const ticks = priceTickHistory.get(commodity) || [];
+  const productId = getActivePriceProductId(commodity);
+  const tickKey = [commodity, productId].filter(Boolean).join("|");
+  const ticks = priceTickHistory.get(tickKey) || [];
   const lastTick = ticks[ticks.length - 1];
   if (lastTick && lastTick.price === price && time - lastTick.time < 1000) return;
 
-  ticks.push({ time, price });
+  ticks.push({ time, price, productId });
   const cutoff = time - PRICE_TICK_WINDOW_MS;
   while (ticks.length && ticks[0].time < cutoff) ticks.shift();
-  priceTickHistory.set(commodity, ticks);
+  priceTickHistory.set(tickKey, ticks);
 }
 
 function getPriceAtOrBefore(ticks, targetTime) {
@@ -7417,7 +7419,8 @@ function getStandardDeviation(values) {
 }
 
 function getMicroPredictor(commodity) {
-  const ticks = priceTickHistory.get(commodity) || [];
+  const productId = getActivePriceProductId(commodity);
+  const ticks = priceTickHistory.get([commodity, productId].filter(Boolean).join("|")) || [];
   if (ticks.length < MICRO_PREDICTOR_MIN_TICKS) {
     return {
       ready: false,
@@ -10218,7 +10221,8 @@ function getMicroPredictionUrl() {
 
 function getMicroPredictionKey(commodity, horizonSeconds, time, price) {
   const bucket = Math.floor(new Date(time).getTime() / MICRO_PREDICTION_CAPTURE_MS);
-  return `${commodity}|${horizonSeconds}|${bucket}|${Number(price || 0).toFixed(4)}`;
+  const productId = getActivePriceProductId(commodity) || "product";
+  return `${commodity}|${productId}|${horizonSeconds}|${bucket}|${Number(price || 0).toFixed(4)}`;
 }
 
 function mergeMicroPredictionHistory(entries = []) {
@@ -10305,6 +10309,7 @@ function buildMicroPredictions(commodity, signal, tradePlan) {
     commodity,
     commodityName: commodities.find(({ id }) => id === commodity)?.name || commodity,
     contract: tradePlan.ticker,
+    productId: tradePlan.productId || getActivePriceProductId(commodity),
     price: tradePlan.livePrice,
     priceSource: tradePlan.priceSource,
     horizonSeconds,
@@ -10396,7 +10401,9 @@ async function saveSharedMicroPredictions(predictions, options = {}) {
 
 function maybeRecordMicroPrediction(commodity, signal, tradePlan) {
   if (!tradePlan?.priceReady || !signal?.micro?.ready) return;
-  const batchKey = `${commodity}|${Math.floor(Date.now() / MICRO_PREDICTION_CAPTURE_MS)}`;
+  if (!getFuturesMarketStatus().isOpen) return;
+  const productId = getActivePriceProductId(commodity) || "product";
+  const batchKey = `${commodity}|${productId}|${Math.floor(Date.now() / MICRO_PREDICTION_CAPTURE_MS)}`;
   const savedBatchKey = window.localStorage.getItem(MICRO_PREDICTION_CAPTURE_KEY);
   if (batchKey === lastMicroPredictionKey || batchKey === savedBatchKey) return;
   lastMicroPredictionKey = batchKey;
@@ -10475,7 +10482,8 @@ function renderMicroLearningLoop() {
 
 function getAdvisorySnapshotKey(commodity, horizon, time) {
   const minute = Math.floor(new Date(time).getTime() / ADVISORY_CAPTURE_MS);
-  return `${commodity}|${horizon}|${minute}`;
+  const productId = getActivePriceProductId(commodity) || "product";
+  return `${commodity}|${productId}|${horizon}|${minute}`;
 }
 
 function parseOptionalNumber(value) {
@@ -10525,12 +10533,16 @@ function buildAdvisorySnapshot(commodity, horizon, baseSignals, price, priceSour
   const signal = scoreCommodity(commodity, signals);
   const time = new Date();
   const llm = getLatestLLMConvictionForCommodity(commodity);
+  const config = getEffectiveCommodityConfig(commodity);
 
   return {
     snapshotKey: getAdvisorySnapshotKey(commodity, horizon, time),
     time: time.toISOString(),
     commodity,
     commodityName: commodities.find(({ id }) => id === commodity)?.name || commodity,
+    contract: config.ticker,
+    productId: config.productId || getActivePriceProductId(commodity),
+    contractMonth: config.contractMonth,
     horizon,
     price,
     priceSource,
@@ -10563,7 +10575,8 @@ function maybeRecordAdvisorySnapshot(commodity, baseSignals, tradePlan) {
   if (!getFuturesMarketStatus().isOpen) return;
 
   const minute = Math.floor(Date.now() / ADVISORY_CAPTURE_MS);
-  const batchKey = `${commodity}|${minute}`;
+  const productId = getActivePriceProductId(commodity) || "product";
+  const batchKey = `${commodity}|${productId}|${minute}`;
   const savedBatchKey = window.localStorage.getItem(ADVISORY_SNAPSHOT_KEY);
   if (batchKey === lastAdvisorySnapshotKey || batchKey === savedBatchKey) return;
   lastAdvisorySnapshotKey = batchKey;
@@ -10593,7 +10606,8 @@ function getFilteredAdvisorySamples() {
     })
     .forEach((entry) => {
       const time = new Date(entry.time || 0).getTime();
-      const key = `${entry.commodity}|${Math.floor(time / ADVISORY_CAPTURE_MS)}`;
+      const productId = entry.productId || entry.product_id || entry.contract || "product";
+      const key = `${entry.commodity}|${productId}|${Math.floor(time / ADVISORY_CAPTURE_MS)}`;
       if (!byKey.has(key)) {
         byKey.set(key, { ...entry, horizon: ADVISORY_HORIZON });
       }
@@ -10750,6 +10764,9 @@ function evaluateAdvisorySamples(samples, options = {}) {
 
     if (!future) return null;
     if (!getFuturesMarketStatus(entryTime).isOpen || !getFuturesMarketStatus(future.time).isOpen) return null;
+    const entryProductId = String(entry.productId || entry.contract || "").toLowerCase();
+    const futureProductId = String(future.productId || future.contract || "").toLowerCase();
+    if (entryProductId && futureProductId && entryProductId !== futureProductId) return null;
 
     const startPrice = Number(entry.price);
     const endPrice = Number(future.price);

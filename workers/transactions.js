@@ -56,6 +56,19 @@ const SERVER_COMMODITIES = {
   platinum: { id: "platinum", name: "Platinum", ticker: "PLATINUM-USD", productId: "PLATINUM-USD", contractMultiplier: 1, marginRateLong: 1, marginRateShort: 1, feePerContractSide: 0 }
 };
 
+const LEARNING_CONTRACT_COLUMNS = {
+  advisory_snapshots: [
+    ["contract", "TEXT"],
+    ["product_id", "TEXT"]
+  ],
+  micro_predictions: [
+    ["contract", "TEXT"],
+    ["product_id", "TEXT"]
+  ]
+};
+const MICRO_EVALUATION_LIMIT = 1500;
+const MICRO_EVALUATION_BATCH_SIZE = 40;
+
 function corsHeaders(origin) {
   return {
     "Access-Control-Allow-Origin": origin,
@@ -258,6 +271,7 @@ function getAdvisorySnapshotKey(entry) {
   const minute = Math.floor(time.getTime() / 60000);
   return [
     entry.commodity || "commodity",
+    entry.productId || entry.product_id || entry.contract || "product",
     entry.horizon || "horizon",
     minute
   ].join("|");
@@ -274,6 +288,9 @@ function normalizeAdvisorySnapshot(entry) {
     time: entry.time || new Date().toISOString(),
     commodity: entry.commodity || "oil",
     commodityName: entry.commodityName || entry.commodity || "Oil",
+    contract: entry.contract || entry.ticker || "",
+    productId: entry.productId || entry.product_id || entry.contract || entry.ticker || "",
+    contractMonth: entry.contractMonth || "",
     horizon: entry.horizon || "intraday",
     price,
     priceSource: entry.priceSource || "Unknown",
@@ -769,6 +786,60 @@ function numberOrNull(value) {
 function integerOrNull(value) {
   const number = Number(value);
   return Number.isFinite(number) ? Math.round(number) : null;
+}
+
+async function safeD1Run(env, sql, bindings = []) {
+  try {
+    const statement = env.DB.prepare(sql);
+    await (bindings.length ? statement.bind(...bindings) : statement).run();
+    return true;
+  } catch (_error) {
+    return false;
+  }
+}
+
+function sqlStringLiteral(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+async function getD1TableColumns(env, table) {
+  try {
+    const result = await env.DB.prepare(`PRAGMA table_info(${table})`).all();
+    return new Set(getResults(result).map((row) => row.name).filter(Boolean));
+  } catch (_error) {
+    return new Set();
+  }
+}
+
+async function ensureLearningContractColumnsD1(env) {
+  if (!hasRuntimeStore(env)) return;
+
+  for (const [table, columns] of Object.entries(LEARNING_CONTRACT_COLUMNS)) {
+    const existing = await getD1TableColumns(env, table);
+    if (!existing.size) continue;
+    for (const [column, type] of columns) {
+      if (!existing.has(column)) {
+        await safeD1Run(env, `ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+      }
+    }
+  }
+
+  await safeD1Run(env, `
+    UPDATE advisory_snapshots
+    SET
+      contract = COALESCE(contract, json_extract(payload_json, '$.contract'), json_extract(payload_json, '$.ticker')),
+      product_id = COALESCE(product_id, json_extract(payload_json, '$.productId'), json_extract(payload_json, '$.product_id'), json_extract(payload_json, '$.contract'), json_extract(payload_json, '$.ticker'))
+    WHERE contract IS NULL OR product_id IS NULL
+  `);
+  await safeD1Run(env, `
+    UPDATE micro_predictions
+    SET
+      contract = COALESCE(contract, json_extract(payload_json, '$.contract'), json_extract(payload_json, '$.ticker')),
+      product_id = COALESCE(product_id, json_extract(payload_json, '$.productId'), json_extract(payload_json, '$.product_id'), json_extract(payload_json, '$.contract'), json_extract(payload_json, '$.ticker'))
+    WHERE contract IS NULL OR product_id IS NULL
+  `);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_advisory_snapshots_contract_time ON advisory_snapshots (commodity, product_id, snapshot_time DESC)`);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_micro_predictions_contract_eval ON micro_predictions (commodity, product_id, prediction_time)`);
 }
 
 function getOpenBrainEventKey(entry = {}) {
@@ -1337,6 +1408,8 @@ function normalizeD1AdvisorySnapshot(entry = {}) {
     snapshot_time: textOrNull(snapshot.time || now),
     commodity: textOrNull(snapshot.commodity),
     commodity_name: textOrNull(snapshot.commodityName),
+    contract: textOrNull(snapshot.contract),
+    product_id: textOrNull(snapshot.productId),
     price: numberOrNull(snapshot.price),
     conviction: numberOrNull(snapshot.conviction),
     llm_score: numberOrNull(firstPresent(snapshot.llmScore, snapshot.llm_score)),
@@ -1350,6 +1423,7 @@ function normalizeD1AdvisorySnapshot(entry = {}) {
 }
 
 async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
+  await ensureLearningContractColumnsD1(env);
   for (const snapshot of snapshots) {
     const row = normalizeD1AdvisorySnapshot(snapshot);
     if (!row) continue;
@@ -1360,6 +1434,8 @@ async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
         snapshot_time,
         commodity,
         commodity_name,
+        contract,
+        product_id,
         price,
         conviction,
         llm_score,
@@ -1369,11 +1445,13 @@ async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
         action,
         payload_json,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(snapshot_key) DO UPDATE SET
         snapshot_time = excluded.snapshot_time,
         commodity = excluded.commodity,
         commodity_name = excluded.commodity_name,
+        contract = excluded.contract,
+        product_id = excluded.product_id,
         price = excluded.price,
         conviction = excluded.conviction,
         llm_score = excluded.llm_score,
@@ -1388,6 +1466,8 @@ async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
       row.snapshot_time,
       row.commodity,
       row.commodity_name,
+      row.contract,
+      row.product_id,
       row.price,
       row.conviction,
       row.llm_score,
@@ -1402,6 +1482,7 @@ async function upsertAdvisorySnapshotsD1(env, snapshots = []) {
 }
 
 async function loadAdvisoryPayloadD1(env) {
+  await ensureLearningContractColumnsD1(env);
   const result = await env.DB.prepare(`
     SELECT payload_json
     FROM advisory_snapshots
@@ -1425,6 +1506,7 @@ function getMicroPredictionKey(entry = {}) {
   const bucket = Number.isFinite(time) ? Math.floor(time / 10000) : Date.now();
   return [
     entry.commodity || "commodity",
+    entry.productId || entry.product_id || entry.contract || "product",
     horizon,
     bucket,
     Number(entry.price || 0).toFixed(4)
@@ -1453,6 +1535,8 @@ function normalizeMicroPrediction(entry = {}) {
     prediction_key: predictionKey,
     prediction_time: textOrNull(payload.time),
     commodity: textOrNull(entry.commodity || "oil"),
+    contract: textOrNull(entry.contract || entry.ticker),
+    product_id: textOrNull(entry.productId || entry.product_id || entry.contract || entry.ticker),
     price: numberOrNull(price),
     horizon_seconds: integerOrNull(horizonSeconds),
     score: numberOrNull(score),
@@ -1468,6 +1552,7 @@ function normalizeMicroPrediction(entry = {}) {
 }
 
 async function upsertMicroPredictionsD1(env, predictions = []) {
+  await ensureLearningContractColumnsD1(env);
   let stored = 0;
   for (const prediction of predictions) {
     const row = normalizeMicroPrediction(prediction);
@@ -1478,6 +1563,8 @@ async function upsertMicroPredictionsD1(env, predictions = []) {
         prediction_key,
         prediction_time,
         commodity,
+        contract,
+        product_id,
         price,
         horizon_seconds,
         score,
@@ -1489,10 +1576,12 @@ async function upsertMicroPredictionsD1(env, predictions = []) {
         long_invalidated,
         payload_json,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(prediction_key) DO UPDATE SET
         prediction_time = excluded.prediction_time,
         commodity = excluded.commodity,
+        contract = excluded.contract,
+        product_id = excluded.product_id,
         price = excluded.price,
         horizon_seconds = excluded.horizon_seconds,
         score = excluded.score,
@@ -1508,6 +1597,8 @@ async function upsertMicroPredictionsD1(env, predictions = []) {
       row.prediction_key,
       row.prediction_time,
       row.commodity,
+      row.contract,
+      row.product_id,
       row.price,
       row.horizon_seconds,
       row.score,
@@ -1526,52 +1617,93 @@ async function upsertMicroPredictionsD1(env, predictions = []) {
 }
 
 async function evaluateMicroPredictionsD1(env) {
-  await env.DB.prepare(`
-    UPDATE micro_predictions
-    SET
-      evaluated_at = (
-        SELECT MIN(next.prediction_time)
-        FROM micro_predictions next
-        WHERE next.commodity = micro_predictions.commodity
-          AND strftime('%s', next.prediction_time) >= strftime('%s', micro_predictions.prediction_time) + micro_predictions.horizon_seconds
-      ),
-      future_price = (
-        SELECT next.price
-        FROM micro_predictions next
-        WHERE next.commodity = micro_predictions.commodity
-          AND strftime('%s', next.prediction_time) >= strftime('%s', micro_predictions.prediction_time) + micro_predictions.horizon_seconds
-        ORDER BY next.prediction_time ASC
-        LIMIT 1
-      ),
-      updated_at = ?
-    WHERE evaluated_at IS NULL
-  `).bind(new Date().toISOString()).run();
+  await ensureLearningContractColumnsD1(env);
+  const result = await env.DB.prepare(`
+    SELECT *
+    FROM (
+      SELECT
+        prediction_key,
+        prediction_time,
+        commodity,
+        COALESCE(product_id, contract, '') AS product_key,
+        price,
+        horizon_seconds,
+        predicted_tone,
+        correct
+      FROM micro_predictions
+      WHERE COALESCE(product_id, contract, '') <> ''
+      ORDER BY prediction_time DESC
+      LIMIT ?
+    )
+    ORDER BY prediction_time ASC
+  `).bind(MICRO_EVALUATION_LIMIT).all();
 
-  await env.DB.prepare(`
-    UPDATE micro_predictions
-    SET
-      move_bps = CASE
-        WHEN price > 0 AND future_price IS NOT NULL THEN ((future_price - price) / price) * 10000
-        ELSE move_bps
-      END,
-      correct = CASE
-        WHEN future_price IS NULL THEN correct
-        WHEN predicted_tone = 'long' AND ((future_price - price) / price) * 10000 > 0.5 THEN 1
-        WHEN predicted_tone = 'short' AND ((future_price - price) / price) * 10000 < -0.5 THEN 1
-        WHEN predicted_tone IN ('flat', 'wait') AND abs(((future_price - price) / price) * 10000) <= 2 THEN 1
-        ELSE 0
-      END,
-      updated_at = ?
-    WHERE evaluated_at IS NOT NULL
-      AND future_price IS NOT NULL
-      AND correct IS NULL
-  `).bind(new Date().toISOString()).run();
+  const rows = getResults(result);
+  const groups = new Map();
+  rows.forEach((row) => {
+    const groupKey = `${row.commodity || ""}|${row.product_key || ""}`;
+    if (!groups.has(groupKey)) groups.set(groupKey, []);
+    groups.get(groupKey).push(row);
+  });
+
+  const updates = [];
+  groups.forEach((groupRows) => {
+    for (let index = 0; index < groupRows.length; index += 1) {
+      const row = groupRows[index];
+      if (row.correct !== null && row.correct !== undefined) continue;
+      const predictionTime = getTransactionDate(row.prediction_time).getTime();
+      const horizonMs = (Number(row.horizon_seconds) || 60) * 1000;
+      const price = Number(row.price);
+      if (!Number.isFinite(predictionTime) || !Number.isFinite(price) || price <= 0) continue;
+      const future = groupRows.slice(index + 1).find((candidate) => {
+        const futureTime = getTransactionDate(candidate.prediction_time).getTime();
+        return Number.isFinite(futureTime) && futureTime >= predictionTime + horizonMs;
+      });
+      if (!future) continue;
+      const futurePrice = Number(future.price);
+      if (!Number.isFinite(futurePrice) || futurePrice <= 0) continue;
+      const moveBps = ((futurePrice - price) / price) * 10000;
+      const tone = row.predicted_tone;
+      const correct = tone === "long"
+        ? moveBps > 0.5
+        : tone === "short"
+          ? moveBps < -0.5
+          : Math.abs(moveBps) <= 2;
+      updates.push({
+        predictionKey: row.prediction_key,
+        evaluatedAt: future.prediction_time,
+        futurePrice,
+        moveBps,
+        correct: correct ? 1 : 0
+      });
+    }
+  });
+
+  const now = new Date().toISOString();
+  for (let index = 0; index < updates.length; index += MICRO_EVALUATION_BATCH_SIZE) {
+    const batch = updates.slice(index, index + MICRO_EVALUATION_BATCH_SIZE);
+    const keys = batch.map((item) => sqlStringLiteral(item.predictionKey)).join(",");
+    const evaluatedCase = batch.map((item) => `WHEN ${sqlStringLiteral(item.predictionKey)} THEN ${sqlStringLiteral(item.evaluatedAt)}`).join(" ");
+    const futureCase = batch.map((item) => `WHEN ${sqlStringLiteral(item.predictionKey)} THEN ${Number(item.futurePrice)}`).join(" ");
+    const moveCase = batch.map((item) => `WHEN ${sqlStringLiteral(item.predictionKey)} THEN ${Number(item.moveBps)}`).join(" ");
+    const correctCase = batch.map((item) => `WHEN ${sqlStringLiteral(item.predictionKey)} THEN ${Number(item.correct)}`).join(" ");
+    await env.DB.prepare(`
+      UPDATE micro_predictions
+      SET
+        evaluated_at = CASE prediction_key ${evaluatedCase} ELSE evaluated_at END,
+        future_price = CASE prediction_key ${futureCase} ELSE future_price END,
+        move_bps = CASE prediction_key ${moveCase} ELSE move_bps END,
+        correct = CASE prediction_key ${correctCase} ELSE correct END,
+        updated_at = ?
+      WHERE prediction_key IN (${keys})
+    `).bind(now).run();
+  }
 }
 
 async function loadMicroPredictionPayloadD1(env, limit = 500) {
   await evaluateMicroPredictionsD1(env);
   const result = await env.DB.prepare(`
-    SELECT payload_json, evaluated_at, future_price, move_bps, correct
+    SELECT payload_json, contract, product_id, evaluated_at, future_price, move_bps, correct
     FROM micro_predictions
     ORDER BY prediction_time DESC
     LIMIT ?
@@ -1582,6 +1714,8 @@ async function loadMicroPredictionPayloadD1(env, limit = 500) {
     if (!payload) return null;
     return {
       ...payload,
+      contract: payload.contract || row.contract || "",
+      productId: payload.productId || row.product_id || "",
       evaluatedAt: row.evaluated_at,
       futurePrice: row.future_price,
       moveBps: row.move_bps,
@@ -2337,14 +2471,25 @@ function getServerKarpathyRecommendation(transactions = [], userEmail, currentTh
   };
 }
 
-async function getLatestAdvisoryByCommodity(env, commodity) {
+function getServerConfigProductKeys(config = {}) {
+  return [config.productId, config.ticker]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter((item, index, all) => item && all.indexOf(item) === index);
+}
+
+async function getLatestAdvisoryByCommodity(env, commodity, config = null) {
+  await ensureLearningContractColumnsD1(env);
+  const productKeys = getServerConfigProductKeys(config || {});
+  const placeholders = productKeys.map(() => "?").join(", ");
+  const bindings = productKeys.length ? [commodity, ...productKeys] : [commodity];
   const row = await env.DB.prepare(`
     SELECT payload_json
     FROM advisory_snapshots
     WHERE commodity = ?
+      ${productKeys.length ? `AND lower(COALESCE(product_id, contract, '')) IN (${placeholders})` : ""}
     ORDER BY snapshot_time DESC
     LIMIT 1
-  `).bind(commodity).first();
+  `).bind(...bindings).first();
   return parseStoredJson(row?.payload_json, null);
 }
 
@@ -2862,6 +3007,7 @@ async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
 }
 
 async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summary") {
+  await ensureLearningContractColumnsD1(env);
   const rows = await env.DB.prepare(`
     SELECT payload_json
     FROM advisory_snapshots
@@ -2875,6 +3021,10 @@ async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summar
     .forEach((snapshot) => {
       const commodity = normalizeServerCommodityId(snapshot.commodity || "oil");
       if (!commodity || byCommodity.has(commodity)) return;
+      const config = getServerCommodityConfig({}, commodity);
+      const productKey = String(snapshot.productId || snapshot.product_id || snapshot.contract || "").trim().toLowerCase();
+      const activeProductKeys = getServerConfigProductKeys(config);
+      if (productKey && activeProductKeys.length && !activeProductKeys.includes(productKey)) return;
       byCommodity.set(commodity, snapshot);
     });
 
@@ -2976,7 +3126,10 @@ async function getServerMarketPrice(env, user, commodity, advisory = null, overr
   const advisoryPrice = Number(advisory?.price);
   const advisoryTime = getTransactionDate(advisory?.time);
   const advisoryFresh = Date.now() - advisoryTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;
-  if (Number.isFinite(advisoryPrice) && advisoryPrice > 0 && advisoryFresh) {
+  const advisoryProductKey = String(advisory?.productId || advisory?.product_id || advisory?.contract || "").trim().toLowerCase();
+  const configProductKeys = getServerConfigProductKeys(config);
+  const advisoryMatchesContract = !advisoryProductKey || !configProductKeys.length || configProductKeys.includes(advisoryProductKey);
+  if (Number.isFinite(advisoryPrice) && advisoryPrice > 0 && advisoryFresh && advisoryMatchesContract) {
     return {
       price: advisoryPrice,
       source: "Latest advisory snapshot",
@@ -2984,13 +3137,17 @@ async function getServerMarketPrice(env, user, commodity, advisory = null, overr
     };
   }
 
+  await ensureLearningContractColumnsD1(env);
+  const productKeys = getServerConfigProductKeys(config);
+  const placeholders = productKeys.map(() => "?").join(", ");
   const micro = await env.DB.prepare(`
     SELECT price, prediction_time
     FROM micro_predictions
     WHERE commodity = ?
+      ${productKeys.length ? `AND lower(COALESCE(product_id, contract, '')) IN (${placeholders})` : ""}
     ORDER BY prediction_time DESC
     LIMIT 1
-  `).bind(commodity).first();
+  `).bind(...(productKeys.length ? [commodity, ...productKeys] : [commodity])).first();
   const microPrice = Number(micro?.price);
   const microTime = getTransactionDate(micro?.prediction_time);
   const microFresh = Date.now() - microTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;
@@ -3112,18 +3269,24 @@ function getServerSecondOpinionConsensus(signal, settings = {}) {
   };
 }
 
-async function getLatestServerMicroPrediction(env, commodity) {
+async function getLatestServerMicroPrediction(env, commodity, config = null) {
+  await ensureLearningContractColumnsD1(env);
+  const productKeys = getServerConfigProductKeys(config || {});
+  const placeholders = productKeys.map(() => "?").join(", ");
   const row = await env.DB.prepare(`
-    SELECT probability_up, probability_down, predicted_tone, short_trigger, long_trigger, payload_json, prediction_time
+    SELECT probability_up, probability_down, predicted_tone, short_trigger, long_trigger, payload_json, prediction_time, contract, product_id
     FROM micro_predictions
     WHERE commodity = ?
+      ${productKeys.length ? `AND lower(COALESCE(product_id, contract, '')) IN (${placeholders})` : ""}
     ORDER BY prediction_time DESC
     LIMIT 1
-  `).bind(commodity).first();
+  `).bind(...(productKeys.length ? [commodity, ...productKeys] : [commodity])).first();
   if (!row) return null;
   const payload = parseStoredJson(row.payload_json, {});
   return {
     ready: true,
+    contract: payload.contract || row.contract || "",
+    productId: payload.productId || row.product_id || "",
     probabilityUp: Number(row.probability_up),
     probabilityDown: Number(row.probability_down),
     predictedTone: row.predicted_tone,
@@ -3139,15 +3302,19 @@ async function getLatestServerMicroPrediction(env, commodity) {
   };
 }
 
-async function getServerAdvisoryBreakoutContext(env, commodity, strategy) {
+async function getServerAdvisoryBreakoutContext(env, commodity, strategy, config = null) {
   if (!strategy.breakoutParticipation) return null;
+  await ensureLearningContractColumnsD1(env);
+  const productKeys = getServerConfigProductKeys(config || {});
+  const placeholders = productKeys.map(() => "?").join(", ");
   const result = await env.DB.prepare(`
     SELECT payload_json
     FROM advisory_snapshots
     WHERE commodity = ?
+      ${productKeys.length ? `AND lower(COALESCE(product_id, contract, '')) IN (${placeholders})` : ""}
     ORDER BY snapshot_time DESC
     LIMIT 80
-  `).bind(commodity).all();
+  `).bind(...(productKeys.length ? [commodity, ...productKeys] : [commodity])).all();
   const snapshots = getResults(result)
     .map((row) => parseStoredJson(row.payload_json))
     .filter((entry) => entry && Number.isFinite(Number(entry.price)) && ["long", "short", "wait"].includes(entry.tone));
@@ -3174,7 +3341,10 @@ async function getServerAdvisoryBreakoutContext(env, commodity, strategy) {
     if (!Number.isFinite(entryTime) || !Number.isFinite(entryPrice) || entryPrice <= 0) return;
     const after = ordered.slice(index + 1).find((candidate) => {
       const candidateTime = new Date(candidate.time || 0).getTime();
-      return Number.isFinite(candidateTime) && candidateTime >= entryTime + 60 * 1000 && Number.isFinite(Number(candidate.price));
+      const entryProductId = String(entry.productId || entry.product_id || entry.contract || "").toLowerCase();
+      const candidateProductId = String(candidate.productId || candidate.product_id || candidate.contract || "").toLowerCase();
+      const sameContract = !entryProductId || !candidateProductId || entryProductId === candidateProductId;
+      return sameContract && Number.isFinite(candidateTime) && candidateTime >= entryTime + 60 * 1000 && Number.isFinite(Number(candidate.price));
     });
     if (!after) return;
     const afterPrice = Number(after.price);
@@ -3931,7 +4101,7 @@ async function runPaperTradingScheduler(env, options = {}) {
       for (const commodity of schedulerSettings.commodities) {
         const config = getServerCommodityConfig(user, commodity);
         const contractRoll = getServerContractRollStatus(config);
-        const advisory = await getLatestAdvisoryByCommodity(env, commodity);
+        const advisory = await getLatestAdvisoryByCommodity(env, commodity, config);
         const price = await getServerMarketPrice(env, user, commodity, advisory);
         if (!price) {
           lastDecision = `${commodity}: skipped, no fresh price`;
@@ -3952,7 +4122,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.pullbackEntryRequired
           || strategySettings.profitLockTrailingStop
           || strategySettings.missedOpportunityLearner)
-          ? await getLatestServerMicroPrediction(env, commodity)
+          ? await getLatestServerMicroPrediction(env, commodity, config)
           : null;
         const advisoryBreakout = (strategySettings.breakoutParticipation
           || strategySettings.trendCaptureMode
@@ -3963,7 +4133,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.noChaseEntries
           || strategySettings.pullbackEntryRequired
           || strategySettings.missedOpportunityLearner)
-          ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true })
+          ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true }, config)
           : null;
         const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
         const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
