@@ -12,7 +12,7 @@ ADVISORY_PATH = "advisory-snapshots.json"
 ALLOWED_ORIGIN = "https://pjbell555.github.io"
 OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
 OPENROUTER_APP_NAME = "ComHedge 2"
-PAPER_TRADER_EMAILS = "peter@pjbell.com,ai4ses@gmail.com"
+PAPER_TRADER_EMAILS = "peter@pjbell.com,aretwo3000@gmail.com,ai4ses@gmail.com"
 # Safety guard: D1 is the runtime store. If a deployment ever loses the DB
 # binding and falls back to GitHub storage, this prevents generated data commits.
 PAUSE_GIT_WRITES = "true"

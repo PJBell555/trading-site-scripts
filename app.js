@@ -582,8 +582,27 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   profitLockMinMoveBps: 8,
   missedOpportunityMoveBps: 16
 };
-const D2_TEST_AGENT_EMAIL = "aretwo3000@gmail.com";
-const D2_TEST_AGENT_GOAL = "Become the strongest paper-tested Coinbase oil futures trader in ComHedge by improving decisions from D2 closed-trade evidence, advisory outcomes, and active-contract history.";
+const PETER_OIL_TEST_AGENT_STRATEGY = {
+  ...DEFAULT_USER_STRATEGY,
+  name: "Peter Oil Futures Test Agent",
+  type: "oil-paper-learning-agent",
+  description: "Use Peter Bell as a live-observed ComHedge oil futures paper account. Follow the same active Coinbase oil contract as D2, compare advisories against paper outcomes, and use the profile to inspect what the system is doing.",
+  martingaleSteps: 3,
+  skillFocus: "Coinbase oil futures paper-trade learning",
+  openBrainMemory: "For Peter, capture every oil futures paper decision with contract, product ID, advisory tone, conviction, price, target, stop, exit reason, and what should be watched while Peter follows the trade.",
+  flatMaxMartingaleSteps: 1,
+  flatSizeMultiplier: 0.4,
+  flatThresholdBoost: 6,
+  flatMinEdgePercent: 58,
+  trendingMinEdgePercent: 60,
+  breakoutMinEdgePercent: 57,
+  noChaseMoveBps: 14,
+  pullbackMinRetraceBps: 3,
+  profitLockMinMoveBps: 8,
+  missedOpportunityMoveBps: 16
+};
+const OIL_TEST_AGENT_EMAILS = new Set(["peter@pjbell.com", "aretwo3000@gmail.com"]);
+const OIL_TEST_AGENT_GOAL = "Use Peter Bell and D2 as paired paper-only Coinbase oil futures test cases, improving strategy quality from closed-trade evidence, advisory outcomes, and active-contract history.";
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
   environment: "sandbox",
@@ -2790,12 +2809,14 @@ function getDefaultUsers() {
       createdAt: "2026-02-02T12:00:00.000Z",
       lastActiveAt: minutesAgo(10),
       sessions: 23,
+      strategy: PETER_OIL_TEST_AGENT_STRATEGY,
       paperTrading: {
         enabled: true,
         commodities: ["oil"],
         riskPct: PAPER_DEFAULT_RISK_PCT,
         maxOpenTrades: 1,
-        entryThreshold: PAPER_MIN_CONVICTION
+        entryThreshold: 58,
+        overnightRiskMode: "flatten-before-close"
       },
       enabled: true
     },
@@ -4120,11 +4141,11 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
   return total / closedTrades.length;
 }
 
-function isD2TestAgent(user = {}) {
-  return normalizeEmail(user.email) === D2_TEST_AGENT_EMAIL;
+function isOilTestAgent(user = {}) {
+  return OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email));
 }
 
-function getD2MissionStatus(user) {
+function getOilMissionStatus(user) {
   const entries = getUserPaperLedgerEntries(user);
   const closedTrades = getUserClosedPaperTrades(user, entries);
   const openTrades = getUserEnabledOpenPaperTrades(user, entries);
@@ -4149,7 +4170,7 @@ function getD2MissionStatus(user) {
     expectancy,
     evidenceState: needsSample ? "Collecting evidence" : profitable ? "Positive sample" : "Needs rule review",
     nextStep: needsSample
-      ? `Collect at least ${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length} more closed D2 oil paper trade${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length === 1 ? "" : "s"} before trusting threshold changes.`
+      ? `Collect at least ${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length} more closed oil paper trade${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length === 1 ? "" : "s"} for ${user.name || user.email} before trusting threshold changes.`
       : profitable
         ? "Review winning conditions before cautiously lowering friction or expanding sample size."
         : "Review losing setups, side accuracy, and missed moves before changing size or lowering thresholds.",
@@ -4157,16 +4178,16 @@ function getD2MissionStatus(user) {
   };
 }
 
-function createD2MissionCard(user) {
-  const status = getD2MissionStatus(user);
+function createOilMissionCard(user) {
+  const status = getOilMissionStatus(user);
   const card = document.createElement("section");
   card.className = "user-profile-subcard d2-mission-card";
   card.innerHTML = `
-    <h3>D2 Trading Mission <span>${escapeHtml(status.evidenceState)}</span></h3>
+    <h3>Oil Trading Mission <span>${escapeHtml(user.name || user.email || "Test account")} / ${escapeHtml(status.evidenceState)}</span></h3>
     <div class="d2-mission-body">
       <div class="d2-mission-goal">
         <span class="stat-label">Goal</span>
-        <strong>${escapeHtml(D2_TEST_AGENT_GOAL)}</strong>
+        <strong>${escapeHtml(OIL_TEST_AGENT_GOAL)}</strong>
         <p>${escapeHtml(status.guardrail)}</p>
       </div>
       <div class="d2-mission-grid">
@@ -5643,7 +5664,7 @@ function renderAdvisoryAdoptedSystems(strategy = getCurrentUserStrategy()) {
 function createUserProfilePanel(user) {
   const wrapper = document.createElement("div");
   const profileCard = document.createElement("section");
-  const d2MissionCard = isD2TestAgent(user) ? createD2MissionCard(user) : null;
+  const oilMissionCard = isOilTestAgent(user) ? createOilMissionCard(user) : null;
   const photoLabel = document.createElement("label");
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
@@ -6378,7 +6399,7 @@ function createUserProfilePanel(user) {
   historyCard.append(table);
 
   wrapper.append(profileCard);
-  if (d2MissionCard) wrapper.append(d2MissionCard);
+  if (oilMissionCard) wrapper.append(oilMissionCard);
   wrapper.append(commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
