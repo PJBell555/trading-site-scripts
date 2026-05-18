@@ -567,6 +567,7 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   ...DEFAULT_USER_STRATEGY,
   name: "D2 Oil Futures Test Agent",
   type: "oil-paper-learning-agent",
+  oilMissionEnabled: true,
   description: "Use D2 as the ComHedge oil futures experiment account. Paper trade the active Coinbase oil contract, compare advisory calls against outcomes, and only tighten or loosen rules when closed-trade evidence supports it.",
   martingaleSteps: 3,
   skillFocus: "Coinbase oil futures paper-trade learning",
@@ -586,6 +587,7 @@ const PETER_OIL_TEST_AGENT_STRATEGY = {
   ...DEFAULT_USER_STRATEGY,
   name: "Peter Oil Futures Test Agent",
   type: "oil-paper-learning-agent",
+  oilMissionEnabled: true,
   description: "Use Peter Bell as a live-observed ComHedge oil futures paper account. Follow the same active Coinbase oil contract as D2, compare advisories against paper outcomes, and use the profile to inspect what the system is doing.",
   martingaleSteps: 3,
   skillFocus: "Coinbase oil futures paper-trade learning",
@@ -3288,6 +3290,7 @@ function normalizeUserStrategy(strategy = {}) {
   return {
     name: String(merged.name || DEFAULT_USER_STRATEGY.name).trim(),
     type: String(merged.type || DEFAULT_USER_STRATEGY.type).trim(),
+    oilMissionEnabled: merged.oilMissionEnabled !== false,
     description: String(merged.description || DEFAULT_USER_STRATEGY.description).trim(),
     martingaleSteps: clamp(Number(merged.martingaleSteps) || DEFAULT_USER_STRATEGY.martingaleSteps, 1, 8),
     karpathyLoop: merged.karpathyLoop !== false,
@@ -3380,6 +3383,7 @@ function recordUserStrategyChange(user, before, after, actor = getCurrentUserPro
 const STRATEGY_HISTORY_FIELDS = [
   ["name", "Strategy name"],
   ["type", "Strategy type"],
+  ["oilMissionEnabled", "Oil mission"],
   ["description", "Strategy definition"],
   ["martingaleSteps", "Martingale max steps"],
   ["karpathyLoop", "Karpathy loop"],
@@ -4145,6 +4149,22 @@ function isOilTestAgent(user = {}) {
   return OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email));
 }
 
+function setOilMissionEnabled(user, enabled) {
+  if (!user || !isOilTestAgent(user)) return;
+  const before = normalizeUserStrategy(user.strategy);
+  const after = normalizeUserStrategy({
+    ...before,
+    oilMissionEnabled: enabled === true
+  });
+  const changed = recordUserStrategyChange(user, before, after);
+  if (!changed) user.strategy = after;
+  saveUserRoster();
+  saveSharedSettings();
+  renderCurrentUserStrategy();
+  renderUserManagement();
+  userManagementStatusEl.textContent = `${user.name || user.email} oil mission ${after.oilMissionEnabled ? "enabled" : "disabled"}`;
+}
+
 function getOilMissionStatus(user) {
   const entries = getUserPaperLedgerEntries(user);
   const closedTrades = getUserClosedPaperTrades(user, entries);
@@ -4153,6 +4173,7 @@ function getOilMissionStatus(user) {
   const winRate = getUserWinRate(user, entries);
   const expectancy = getUserTradeExpectancy(user, entries);
   const paperTrading = normalizeServerPaperTrading(user.paperTrading);
+  const strategy = normalizeUserStrategy(user.strategy);
   const oilTerms = normalizeCommodityTradeTerms(user.commodityTradeTerms?.oil, "oil");
   const needsSample = closedTrades.length < ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
   const profitable = Number.isFinite(expectancy) && expectancy > 0;
@@ -4163,12 +4184,13 @@ function getOilMissionStatus(user) {
     riskPct: paperTrading.riskPct,
     maxOpenTrades: paperTrading.maxOpenTrades,
     overnightRiskMode: paperTrading.overnightRiskMode,
+    enabled: strategy.oilMissionEnabled,
     closedCount: closedTrades.length,
     openCount: openTrades.length,
     closedPnl,
     winRate,
     expectancy,
-    evidenceState: needsSample ? "Collecting evidence" : profitable ? "Positive sample" : "Needs rule review",
+    evidenceState: !strategy.oilMissionEnabled ? "Mission off" : needsSample ? "Collecting evidence" : profitable ? "Positive sample" : "Needs rule review",
     nextStep: needsSample
       ? `Collect at least ${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length} more closed oil paper trade${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length === 1 ? "" : "s"} for ${user.name || user.email} before trusting threshold changes.`
       : profitable
@@ -4185,6 +4207,11 @@ function createOilMissionCard(user) {
   card.innerHTML = `
     <h3>Oil Trading Mission <span>${escapeHtml(user.name || user.email || "Test account")} / ${escapeHtml(status.evidenceState)}</span></h3>
     <div class="d2-mission-body">
+      <label class="d2-mission-switch">
+        <input type="checkbox" data-oil-mission-enabled${status.enabled ? " checked" : ""}>
+        <span class="d2-mission-check" aria-hidden="true"></span>
+        <strong>${status.enabled ? "Mission on" : "Mission off"}</strong>
+      </label>
       <div class="d2-mission-goal">
         <span class="stat-label">Goal</span>
         <strong>${escapeHtml(OIL_TEST_AGENT_GOAL)}</strong>
@@ -4202,6 +4229,9 @@ function createOilMissionCard(user) {
       </div>
     </div>
   `;
+  card.querySelector("[data-oil-mission-enabled]")?.addEventListener("change", (event) => {
+    setOilMissionEnabled(user, event.currentTarget.checked);
+  });
   return card;
 }
 
@@ -5093,6 +5123,7 @@ function saveUserStrategySettings(user, container) {
   const strategy = normalizeUserStrategy({
     name: container.querySelector("[data-strategy-field='name']")?.value,
     type: container.querySelector("[data-strategy-field='type']")?.value,
+    oilMissionEnabled: before.oilMissionEnabled,
     description: container.querySelector("[data-strategy-field='description']")?.value,
     martingaleSteps: container.querySelector("[data-strategy-field='martingaleSteps']")?.value,
     karpathyLoop: container.querySelector("[data-strategy-field='karpathyLoop']")?.checked,
