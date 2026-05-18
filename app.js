@@ -290,15 +290,16 @@ const commodityTweaks = {
 
 const marketConfig = {
   oil: {
-    ticker: "NOLK6",
-    productId: "NOL-18MAY26-CDE",
-    contractMonth: "May 2026",
+    ticker: "NOLM6",
+    productId: "NOL-19JUN26-CDE",
+    contractMonth: "June 2026",
     productType: "Coinbase futures contract",
-    contractExpiresAt: "2026-05-18T17:00:00-04:00",
+    contractExpiresAt: "2026-06-19T17:00:00-04:00",
     rollBeforeDays: 3,
     contracts: [
       { ticker: "NOLK6", productId: "NOL-18MAY26-CDE", contractMonth: "May 2026", contractExpiresAt: "2026-05-18T17:00:00-04:00" },
-      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00:00-04:00" }
+      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00:00-04:00" },
+      { ticker: "NOLN6", productId: "NOL-20JUL26-CDE", contractMonth: "July 2026", contractExpiresAt: "2026-07-20T17:00:00-04:00" }
     ],
     referencePrice: null,
     contractMultiplier: 10,
@@ -562,6 +563,27 @@ const DEFAULT_USER_STRATEGY = {
   profitLockGivebackPct: 35,
   missedOpportunityMoveBps: 20
 };
+const D2_OIL_TEST_AGENT_STRATEGY = {
+  ...DEFAULT_USER_STRATEGY,
+  name: "D2 Oil Futures Test Agent",
+  type: "oil-paper-learning-agent",
+  description: "Use D2 as the ComHedge oil futures experiment account. Paper trade the active Coinbase oil contract, compare advisory calls against outcomes, and only tighten or loosen rules when closed-trade evidence supports it.",
+  martingaleSteps: 3,
+  skillFocus: "Coinbase oil futures paper-trade learning",
+  openBrainMemory: "For D2, capture every oil futures paper decision with contract, product ID, advisory tone, conviction, price, target, stop, exit reason, and what rule should change before the next experiment.",
+  flatMaxMartingaleSteps: 1,
+  flatSizeMultiplier: 0.4,
+  flatThresholdBoost: 6,
+  flatMinEdgePercent: 58,
+  trendingMinEdgePercent: 60,
+  breakoutMinEdgePercent: 57,
+  noChaseMoveBps: 14,
+  pullbackMinRetraceBps: 3,
+  profitLockMinMoveBps: 8,
+  missedOpportunityMoveBps: 16
+};
+const D2_TEST_AGENT_EMAIL = "aretwo3000@gmail.com";
+const D2_TEST_AGENT_GOAL = "Become the strongest paper-tested Coinbase oil futures trader in ComHedge by improving decisions from D2 closed-trade evidence, advisory outcomes, and active-contract history.";
 const DEFAULT_BROKER_ACCOUNT = {
   provider: "Coinbase",
   environment: "sandbox",
@@ -688,6 +710,16 @@ const DEFAULT_CUSTOM_SKILLS = [
     adoptOpinion: false,
     createdAt: "2026-05-08T00:00:00.000Z",
     updatedAt: "2026-05-08T00:00:00.000Z"
+  },
+  {
+    id: "skill-d2-oil-research-loop",
+    name: "D2 Oil Research Loop",
+    body: "Treat D2 as the experimental oil futures account. Prefer the active Coinbase oil futures contract, record the product ID on every paper trade, and review closed P/L, side accuracy, missed short moves, and drawdown before changing thresholds. Do not increase size after a win unless the last sample shows positive average trade profit after fees.",
+    tags: ["oil", "D2", "paper-trading", "research"],
+    adoptAdvisory: true,
+    adoptOpinion: true,
+    createdAt: "2026-05-18T00:00:00.000Z",
+    updatedAt: "2026-05-18T00:00:00.000Z"
   }
 ];
 
@@ -2819,6 +2851,17 @@ function getDefaultUsers() {
       createdAt: "2026-02-04T12:00:00.000Z",
       lastActiveAt: null,
       sessions: 0,
+      paperBaseEquity: 1000,
+      paperRiskPct: PAPER_DEFAULT_RISK_PCT,
+      strategy: D2_OIL_TEST_AGENT_STRATEGY,
+      paperTrading: {
+        enabled: true,
+        commodities: ["oil"],
+        riskPct: PAPER_DEFAULT_RISK_PCT,
+        maxOpenTrades: 1,
+        entryThreshold: 58,
+        overnightRiskMode: "flatten-before-close"
+      },
       enabled: true
     },
     {
@@ -4075,6 +4118,70 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
   if (!closedTrades.length) return NaN;
   const total = closedTrades.reduce((sum, entry) => sum + getDisplayPnl(entry), 0);
   return total / closedTrades.length;
+}
+
+function isD2TestAgent(user = {}) {
+  return normalizeEmail(user.email) === D2_TEST_AGENT_EMAIL;
+}
+
+function getD2MissionStatus(user) {
+  const entries = getUserPaperLedgerEntries(user);
+  const closedTrades = getUserClosedPaperTrades(user, entries);
+  const openTrades = getUserEnabledOpenPaperTrades(user, entries);
+  const closedPnl = closedTrades.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const winRate = getUserWinRate(user, entries);
+  const expectancy = getUserTradeExpectancy(user, entries);
+  const paperTrading = normalizeServerPaperTrading(user.paperTrading);
+  const oilTerms = normalizeCommodityTradeTerms(user.commodityTradeTerms?.oil, "oil");
+  const needsSample = closedTrades.length < ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
+  const profitable = Number.isFinite(expectancy) && expectancy > 0;
+  return {
+    activeContract: `${oilTerms.ticker || "NOL"} / ${oilTerms.productId || "Coinbase product"}`,
+    contractMonth: oilTerms.contractMonth || "Front month",
+    entryThreshold: paperTrading.entryThreshold,
+    riskPct: paperTrading.riskPct,
+    maxOpenTrades: paperTrading.maxOpenTrades,
+    overnightRiskMode: paperTrading.overnightRiskMode,
+    closedCount: closedTrades.length,
+    openCount: openTrades.length,
+    closedPnl,
+    winRate,
+    expectancy,
+    evidenceState: needsSample ? "Collecting evidence" : profitable ? "Positive sample" : "Needs rule review",
+    nextStep: needsSample
+      ? `Collect at least ${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length} more closed D2 oil paper trade${ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES - closedTrades.length === 1 ? "" : "s"} before trusting threshold changes.`
+      : profitable
+        ? "Review winning conditions before cautiously lowering friction or expanding sample size."
+        : "Review losing setups, side accuracy, and missed moves before changing size or lowering thresholds.",
+    guardrail: "Paper-only. Do not enable live trading or increase size until average trade profit is positive after fees across a meaningful sample."
+  };
+}
+
+function createD2MissionCard(user) {
+  const status = getD2MissionStatus(user);
+  const card = document.createElement("section");
+  card.className = "user-profile-subcard d2-mission-card";
+  card.innerHTML = `
+    <h3>D2 Trading Mission <span>${escapeHtml(status.evidenceState)}</span></h3>
+    <div class="d2-mission-body">
+      <div class="d2-mission-goal">
+        <span class="stat-label">Goal</span>
+        <strong>${escapeHtml(D2_TEST_AGENT_GOAL)}</strong>
+        <p>${escapeHtml(status.guardrail)}</p>
+      </div>
+      <div class="d2-mission-grid">
+        <div><span>Active contract</span><strong>${escapeHtml(status.activeContract)}</strong><small>${escapeHtml(status.contractMonth)}</small></div>
+        <div><span>Paper gate</span><strong>${status.entryThreshold}/100</strong><small>${formatNumberInput(status.riskPct, 2)}% risk, max ${status.maxOpenTrades} open</small></div>
+        <div><span>Closed P/L</span><strong class="${status.closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(status.closedPnl)}</strong><small>${status.closedCount} closed, ${status.openCount} open</small></div>
+        <div><span>Win rate</span><strong>${Number.isFinite(status.winRate) ? formatPercent(status.winRate) : "-"}</strong><small>Average trade ${Number.isFinite(status.expectancy) ? formatSignedMoney(status.expectancy) : "-"}</small></div>
+      </div>
+      <div class="d2-mission-next">
+        <span class="stat-label">Next learning step</span>
+        <p>${escapeHtml(status.nextStep)}</p>
+      </div>
+    </div>
+  `;
+  return card;
 }
 
 function getMatchedClosingTransactions(entries = [], allEntries = entries) {
@@ -5536,6 +5643,7 @@ function renderAdvisoryAdoptedSystems(strategy = getCurrentUserStrategy()) {
 function createUserProfilePanel(user) {
   const wrapper = document.createElement("div");
   const profileCard = document.createElement("section");
+  const d2MissionCard = isD2TestAgent(user) ? createD2MissionCard(user) : null;
   const photoLabel = document.createElement("label");
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
@@ -5840,6 +5948,7 @@ function createUserProfilePanel(user) {
         Strategy type
         <select data-strategy-field="type">
           <option value="martingale-karpathy"${strategy.type === "martingale-karpathy" ? " selected" : ""}>Martingale + Karpathy loop</option>
+          <option value="oil-paper-learning-agent"${strategy.type === "oil-paper-learning-agent" ? " selected" : ""}>Oil paper learning agent</option>
           <option value="fixed-risk"${strategy.type === "fixed-risk" ? " selected" : ""}>Fixed risk</option>
           <option value="manual-review"${strategy.type === "manual-review" ? " selected" : ""}>Manual review</option>
           <option value="custom"${strategy.type === "custom" ? " selected" : ""}>Custom</option>
@@ -5853,6 +5962,7 @@ function createUserProfilePanel(user) {
         Skill focus
         <select data-strategy-field="skillFocus">
           <option${strategy.skillFocus === "Lessons from Paper Trades" ? " selected" : ""}>Lessons from Paper Trades</option>
+          <option${strategy.skillFocus === "Coinbase oil futures paper-trade learning" ? " selected" : ""}>Coinbase oil futures paper-trade learning</option>
           <option${strategy.skillFocus === "Lessons from Trades" ? " selected" : ""}>Lessons from Trades</option>
           <option${strategy.skillFocus === "Market Expertise" ? " selected" : ""}>Market Expertise</option>
           <option${strategy.skillFocus === "Prompts for Advisories" ? " selected" : ""}>Prompts for Advisories</option>
@@ -6267,7 +6377,9 @@ function createUserProfilePanel(user) {
   });
   historyCard.append(table);
 
-  wrapper.append(profileCard, commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
+  wrapper.append(profileCard);
+  if (d2MissionCard) wrapper.append(d2MissionCard);
+  wrapper.append(commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
 

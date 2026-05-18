@@ -34,15 +34,16 @@ const SERVER_COMMODITIES = {
   oil: {
     id: "oil",
     name: "Oil",
-    ticker: "NOLK6",
-    productId: "NOL-18MAY26-CDE",
+    ticker: "NOLM6",
+    productId: "NOL-19JUN26-CDE",
     productType: "Coinbase futures contract",
-    contractMonth: "May 2026",
-    contractExpiresAt: "2026-05-18T17:00:00-04:00",
+    contractMonth: "June 2026",
+    contractExpiresAt: "2026-06-19T17:00:00-04:00",
     rollBeforeDays: 3,
     contracts: [
       { ticker: "NOLK6", productId: "NOL-18MAY26-CDE", contractMonth: "May 2026", contractExpiresAt: "2026-05-18T17:00:00-04:00" },
-      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00:00-04:00" }
+      { ticker: "NOLM6", productId: "NOL-19JUN26-CDE", contractMonth: "June 2026", contractExpiresAt: "2026-06-19T17:00:00-04:00" },
+      { ticker: "NOLN6", productId: "NOL-20JUL26-CDE", contractMonth: "July 2026", contractExpiresAt: "2026-07-20T17:00:00-04:00" }
     ],
     contractMultiplier: 10,
     marginRateLong: 1 / 7.2,
