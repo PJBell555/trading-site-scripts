@@ -6683,16 +6683,15 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
       Number.isFinite(Number(openTrade.capital)) ? formatMoney(Number(openTrade.capital)) : UNAVAILABLE_TEXT,
       Number.isFinite(Number(openTrade.targetPrice)) ? formatPrice(Number(openTrade.targetPrice)) : UNAVAILABLE_TEXT,
       "__STOP_LOSS__",
-      null
+      "__CURRENT_MARK__"
     ].forEach((value) => {
       const cell = document.createElement("td");
       if (value === "__STOP_LOSS__") {
         row.append(buildStopLossCell(openTrade));
         return;
       }
-      if (value === null) {
-        const markCell = buildOpenTradeMarkCell(openTrade);
-        row.append(markCell);
+      if (value === "__CURRENT_MARK__") {
+        row.append(buildOpenTradeLivePriceCell(openTrade));
         return;
       }
       cell.textContent = value;
@@ -6805,6 +6804,19 @@ function buildUnrealizedPnlCell(openTrade, livePrice) {
   return cell;
 }
 
+function buildOpenTradeLivePriceCell(entry = {}) {
+  const cell = document.createElement("td");
+  const markPrice = getOpenTradeMarkPrice(entry);
+  if (!Number.isFinite(markPrice)) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    return cell;
+  }
+  cell.className = "current-mark-price";
+  cell.title = "Current Coinbase price used to estimate this open trade P/L.";
+  cell.textContent = formatPrice(markPrice);
+  return cell;
+}
+
 function getOpenTradeMarkPrice(entry = {}) {
   if (isClosingTransaction(entry) || entry.closedAt) return NaN;
   if (getTransactionStateCode(entry) !== "O") return NaN;
@@ -6815,8 +6827,14 @@ function getOpenTradeMarkPrice(entry = {}) {
 
 function buildOpenTradeMarkCell(entry = {}) {
   const cell = document.createElement("td");
+  if (isOpeningTransaction(entry)) {
+    cell.textContent = UNAVAILABLE_TEXT;
+    cell.className = "historical-open-exit";
+    cell.title = "Opening rows do not have a filled exit yet. The current Coinbase price is shown next to live P/L on the open trade row.";
+    return cell;
+  }
   if (getTransactionStateCode(entry) !== "O") {
-    cell.textContent = "Closed later";
+    cell.textContent = UNAVAILABLE_TEXT;
     cell.className = "historical-open-exit";
     cell.title = "This opening row is already matched to a later close. The filled exit appears on the closing row.";
     return cell;
@@ -6827,8 +6845,8 @@ function buildOpenTradeMarkCell(entry = {}) {
     return cell;
   }
   cell.className = "current-mark-price";
-  cell.title = "Current live mark price, not a filled exit price.";
-  cell.textContent = `${formatPrice(markPrice)} mark`;
+  cell.title = "Current Coinbase price, not a filled exit price.";
+  cell.textContent = formatPrice(markPrice);
   return cell;
 }
 
@@ -6840,8 +6858,8 @@ function buildLiveMarkCellForCommodity(commodity) {
     return cell;
   }
   cell.className = "current-mark-price";
-  cell.title = "Current live mark price, not a filled exit price.";
-  cell.textContent = `${formatPrice(Number(markPrice))} mark`;
+  cell.title = "Current Coinbase price, not a filled exit price.";
+  cell.textContent = formatPrice(Number(markPrice));
   return cell;
 }
 
