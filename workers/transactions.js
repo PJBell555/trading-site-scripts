@@ -15,7 +15,10 @@ const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
 const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
+const PAPER_SCHEDULER_LOCK_KEY = "paper-trading-scheduler";
+const PAPER_SCHEDULER_LOCK_TTL_MS = 4 * 60 * 1000;
 const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
+const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
 const DEFAULT_MARKET_CALENDAR = {
@@ -2473,7 +2476,11 @@ function getServerKarpathyRecommendation(transactions = [], userEmail, currentTh
 }
 
 function getServerConfigProductKeys(config = {}) {
-  return [config.productId, config.ticker]
+  return [
+    config.productId,
+    config.ticker,
+    ...(Array.isArray(config.contracts) ? config.contracts.flatMap((contract) => [contract.productId, contract.ticker]) : [])
+  ]
     .map((item) => String(item || "").trim().toLowerCase())
     .filter((item, index, all) => item && all.indexOf(item) === index);
 }
@@ -2727,6 +2734,96 @@ async function savePriceSnapshot(env, snapshot) {
     JSON.stringify(snapshot),
     now
   ).run();
+  await savePriceTick(env, snapshot);
+  await pruneOldPriceTicks(env);
+}
+
+async function ensurePriceTicksTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS price_ticks (
+      tick_key TEXT PRIMARY KEY,
+      commodity TEXT NOT NULL,
+      product_id TEXT,
+      ticker TEXT,
+      price REAL NOT NULL,
+      best_bid REAL,
+      best_ask REAL,
+      last_trade REAL,
+      method TEXT,
+      ok INTEGER NOT NULL DEFAULT 1,
+      tick_time TEXT NOT NULL,
+      source TEXT,
+      payload_json TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_price_ticks_commodity_time
+    ON price_ticks (commodity, tick_time DESC)
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_price_ticks_product_time
+    ON price_ticks (product_id, tick_time DESC)
+  `).run();
+}
+
+function getPriceTickKey(snapshot) {
+  return [
+    snapshot?.id || "commodity",
+    snapshot?.productId || snapshot?.ticker || "product",
+    snapshot?.fetchedAt || new Date().toISOString()
+  ].join("|");
+}
+
+async function savePriceTick(env, snapshot) {
+  const price = Number(snapshot?.price);
+  if (!snapshot?.id || !Number.isFinite(price) || price <= 0) return;
+  const now = new Date().toISOString();
+  const tickTime = snapshot.fetchedAt || now;
+  await ensurePriceTicksTable(env);
+  await env.DB.prepare(`
+    INSERT INTO price_ticks (
+      tick_key, commodity, product_id, ticker, price, best_bid, best_ask,
+      last_trade, method, ok, tick_time, source, payload_json, updated_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tick_key) DO UPDATE SET
+      product_id = excluded.product_id,
+      ticker = excluded.ticker,
+      price = excluded.price,
+      best_bid = excluded.best_bid,
+      best_ask = excluded.best_ask,
+      last_trade = excluded.last_trade,
+      method = excluded.method,
+      ok = excluded.ok,
+      source = excluded.source,
+      payload_json = excluded.payload_json,
+      updated_at = excluded.updated_at
+  `).bind(
+    getPriceTickKey(snapshot),
+    snapshot.id,
+    snapshot.productId || null,
+    snapshot.ticker || null,
+    price,
+    Number.isFinite(Number(snapshot.bestBid)) ? Number(snapshot.bestBid) : null,
+    Number.isFinite(Number(snapshot.bestAsk)) ? Number(snapshot.bestAsk) : null,
+    Number.isFinite(Number(snapshot.lastTrade)) ? Number(snapshot.lastTrade) : null,
+    snapshot.method || null,
+    snapshot.ok ? 1 : 0,
+    tickTime,
+    "cloudflare-d1-price-tick",
+    JSON.stringify(snapshot),
+    now
+  ).run();
+}
+
+async function pruneOldPriceTicks(env) {
+  const cutoff = new Date(Date.now() - (PRICE_TICK_RETENTION_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+  await ensurePriceTicksTable(env);
+  await env.DB.prepare(`
+    DELETE FROM price_ticks
+    WHERE tick_time < ?
+  `).bind(cutoff).run();
 }
 
 async function loadStoredPriceSnapshots(env) {
@@ -3845,6 +3942,70 @@ function getServerExitTrigger(trade, price) {
   return null;
 }
 
+function getServerExitBoundaryPrice(trade, action, fallbackPrice) {
+  if (String(action || "").includes("TARGET")) {
+    const targetPrice = Number(trade.targetPrice);
+    return Number.isFinite(targetPrice) ? targetPrice : fallbackPrice;
+  }
+  if (String(action || "").includes("PROFIT LOCK")) {
+    const profitLockStopPrice = Number(trade.profitLockStopPrice);
+    return Number.isFinite(profitLockStopPrice) ? profitLockStopPrice : fallbackPrice;
+  }
+  if (String(action || "").includes("STOP")) {
+    const stopPrice = Number(trade.originalStopPrice ?? trade.stopPrice);
+    return Number.isFinite(stopPrice) ? stopPrice : fallbackPrice;
+  }
+  return fallbackPrice;
+}
+
+async function getServerExitTriggerFromTicks(env, trade, config, fallbackPrice) {
+  if (!hasRuntimeStore(env)) return null;
+  const openedAt = getTransactionDate(trade.openedAt || trade.time);
+  if (Number.isNaN(openedAt.getTime())) return null;
+  const commodity = normalizeServerCommodityId(trade.commodity || config.id || inferServerCommodityFromContract(trade.contract));
+  const productKeys = Array.from(new Set(getServerConfigProductKeys(config)));
+  const productClause = productKeys.length
+    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    : "";
+  await ensurePriceTicksTable(env);
+  const result = await env.DB.prepare(`
+    SELECT price, tick_time, source
+    FROM price_ticks
+    WHERE commodity = ?
+      AND tick_time >= ?
+      ${productClause}
+    ORDER BY tick_time ASC
+    LIMIT 2000
+  `).bind(
+    commodity,
+    openedAt.toISOString(),
+    ...productKeys
+  ).all();
+
+  for (const tick of getResults(result)) {
+    const tickPrice = Number(tick.price);
+    const action = getServerExitTrigger(trade, tickPrice);
+    if (!action) continue;
+    const exitPrice = getServerExitBoundaryPrice(trade, action, tickPrice);
+    return {
+      action,
+      price: exitPrice,
+      source: `${tick.source || "Cloudflare price tick"} history`,
+      time: tick.tick_time
+    };
+  }
+
+  const latestPrice = Number(fallbackPrice?.price);
+  const latestAction = getServerExitTrigger(trade, latestPrice);
+  if (!latestAction) return null;
+  return {
+    action: latestAction,
+    price: getServerExitBoundaryPrice(trade, latestAction, latestPrice),
+    source: fallbackPrice?.source || "Current server price",
+    time: fallbackPrice?.time || new Date().toISOString()
+  };
+}
+
 function parseMarketMinutes(value, fallback) {
   const [hours, minutes] = normalizeMarketTime(value, fallback).split(":").map(Number);
   return (hours * 60) + minutes;
@@ -4006,6 +4167,59 @@ function makeServerCloseTransaction({ user, email, commodity, config, openTrade,
   });
 }
 
+async function ensurePaperSchedulerLocksTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS paper_scheduler_locks (
+      lock_key TEXT PRIMARY KEY,
+      owner TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+}
+
+async function acquirePaperSchedulerLock(env) {
+  if (!hasRuntimeStore(env)) return "";
+  const now = new Date().toISOString();
+  const randomPart = typeof crypto !== "undefined" && crypto.randomUUID
+    ? crypto.randomUUID()
+    : Math.random().toString(16).slice(2);
+  const owner = `scheduler-${Date.now()}-${randomPart}`;
+  const expiresAt = new Date(Date.now() + PAPER_SCHEDULER_LOCK_TTL_MS).toISOString();
+  await ensurePaperSchedulerLocksTable(env);
+  await env.DB.prepare(`
+    INSERT INTO paper_scheduler_locks (lock_key, owner, expires_at, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(lock_key) DO UPDATE SET
+      owner = excluded.owner,
+      expires_at = excluded.expires_at,
+      updated_at = excluded.updated_at
+    WHERE paper_scheduler_locks.expires_at < ?
+  `).bind(
+    PAPER_SCHEDULER_LOCK_KEY,
+    owner,
+    expiresAt,
+    now,
+    now
+  ).run();
+  const current = await env.DB.prepare(`
+    SELECT owner
+    FROM paper_scheduler_locks
+    WHERE lock_key = ?
+  `).bind(PAPER_SCHEDULER_LOCK_KEY).first();
+  return current?.owner === owner ? owner : "";
+}
+
+async function releasePaperSchedulerLock(env, owner) {
+  if (!owner || !hasRuntimeStore(env)) return;
+  await ensurePaperSchedulerLocksTable(env);
+  await env.DB.prepare(`
+    DELETE FROM paper_scheduler_locks
+    WHERE lock_key = ?
+      AND owner = ?
+  `).bind(PAPER_SCHEDULER_LOCK_KEY, owner).run();
+}
+
 async function recordPaperSchedulerRun(env, run) {
   await env.DB.prepare(`
     INSERT INTO paper_scheduler_runs (
@@ -4059,13 +4273,23 @@ async function runPaperTradingScheduler(env, options = {}) {
     decisions: []
   };
 
-  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
-  const modelSettings = normalizeServerModelSettings(settings.modelSettings);
-  const users = Array.isArray(settings.users) ? settings.users : [];
-  const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
-  const transactions = payload.transactions || [];
+  let lockOwner = "";
+  lockOwner = await acquirePaperSchedulerLock(env);
+  if (!lockOwner) {
+    run.status = "skipped";
+    run.finishedAt = new Date().toISOString();
+    run.decisions.push({ email: "system", name: "Paper scheduler", decision: "another scheduler run is active" });
+    await recordPaperSchedulerRun(env, run);
+    return run;
+  }
 
   try {
+    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const modelSettings = normalizeServerModelSettings(settings.modelSettings);
+    const users = Array.isArray(settings.users) ? settings.users : [];
+    const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+    const transactions = payload.transactions || [];
+
     for (const user of users) {
       const email = normalizeEmail(user.email);
       if (!email) continue;
@@ -4149,6 +4373,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           }
           const openTradeRoll = getServerContractRollStatus(openTradeConfig);
           let closeAction = null;
+          let closePrice = openTradePrice;
           let closeReason = "";
           if (marketSchedule.isOpen && openTradeRoll.shouldFlatten) {
             closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
@@ -4158,14 +4383,23 @@ async function runPaperTradingScheduler(env, options = {}) {
             closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
           } else if (marketSchedule.isOpen) {
             applyServerProfitLockStop(openTrade, openTradePrice.price, strategySettings, directionalContext);
-            closeAction = getServerExitTrigger(openTrade, openTradePrice.price);
-            closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via ${openTradePrice.source}`;
-            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, openTradePrice.price, strategySettings, directionalContext)) {
+            const tickExit = await getServerExitTriggerFromTicks(env, openTrade, openTradeConfig, openTradePrice);
+            if (tickExit) {
+              closeAction = tickExit.action;
+              closePrice = {
+                ...openTradePrice,
+                price: tickExit.price,
+                source: tickExit.source,
+                time: tickExit.time
+              };
+              closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via ${tickExit.source} at ${tickExit.time}`;
+            }
+            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, closePrice.price, strategySettings, directionalContext)) {
               closeAction = null;
               closeReason = "";
               lastDecision = `${commodity}: holding short through bearish trend-day bounce`;
             }
-            if (closeAction === "SELL STOP" && shouldHoldServerDirectionalLong(openTrade, openTradePrice.price, strategySettings, directionalContext)) {
+            if (closeAction === "SELL STOP" && shouldHoldServerDirectionalLong(openTrade, closePrice.price, strategySettings, directionalContext)) {
               closeAction = null;
               closeReason = "";
               lastDecision = `${commodity}: holding long through bullish trend-day pullback`;
@@ -4178,7 +4412,7 @@ async function runPaperTradingScheduler(env, options = {}) {
             commodity,
             config: openTradeConfig,
             openTrade,
-            price: openTradePrice,
+            price: closePrice,
             action: closeAction,
             note: closeReason
           });
@@ -4186,7 +4420,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           await recordOpenBrainServerEvent(
             env,
             "paper-trade",
-            `${close.action} ${close.contract} at ${openTradePrice.price.toFixed(2)} with net P/L ${Number(close.pnl || 0).toFixed(2)}`,
+            `${close.action} ${close.contract} at ${closePrice.price.toFixed(2)} with net P/L ${Number(close.pnl || 0).toFixed(2)}`,
             {
               id: `memory-${getTransactionKey(close)}`,
               source: "cloudflare-paper-scheduler",
@@ -4204,7 +4438,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           );
           run.closedTrades += 1;
           activeOpenCount = Math.max(0, activeOpenCount - 1);
-          lastDecision = `${commodity}: closed ${openTrade.side} at ${openTradePrice.price}`;
+          lastDecision = `${commodity}: closed ${openTrade.side} at ${closePrice.price}`;
         }
 
         if (!marketSchedule.isOpen) {
@@ -4397,7 +4631,11 @@ async function runPaperTradingScheduler(env, options = {}) {
     run.error = error.message;
   } finally {
     run.finishedAt = new Date().toISOString();
-    await recordPaperSchedulerRun(env, run);
+    try {
+      await recordPaperSchedulerRun(env, run);
+    } finally {
+      await releasePaperSchedulerLock(env, lockOwner);
+    }
   }
 
   return run;
