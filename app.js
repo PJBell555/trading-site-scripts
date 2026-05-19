@@ -6831,9 +6831,12 @@ function getOpenTradeMarkPrice(entry = {}) {
 function buildOpenTradeMarkCell(entry = {}) {
   const cell = document.createElement("td");
   if (isOpeningTransaction(entry)) {
-    cell.textContent = UNAVAILABLE_TEXT;
+    const closingEntry = getClosingEntry(entry);
+    cell.textContent = closingEntry ? "Closed later" : "Trade open";
     cell.className = "historical-open-exit";
-    cell.title = "Opening rows do not have a filled exit yet. The current Coinbase price is shown next to live P/L on the open trade row.";
+    cell.title = closingEntry
+      ? "This opening row was closed by a later transaction. The filled exit appears on the closing row."
+      : "This opening row is still active. The current Coinbase price appears on the open trade summary row.";
     return cell;
   }
   if (getTransactionStateCode(entry) !== "O") {
