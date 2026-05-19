@@ -5740,6 +5740,9 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
+    ctx.waitUntil(getPriceSnapshots(env, true).catch((error) => {
+      console.error("price snapshot refresh failed", error);
+    }));
     ctx.waitUntil(runPaperTradingScheduler(env).catch((error) => {
       console.error("paper scheduler failed", error);
     }));

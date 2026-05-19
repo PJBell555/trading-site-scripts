@@ -6691,7 +6691,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
         return;
       }
       if (value === "__CURRENT_MARK__") {
-        row.append(buildOpenTradeLivePriceCell(openTrade));
+        row.append(buildOpenTradeLivePriceCell(openTrade, livePrice));
         return;
       }
       cell.textContent = value;
@@ -6804,16 +6804,19 @@ function buildUnrealizedPnlCell(openTrade, livePrice) {
   return cell;
 }
 
-function buildOpenTradeLivePriceCell(entry = {}) {
+function buildOpenTradeLivePriceCell(entry = {}, livePrice = null) {
   const cell = document.createElement("td");
-  const markPrice = getOpenTradeMarkPrice(entry);
-  if (!Number.isFinite(markPrice)) {
+  const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
+  const price = Number.isFinite(Number(livePrice)) && Number(livePrice) > 0
+    ? Number(livePrice)
+    : Number(getUsableMarketPrice(commodity));
+  if (!Number.isFinite(price) || price <= 0) {
     cell.textContent = UNAVAILABLE_TEXT;
     return cell;
   }
   cell.className = "current-mark-price";
   cell.title = "Current Coinbase price used to estimate this open trade P/L.";
-  cell.textContent = formatPrice(markPrice);
+  cell.textContent = formatPrice(price);
   return cell;
 }
 
