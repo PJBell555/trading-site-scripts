@@ -785,6 +785,9 @@ let homeMarketCommodity = "oil";
 let homeMarketPeriod = "day";
 let homeMarketRefreshTimer = null;
 let lastHomeMarketRenderAt = 0;
+let homeMarketHistory = null;
+let homeMarketHistoryKey = "";
+let homeMarketHistoryError = "";
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
@@ -4145,6 +4148,23 @@ function getUserTradeExpectancy(user, entries = getUserPaperLedgerEntries(user))
   return total / closedTrades.length;
 }
 
+function getUserRecentClosedPaperTrades(user, limit = 12, entries = getUserPaperLedgerEntries(user)) {
+  return getUserClosedPaperTrades(user, entries)
+    .slice()
+    .sort((left, right) => getTransactionDate(right.closedAt || right.time) - getTransactionDate(left.closedAt || left.time))
+    .slice(0, limit);
+}
+
+function getUserLossStreak(user, entries = getUserPaperLedgerEntries(user)) {
+  const recentClosed = getUserRecentClosedPaperTrades(user, 25, entries);
+  let streak = 0;
+  for (const trade of recentClosed) {
+    if (getDisplayPnl(trade) >= 0) break;
+    streak += 1;
+  }
+  return streak;
+}
+
 function isOilTestAgent(user = {}) {
   return OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email));
 }
@@ -4232,6 +4252,93 @@ function createOilMissionCard(user) {
   card.querySelector("[data-oil-mission-enabled]")?.addEventListener("change", (event) => {
     setOilMissionEnabled(user, event.currentTarget.checked);
   });
+  return card;
+}
+
+function getOilLearningProgress(user) {
+  const entries = getUserPaperLedgerEntries(user);
+  const closedTrades = getUserClosedPaperTrades(user, entries);
+  const recentClosed = getUserRecentClosedPaperTrades(user, 12, entries);
+  const closedPnl = closedTrades.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const recentPnl = recentClosed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const lossStreak = getUserLossStreak(user, entries);
+  const winRate = getUserWinRate(user, entries);
+  const expectancy = getUserTradeExpectancy(user, entries);
+  const strategy = normalizeUserStrategy(user.strategy);
+  const paperTrading = normalizeServerPaperTrading(user.paperTrading);
+  const targetSample = ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
+  const sampleGap = Math.max(0, targetSample - closedTrades.length);
+  const losing = Number.isFinite(expectancy) && expectancy < 0;
+  const enoughSample = closedTrades.length >= targetSample;
+  const action = !strategy.oilMissionEnabled
+    ? "Mission is paused. No learning action is being taken for this profile."
+    : !closedTrades.length
+      ? "Waiting for closed paper trades before changing rules."
+      : !enoughSample
+        ? "Collecting evidence. The system should not loosen thresholds or increase size yet."
+        : losing
+          ? "Tightening behavior: keep the higher entry gate, review failed setups, and avoid increasing size."
+          : "Positive sample: review winning setups before cautiously lowering friction.";
+  const ruleResponse = lossStreak >= 2
+    ? "Loss streak detected. Bias toward fewer entries, no size increase, and stricter confirmation."
+    : losing
+      ? "Average trade is negative. Keep the paper gate strict until the sample improves."
+      : closedTrades.length
+        ? "No active loss streak. Keep collecting evidence before changing live risk."
+        : "No closed sample yet.";
+
+  return {
+    closedCount: closedTrades.length,
+    sampleGap,
+    closedPnl,
+    recentPnl,
+    lossStreak,
+    winRate,
+    expectancy,
+    entryThreshold: paperTrading.entryThreshold,
+    riskPct: paperTrading.riskPct,
+    maxOpenTrades: paperTrading.maxOpenTrades,
+    action,
+    ruleResponse,
+    schedulerSummary: getUserSchedulerSummary(user),
+    runLocation: "Cloudflare Worker scheduler evaluates enabled paper accounts every five minutes. Your computer only needs to be on when you want to watch the UI update in the browser.",
+    evidenceQuality: enoughSample ? "Reviewable sample" : `Need ${sampleGap} more closed trade${sampleGap === 1 ? "" : "s"} for a minimum review sample`
+  };
+}
+
+function createOilLearningCard(user) {
+  const progress = getOilLearningProgress(user);
+  const card = document.createElement("section");
+  card.className = "user-profile-subcard oil-learning-card";
+  card.innerHTML = `
+    <h3>Learning Progress <span>${escapeHtml(progress.evidenceQuality)}</span></h3>
+    <div class="oil-learning-body">
+      <div class="oil-learning-grid">
+        <div><span>All closed P/L</span><strong class="${progress.closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(progress.closedPnl)}</strong><small>${progress.closedCount} closed paper trades</small></div>
+        <div><span>Recent closed P/L</span><strong class="${progress.recentPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(progress.recentPnl)}</strong><small>Last 12 closed trades</small></div>
+        <div><span>Average trade</span><strong class="${Number.isFinite(progress.expectancy) && progress.expectancy >= 0 ? "gain" : "loss"}">${Number.isFinite(progress.expectancy) ? formatSignedMoney(progress.expectancy) : "-"}</strong><small>${Number.isFinite(progress.winRate) ? `${formatPercent(progress.winRate)} win rate` : "No win-rate sample"}</small></div>
+        <div><span>Risk gate</span><strong>${progress.entryThreshold}/100</strong><small>${formatNumberInput(progress.riskPct, 2)}% risk, max ${progress.maxOpenTrades} open</small></div>
+      </div>
+      <div class="oil-learning-notes">
+        <div>
+          <span class="stat-label">What I am doing now</span>
+          <p>${escapeHtml(progress.action)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Response to losing money</span>
+          <p>${escapeHtml(progress.ruleResponse)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Computer required?</span>
+          <p>${escapeHtml(progress.runLocation)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Latest scheduler read</span>
+          <p>${escapeHtml(progress.schedulerSummary)}</p>
+        </div>
+      </div>
+    </div>
+  `;
   return card;
 }
 
@@ -5696,6 +5803,7 @@ function createUserProfilePanel(user) {
   const wrapper = document.createElement("div");
   const profileCard = document.createElement("section");
   const oilMissionCard = isOilTestAgent(user) ? createOilMissionCard(user) : null;
+  const oilLearningCard = isOilTestAgent(user) ? createOilLearningCard(user) : null;
   const photoLabel = document.createElement("label");
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
@@ -6431,6 +6539,7 @@ function createUserProfilePanel(user) {
 
   wrapper.append(profileCard);
   if (oilMissionCard) wrapper.append(oilMissionCard);
+  if (oilLearningCard) wrapper.append(oilLearningCard);
   wrapper.append(commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
@@ -8093,6 +8202,12 @@ function getSnapshotUrl() {
 
 function getStaticSnapshotUrl() {
   return `./prices.json?ts=${Date.now()}`;
+}
+
+function getPriceHistoryUrl(commodity = homeMarketCommodity, period = homeMarketPeriod) {
+  const apiUrl = getHistoryApiUrl();
+  if (!apiUrl) return "";
+  return `${apiUrl}/price-history?commodity=${encodeURIComponent(commodity)}&period=${encodeURIComponent(period)}&ts=${Date.now()}`;
 }
 
 function hasUsableSnapshotPrices(data) {
@@ -11309,29 +11424,40 @@ function getHomeMarketPeriodStart() {
   return option.ms ? Date.now() - option.ms : 0;
 }
 
-function getHomeMarketSamples() {
-  const start = getHomeMarketPeriodStart();
+function normalizeHomeMarketHistorySamples(samples = []) {
   const byTime = new Map();
-
-  advisoryHistory
+  samples
     .filter((entry) => {
       const time = getTransactionDate(entry.time).getTime();
       const price = Number(entry.price);
-      return entry.commodity === homeMarketCommodity
-        && Number.isFinite(time)
-        && time >= start
-        && Number.isFinite(price)
-        && price > 0;
+      return Number.isFinite(time) && Number.isFinite(price) && price > 0;
     })
     .forEach((entry) => {
       const time = getTransactionDate(entry.time).getTime();
-      const bucket = Math.floor(time / 60000);
+      const bucket = Math.floor(time / 1000);
       const price = Number(entry.price);
       byTime.set(bucket, {
         time,
-        price
+        price,
+        source: entry.source || "Cloudflare price tick"
       });
     });
+  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+}
+
+function getHomeMarketFallbackSamples() {
+  const start = getHomeMarketPeriodStart();
+  return normalizeHomeMarketHistorySamples(advisoryHistory
+    .filter((entry) => entry.commodity === homeMarketCommodity && getTransactionDate(entry.time).getTime() >= start)
+    .map((entry) => ({ time: entry.time, price: entry.price, source: "advisory snapshot" })));
+}
+
+function getHomeMarketSamples() {
+  const key = `${homeMarketCommodity}:${homeMarketPeriod}`;
+  const serverSamples = key === homeMarketHistoryKey && Array.isArray(homeMarketHistory?.samples)
+    ? normalizeHomeMarketHistorySamples(homeMarketHistory.samples)
+    : [];
+  const samples = serverSamples.length ? serverSamples : getHomeMarketFallbackSamples();
 
   const currentPrice = confirmedLivePrices.has(homeMarketCommodity)
     ? confirmedLivePrices.get(homeMarketCommodity)
@@ -11341,13 +11467,28 @@ function getHomeMarketSamples() {
     : latestPriceTimes.get(homeMarketCommodity);
   const currentTimestamp = getTransactionDate(currentTime || new Date()).getTime();
   if (Number.isFinite(currentPrice) && currentPrice > 0 && Number.isFinite(currentTimestamp)) {
-    byTime.set(Math.floor(currentTimestamp / 60000), {
+    const byTime = new Map(samples.map((sample) => [Math.floor(sample.time / 1000), sample]));
+    byTime.set(Math.floor(currentTimestamp / 1000), {
       time: currentTimestamp,
-      price: currentPrice
+      price: currentPrice,
+      source: "current price"
     });
+    return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
   }
 
-  return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
+  return samples;
+}
+
+async function loadHomeMarketPriceHistory() {
+  if (!hasHistoryBackend()) return null;
+  const key = `${homeMarketCommodity}:${homeMarketPeriod}`;
+  const response = await fetchWithTimeout(getPriceHistoryUrl(homeMarketCommodity, homeMarketPeriod), { cache: "no-store" }, 8000);
+  if (!response.ok) throw new Error("price history unavailable");
+  const data = await response.json();
+  homeMarketHistory = data;
+  homeMarketHistoryKey = key;
+  homeMarketHistoryError = "";
+  return data;
 }
 
 function renderHomeMarketControls() {
@@ -11388,6 +11529,29 @@ function getHomeMarketChange(samples) {
     value,
     percent: first ? (value / first) * 100 : 0
   };
+}
+
+function getHomeMarketGapThresholdMs() {
+  if (homeMarketPeriod === "hour") return 3 * 60 * 1000;
+  if (homeMarketPeriod === "day") return 20 * 60 * 1000;
+  if (homeMarketPeriod === "week") return 2 * 60 * 60 * 1000;
+  if (homeMarketPeriod === "month") return 8 * 60 * 60 * 1000;
+  return 24 * 60 * 60 * 1000;
+}
+
+function splitHomeMarketSegments(samples = []) {
+  const threshold = getHomeMarketGapThresholdMs();
+  const segments = [];
+  let current = [];
+  samples.forEach((sample, index) => {
+    if (index > 0 && sample.time - samples[index - 1].time > threshold) {
+      if (current.length) segments.push(current);
+      current = [];
+    }
+    current.push(sample);
+  });
+  if (current.length) segments.push(current);
+  return segments;
 }
 
 function renderHomeMarketAlerts(config) {
@@ -11482,29 +11646,48 @@ function drawHomeMarketChart(samples) {
   context.stroke();
   context.setLineDash([]);
 
-  context.beginPath();
-  prices.forEach((price, index) => {
-    const x = xFor(times[index]);
-    const y = yFor(price);
-    if (index === 0) context.moveTo(x, y);
-    else context.lineTo(x, y);
-  });
-  context.lineTo(xFor(times[times.length - 1]), padding.top + plotHeight);
-  context.lineTo(xFor(times[0]), padding.top + plotHeight);
-  context.closePath();
-  context.fillStyle = fillColor;
-  context.fill();
+  const segments = splitHomeMarketSegments(samples);
+  segments.forEach((segment) => {
+    if (!segment.length) return;
+    context.beginPath();
+    segment.forEach((sample, index) => {
+      const x = xFor(sample.time);
+      const y = yFor(sample.price);
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.lineTo(xFor(segment[segment.length - 1].time), padding.top + plotHeight);
+    context.lineTo(xFor(segment[0].time), padding.top + plotHeight);
+    context.closePath();
+    context.fillStyle = fillColor;
+    context.fill();
 
-  context.beginPath();
-  prices.forEach((price, index) => {
-    const x = xFor(times[index]);
-    const y = yFor(price);
-    if (index === 0) context.moveTo(x, y);
-    else context.lineTo(x, y);
+    context.beginPath();
+    segment.forEach((sample, index) => {
+      const x = xFor(sample.time);
+      const y = yFor(sample.price);
+      if (index === 0) context.moveTo(x, y);
+      else context.lineTo(x, y);
+    });
+    context.strokeStyle = lineColor;
+    context.lineWidth = 3 * scale;
+    context.setLineDash([]);
+    context.stroke();
   });
-  context.strokeStyle = lineColor;
-  context.lineWidth = 3 * scale;
-  context.stroke();
+
+  context.strokeStyle = "rgba(100, 116, 139, 0.55)";
+  context.lineWidth = 2 * scale;
+  context.setLineDash([7 * scale, 8 * scale]);
+  segments.slice(1).forEach((segment, index) => {
+    const previousSegment = segments[index];
+    const previous = previousSegment[previousSegment.length - 1];
+    const next = segment[0];
+    context.beginPath();
+    context.moveTo(xFor(previous.time), yFor(previous.price));
+    context.lineTo(xFor(next.time), yFor(next.price));
+    context.stroke();
+  });
+  context.setLineDash([]);
 
   context.fillStyle = "#475569";
   context.font = `${13 * scale}px Aptos, Segoe UI, sans-serif`;
@@ -11560,7 +11743,12 @@ function renderHomeMarketPreview() {
   }
   if (homeMarketSourceEl) {
     const updatedAt = latest ? formatPriceTime(latest.time) : "not available";
-    homeMarketSourceEl.textContent = `Server snapshot / ${updatedAt} / refreshes about once per minute`;
+    const source = homeMarketHistoryKey === `${homeMarketCommodity}:${homeMarketPeriod}` && homeMarketHistory
+      ? `Server price history / ${homeMarketHistory.sampleCount || samples.length} points`
+      : homeMarketHistoryError
+        ? "Advisory fallback while price history loads"
+        : "Server snapshot";
+    homeMarketSourceEl.textContent = `${source} / ${updatedAt} / refreshes about once per minute`;
   }
 
   drawHomeMarketChart(samples);
@@ -11573,6 +11761,12 @@ async function refreshHomeMarketPreview() {
   renderHomeMarketPreview();
   const tasks = [];
   if (hasHistoryBackend()) tasks.push(loadSharedAdvisorySummary());
+  if (hasHistoryBackend()) {
+    tasks.push(loadHomeMarketPriceHistory().catch((error) => {
+      homeMarketHistoryError = error.message || "price history unavailable";
+      return null;
+    }));
+  }
   tasks.push(loadSnapshotPrices().then((data) => applyAdvisorySummaryPrices(data?.prices || {})));
   await Promise.allSettled(tasks);
   renderHomeMarketPreview();

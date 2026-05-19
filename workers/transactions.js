@@ -2881,6 +2881,106 @@ async function handlePriceSnapshotsRoute(env, request, origin) {
   return jsonResponse(payload, 200, origin);
 }
 
+function getPriceHistoryCutoff(period = "day") {
+  const now = Date.now();
+  if (period === "hour") return now - (60 * 60 * 1000);
+  if (period === "day") return now - (24 * 60 * 60 * 1000);
+  if (period === "week") return now - (7 * 24 * 60 * 60 * 1000);
+  if (period === "month") return now - (31 * 24 * 60 * 60 * 1000);
+  if (period === "all") return 0;
+  return now - (24 * 60 * 60 * 1000);
+}
+
+function getPriceHistoryBucketMs(period = "day") {
+  if (period === "hour") return 30 * 1000;
+  if (period === "day") return 5 * 60 * 1000;
+  if (period === "week") return 30 * 60 * 1000;
+  if (period === "month") return 2 * 60 * 60 * 1000;
+  if (period === "all") return 6 * 60 * 60 * 1000;
+  return 5 * 60 * 1000;
+}
+
+function downsamplePriceHistory(samples = [], period = "day") {
+  const bucketMs = getPriceHistoryBucketMs(period);
+  const buckets = new Map();
+  for (const sample of samples) {
+    const time = getTransactionDate(sample.time).getTime();
+    if (!Number.isFinite(time)) continue;
+    buckets.set(Math.floor(time / bucketMs), sample);
+  }
+  return Array.from(buckets.values()).sort((a, b) => (
+    getTransactionDate(a.time).getTime() - getTransactionDate(b.time).getTime()
+  ));
+}
+
+async function getPriceHistory(env, commodity = "oil", period = "day") {
+  const normalizedCommodity = normalizeServerCommodityId(commodity);
+  const baseConfig = SERVER_COMMODITIES[normalizedCommodity] || SERVER_COMMODITIES.oil;
+  const config = getServerActiveCommodityContract(baseConfig);
+  const cutoff = getPriceHistoryCutoff(period);
+  const productKeys = [config.productId, config.ticker]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter(Boolean);
+  const productClause = productKeys.length
+    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    : "";
+
+  await ensurePriceTicksTable(env);
+  const result = await env.DB.prepare(`
+    SELECT tick_time, price, product_id, ticker, source
+    FROM price_ticks
+    WHERE commodity = ?
+      AND tick_time >= ?
+      ${productClause}
+    ORDER BY tick_time ASC
+    LIMIT 2500
+  `).bind(
+    normalizedCommodity,
+    new Date(cutoff || 0).toISOString(),
+    ...productKeys
+  ).all();
+
+  const rawSamples = getResults(result)
+    .map((row) => ({
+      time: row.tick_time,
+      price: Number(row.price),
+      productId: row.product_id || "",
+      ticker: row.ticker || "",
+      source: row.source || "cloudflare-d1-price-tick"
+    }))
+    .filter((sample) => Number.isFinite(sample.price) && sample.price > 0);
+  const samples = downsamplePriceHistory(rawSamples, period);
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-price-history",
+    commodity: normalizedCommodity,
+    period,
+    rawSampleCount: rawSamples.length,
+    sampleCount: samples.length,
+    bucketMs: getPriceHistoryBucketMs(period),
+    ticker: config.ticker,
+    productId: config.productId,
+    contractMonth: config.contractMonth,
+    samples
+  };
+}
+
+async function handlePriceHistoryRoute(env, request, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({ error: "Price history requires the Cloudflare D1 runtime store." }, 503, origin);
+  }
+
+  const url = new URL(request.url);
+  const commodity = url.searchParams.get("commodity") || "oil";
+  const period = url.searchParams.get("period") || "day";
+  const payload = await getPriceHistory(env, commodity, period);
+  return jsonResponse(payload, 200, origin);
+}
+
 function getLeaderboardCutoff(period = "all") {
   const now = Date.now();
   if (period === "hour") return now - (60 * 60 * 1000);
@@ -5611,6 +5711,10 @@ export default {
 
       if (url.pathname === "/prices") {
         return handlePriceSnapshotsRoute(env, request, origin);
+      }
+
+      if (url.pathname === "/price-history") {
+        return handlePriceHistoryRoute(env, request, origin);
       }
 
       if (url.pathname === "/leaderboard") {
