@@ -4482,8 +4482,16 @@ async function runPaperTradingScheduler(env, options = {}) {
             closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
             closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
           } else if (marketSchedule.isOpen) {
-            applyServerProfitLockStop(openTrade, openTradePrice.price, strategySettings, directionalContext);
-            const tickExit = await getServerExitTriggerFromTicks(env, openTrade, openTradeConfig, openTradePrice);
+            const currentExitAction = getServerExitTrigger(openTrade, openTradePrice.price);
+            if (currentExitAction) {
+              closeAction = currentExitAction;
+              closePrice = {
+                ...openTradePrice,
+                price: getServerExitBoundaryPrice(openTrade, currentExitAction, openTradePrice.price)
+              };
+              closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via current ${openTradePrice.source || "server price"} at ${openTradePrice.time || new Date().toISOString()}`;
+            }
+            const tickExit = closeAction ? null : await getServerExitTriggerFromTicks(env, openTrade, openTradeConfig, openTradePrice);
             if (tickExit) {
               closeAction = tickExit.action;
               closePrice = {
@@ -4493,6 +4501,18 @@ async function runPaperTradingScheduler(env, options = {}) {
                 time: tickExit.time
               };
               closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via ${tickExit.source} at ${tickExit.time}`;
+            }
+            if (!closeAction) {
+              applyServerProfitLockStop(openTrade, openTradePrice.price, strategySettings, directionalContext);
+              const profitLockExitAction = getServerExitTrigger(openTrade, openTradePrice.price);
+              if (profitLockExitAction) {
+                closeAction = profitLockExitAction;
+                closePrice = {
+                  ...openTradePrice,
+                  price: getServerExitBoundaryPrice(openTrade, profitLockExitAction, openTradePrice.price)
+                };
+                closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via current ${openTradePrice.source || "server price"} after profit-lock update`;
+              }
             }
             if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, closePrice.price, strategySettings, directionalContext)) {
               closeAction = null;
