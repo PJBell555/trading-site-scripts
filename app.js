@@ -4196,6 +4196,62 @@ function getUserLossStreak(user, entries = getUserPaperLedgerEntries(user)) {
   return streak;
 }
 
+function getUserDayPnl(user, entries = getUserPaperLedgerEntries(user)) {
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  return getUserClosedPaperTrades(user, entries)
+    .filter((entry) => getTransactionDate(entry.closedAt || entry.time).getTime() >= cutoff)
+    .reduce((total, entry) => total + getDisplayPnl(entry), 0);
+}
+
+function getOilDayMoveSummary() {
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  const serverSamples = homeMarketHistoryKey === "oil:day" && Array.isArray(homeMarketHistory?.samples)
+    ? normalizeHomeMarketHistorySamples(homeMarketHistory.samples)
+    : [];
+  const fallbackSamples = normalizeHomeMarketHistorySamples(advisoryHistory
+    .filter((entry) => entry.commodity === "oil" && getTransactionDate(entry.time).getTime() >= cutoff)
+    .map((entry) => ({ time: entry.time, price: entry.price, source: "advisory snapshot" })));
+  const samples = (serverSamples.length ? serverSamples : fallbackSamples)
+    .filter((sample) => sample.time >= cutoff);
+  const currentPrice = confirmedLivePrices.has("oil") ? confirmedLivePrices.get("oil") : latestPrices.get("oil");
+  const currentTime = confirmedLivePriceTimes.has("oil") ? confirmedLivePriceTimes.get("oil") : latestPriceTimes.get("oil");
+  if (Number.isFinite(currentPrice) && currentPrice > 0) {
+    samples.push({
+      time: getTransactionDate(currentTime || new Date()).getTime(),
+      price: currentPrice,
+      source: "current price"
+    });
+  }
+  const sorted = normalizeHomeMarketHistorySamples(samples);
+  if (sorted.length < 2) {
+    return {
+      ready: false,
+      label: "Oil day move unavailable",
+      expectedSide: "wait",
+      detail: "Waiting for Cloudflare price history or advisory samples before scoring day-move capture."
+    };
+  }
+  const first = sorted[0];
+  const last = sorted[sorted.length - 1];
+  const change = last.price - first.price;
+  const changePct = first.price ? (change / first.price) * 100 : 0;
+  const expectedSide = change < 0 ? "short" : change > 0 ? "long" : "wait";
+  return {
+    ready: true,
+    startPrice: first.price,
+    endPrice: last.price,
+    change,
+    changePct,
+    expectedSide,
+    label: `${formatPrice(first.price)} to ${formatPrice(last.price)} (${formatSignedMoney(change).replace("$", "")}, ${formatPercent(changePct)})`,
+    detail: expectedSide === "short"
+      ? "Oil fell today; the right paper bias should have been short or flat, not long."
+      : expectedSide === "long"
+        ? "Oil rose today; the right paper bias should have been long or flat, not short."
+        : "Oil was flat enough that the right paper bias should have been selective."
+  };
+}
+
 function isOilTestAgent(user = {}) {
   return OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email));
 }
@@ -4292,11 +4348,15 @@ function getOilLearningProgress(user) {
   const recentClosed = getUserRecentClosedPaperTrades(user, 12, entries);
   const closedPnl = closedTrades.reduce((total, entry) => total + getDisplayPnl(entry), 0);
   const recentPnl = recentClosed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const dayPnl = getUserDayPnl(user, entries) + getUserOpenPnl(user, entries);
   const lossStreak = getUserLossStreak(user, entries);
   const winRate = getUserWinRate(user, entries);
   const expectancy = getUserTradeExpectancy(user, entries);
   const strategy = normalizeUserStrategy(user.strategy);
   const paperTrading = normalizeServerPaperTrading(user.paperTrading);
+  const marketMove = getOilDayMoveSummary();
+  const missedDirectionalMove = marketMove.ready
+    && ((marketMove.expectedSide === "short" && dayPnl <= 0) || (marketMove.expectedSide === "long" && dayPnl <= 0));
   const targetSample = ADVISORY_OUTCOME_LEARNER_MIN_SAMPLES;
   const sampleGap = Math.max(0, targetSample - closedTrades.length);
   const losing = Number.isFinite(expectancy) && expectancy < 0;
@@ -4312,6 +4372,8 @@ function getOilLearningProgress(user) {
           : "Positive sample: review winning setups before cautiously lowering friction.";
   const ruleResponse = lossStreak >= 2
     ? "Loss streak detected. Bias toward fewer entries, no size increase, and stricter confirmation."
+    : missedDirectionalMove
+      ? `Missed ${marketMove.expectedSide} day detected. Audit why the scheduler did not hold or enter ${marketMove.expectedSide}: stale data, entry gate, stop placement, or advisory side.`
     : losing
       ? "Average trade is negative. Keep the paper gate strict until the sample improves."
       : closedTrades.length
@@ -4323,6 +4385,7 @@ function getOilLearningProgress(user) {
     sampleGap,
     closedPnl,
     recentPnl,
+    dayPnl,
     lossStreak,
     winRate,
     expectancy,
@@ -4331,6 +4394,8 @@ function getOilLearningProgress(user) {
     maxOpenTrades: paperTrading.maxOpenTrades,
     action,
     ruleResponse,
+    marketMove,
+    missedDirectionalMove,
     schedulerSummary: getUserSchedulerSummary(user),
     runLocation: "Cloudflare Worker scheduler evaluates enabled paper accounts every five minutes. Your computer only needs to be on when you want to watch the UI update in the browser.",
     evidenceQuality: enoughSample ? "Reviewable sample" : `Need ${sampleGap} more closed trade${sampleGap === 1 ? "" : "s"} for a minimum review sample`
@@ -4347,6 +4412,7 @@ function createOilLearningCard(user) {
       <div class="oil-learning-grid">
         <div><span>All closed P/L</span><strong class="${progress.closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(progress.closedPnl)}</strong><small>${progress.closedCount} closed paper trades</small></div>
         <div><span>Recent closed P/L</span><strong class="${progress.recentPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(progress.recentPnl)}</strong><small>Last 12 closed trades</small></div>
+        <div><span>Today vs oil move</span><strong class="${progress.dayPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(progress.dayPnl)}</strong><small>${escapeHtml(progress.marketMove.label)}</small></div>
         <div><span>Average trade</span><strong class="${Number.isFinite(progress.expectancy) && progress.expectancy >= 0 ? "gain" : "loss"}">${Number.isFinite(progress.expectancy) ? formatSignedMoney(progress.expectancy) : "-"}</strong><small>${Number.isFinite(progress.winRate) ? `${formatPercent(progress.winRate)} win rate` : "No win-rate sample"}</small></div>
         <div><span>Risk gate</span><strong>${progress.entryThreshold}/100</strong><small>${formatNumberInput(progress.riskPct, 2)}% risk, max ${progress.maxOpenTrades} open</small></div>
       </div>
@@ -4354,6 +4420,10 @@ function createOilLearningCard(user) {
         <div>
           <span class="stat-label">What I am doing now</span>
           <p>${escapeHtml(progress.action)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Market move capture</span>
+          <p>${escapeHtml(progress.missedDirectionalMove ? `Missed ${progress.marketMove.expectedSide} capture. ${progress.marketMove.detail}` : progress.marketMove.detail)}</p>
         </div>
         <div>
           <span class="stat-label">Response to losing money</span>
