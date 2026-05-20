@@ -3223,6 +3223,20 @@ function shouldUsePaperLedgerSummaryTotals() {
   );
 }
 
+function getPaperLedgerSummaryCounts(row = {}) {
+  return {
+    active: Number(row.activeOpenCount) || 0,
+    entries: Number(row.tradeCount) || 0,
+    exits: Number(row.closedCount) || 0,
+    auditRows: Number(row.rawRowCount) || 0
+  };
+}
+
+function getPaperLedgerSummaryLabel(row = {}, displayedRows = 0) {
+  const counts = getPaperLedgerSummaryCounts(row);
+  return `Cloudflare summary: ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
+}
+
 function formatPossessiveName(name) {
   const cleanName = String(name || "").trim();
   if (!cleanName) return "";
@@ -4619,9 +4633,9 @@ function createLeaderBoardTradeHistoryPanel(user) {
   summary.innerHTML = `
     <div><span class="stat-label">Period</span><strong>${escapeHtml(LEADERBOARD_PERIOD_OPTIONS[leaderboardPeriodMode]?.label || "All Time")}</strong></div>
     <div><span class="stat-label">Closed P/L</span><strong class="${closedPnl >= 0 ? "gain" : "loss"}">${formatSignedMoney(closedPnl)}</strong></div>
-    <div><span class="stat-label">Opened / closed</span><strong>${openedCount} / ${closedCount}</strong></div>
+    <div><span class="stat-label">Entries / matched exits</span><strong>${openedCount} / ${closedCount}</strong></div>
     <div><span class="stat-label">Active enabled trades</span><strong>${openTrades.length}</strong></div>
-    <div><span class="stat-label">Raw enabled rows</span><strong>${rawRowCount}</strong></div>
+    <div><span class="stat-label">Cloudflare audit rows</span><strong>${rawRowCount}</strong></div>
   `;
 
   tableWrap.className = "history-wrap";
@@ -4988,8 +5002,8 @@ function renderLeaderBoard() {
     const tradeButton = document.createElement("button");
     tradeButton.type = "button";
     tradeButton.className = "leaderboard-trades-trigger";
-    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} opened / ${entry.closedCount} closed`;
-    tradeButton.title = `Counts are limited to this account's currently enabled paper-trading commodities. Raw Cloudflare audit rows: ${entry.rawRowCount}.`;
+    tradeButton.textContent = `${entry.activeOpenCount} active / ${entry.tradeCount} entries / ${entry.closedCount} exits`;
+    tradeButton.title = `Entries are opening trade records. Exits are matched closing trade records. Cloudflare audit rows: ${entry.rawRowCount}. These counts are different ledger views and are not meant to add together.`;
     tradeButton.setAttribute("aria-label", `Open ${entry.name} trade history`);
     tradeButton.addEventListener("click", () => openLeaderBoardUserDetail(entry.user, "trades"));
 
@@ -13518,13 +13532,16 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const serverTotalRows = usePaperSummaryTotals && Number.isFinite(paperSummaryRawRows)
     ? paperSummaryRawRows
     : displaySourceEntries.length;
+  const displayCountText = usePaperSummaryTotals
+    ? `${rowsToRender.length} display rows / ${serverTotalRows} Cloudflare audit rows`
+    : `${rowsToRender.length} row${rowsToRender.length === 1 ? "" : "s"}`;
 
   renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
   renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
-  historyTotalCountEl.textContent = `${rowsToRender.length} shown / ${serverTotalRows} total`;
+  historyTotalCountEl.textContent = displayCountText;
   if (sharedHistoryStatusEl && displaySourceEntries.length) {
     sharedHistoryStatusEl.textContent = usePaperSummaryTotals
-      ? `Cloudflare summary loaded ${serverTotalRows} server rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`
+      ? getPaperLedgerSummaryLabel(paperSummaryRow, rowsToRender.length)
       : `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
   }
 
