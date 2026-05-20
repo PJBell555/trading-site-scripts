@@ -6925,7 +6925,7 @@ function getOpenTradeMarkPrice(entry = {}) {
   if (isClosingTransaction(entry) || entry.closedAt) return NaN;
   if (getTransactionStateCode(entry) !== "O") return NaN;
   const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
-  const livePrice = getUsableMarketPrice(commodity);
+  const livePrice = getDisplayMarketPrice(commodity);
   return Number.isFinite(Number(livePrice)) && Number(livePrice) > 0 ? Number(livePrice) : NaN;
 }
 
@@ -6952,20 +6952,21 @@ function buildOpenTradeMarkCell(entry = {}) {
     return cell;
   }
   cell.className = "current-mark-price";
-  cell.title = "Current Coinbase price, not a filled exit price.";
+  const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
+  cell.title = getDisplayMarketPriceTitle(commodity);
   cell.textContent = formatPrice(markPrice);
   return cell;
 }
 
 function buildLiveMarkCellForCommodity(commodity) {
   const cell = document.createElement("td");
-  const markPrice = getUsableMarketPrice(commodity);
+  const markPrice = getDisplayMarketPrice(commodity);
   if (!Number.isFinite(Number(markPrice)) || Number(markPrice) <= 0) {
     cell.textContent = UNAVAILABLE_TEXT;
     return cell;
   }
   cell.className = "current-mark-price";
-  cell.title = "Current Coinbase price, not a filled exit price.";
+  cell.title = getDisplayMarketPriceTitle(commodity);
   cell.textContent = formatPrice(Number(markPrice));
   return cell;
 }
@@ -8571,6 +8572,33 @@ function isUsableMarketPrice(commodity) {
 function getUsableMarketPrice(commodity) {
   if (!isUsableMarketPrice(commodity)) return null;
   return confirmedLivePrices.has(commodity) ? confirmedLivePrices.get(commodity) : latestPrices.get(commodity);
+}
+
+function getLastKnownMarketPrice(commodity) {
+  if (!isStoredPriceForActiveContract(commodity)) return null;
+  const price = confirmedLivePrices.has(commodity)
+    ? confirmedLivePrices.get(commodity)
+    : latestPrices.get(commodity);
+  return Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : null;
+}
+
+function getLastKnownMarketPriceTime(commodity) {
+  if (!isStoredPriceForActiveContract(commodity)) return null;
+  return confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
+}
+
+function getDisplayMarketPrice(commodity) {
+  return getUsableMarketPrice(commodity) ?? getLastKnownMarketPrice(commodity);
+}
+
+function getDisplayMarketPriceTitle(commodity) {
+  const updatedAt = getLastKnownMarketPriceTime(commodity);
+  const updatedDate = updatedAt ? getTransactionDate(updatedAt) : null;
+  if (isUsableMarketPrice(commodity)) return "Current Coinbase price, not a filled exit price.";
+  if (updatedDate && Number.isFinite(updatedDate.getTime())) {
+    return `Last known Coinbase price from ${formatPriceTime(updatedDate)}. Actual trade exits still require a fresh price.`;
+  }
+  return "Waiting for Coinbase price.";
 }
 
 function getUsableMarketPriceTime(commodity) {
@@ -13446,9 +13474,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const openTrade = getOpenPaperTrade(commodity);
   const openTrades = Array.from(openPaperTrades.values())
     .filter((trade) => userCanTradeCommodity(trade.commodity));
-  const hasOpenTradeWithoutPrice = openTrades.some((trade) => !isUsableMarketPrice(trade.commodity));
+  const hasOpenTradeWithoutDisplayPrice = openTrades.some((trade) => !Number.isFinite(getDisplayMarketPrice(trade.commodity)));
+  const hasOpenTradeWithoutFreshPrice = openTrades.some((trade) => !isUsableMarketPrice(trade.commodity));
   const openPl = openTrades.reduce((total, trade) => {
-    const currentPrice = getUsableMarketPrice(trade.commodity);
+    const currentPrice = getDisplayMarketPrice(trade.commodity);
     if (!Number.isFinite(currentPrice)) return total;
     return total + getTradePnl(trade, currentPrice);
   }, 0);
@@ -13473,8 +13502,13 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   paperSizeEl.textContent = openTrade ? `${openTrade.contracts || openTrade.quantity} contract${(openTrade.contracts || openTrade.quantity) === 1 ? "" : "s"}` : "Minimum trade";
   paperCommittedEl.textContent = openTrade ? formatMoney(committedCapital) : formatMoney(nextCapital);
   paperCommittedEl.previousElementSibling.textContent = openTrade ? "Committed capital" : "Next trade capital";
-  paperOpenPlEl.textContent = hasOpenTradeWithoutPrice ? UNAVAILABLE_TEXT : formatSignedMoney(openPl);
-  paperOpenPlEl.className = hasOpenTradeWithoutPrice ? "" : openPl >= 0 ? "gain" : "loss";
+  paperOpenPlEl.textContent = hasOpenTradeWithoutDisplayPrice ? UNAVAILABLE_TEXT : formatSignedMoney(openPl);
+  paperOpenPlEl.className = hasOpenTradeWithoutDisplayPrice ? "" : openPl >= 0 ? "gain" : "loss";
+  paperOpenPlEl.title = hasOpenTradeWithoutDisplayPrice
+    ? "Waiting for Coinbase price."
+    : hasOpenTradeWithoutFreshPrice
+      ? "Uses the last known Coinbase price for display. Actual trade exits still require a fresh price."
+      : "Uses current Coinbase price.";
   paperMartingaleEl.textContent = `Step ${martingaleStep} / ${maxMartingaleStep} (${formatMoney(nextCapital)}) - ${marketStatus.shortLabel}`;
   if (paperMarketStatusEl) {
     paperMarketStatusEl.textContent = `${marketStatus.label}: ${marketStatus.detail}`;
