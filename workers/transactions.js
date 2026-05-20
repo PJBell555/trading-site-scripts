@@ -5350,6 +5350,20 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
   const normalizedMode = normalizeTradeMode(tradeMode);
   if (request.method === "GET") {
     const payload = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
+    if (normalizedMode === PAPER_TRADE_MODE) {
+      const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+        env,
+        await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+      ));
+      const priceSnapshots = await loadStoredPriceSnapshots(env);
+      payload.summary = buildServerLeaderboardSummary(
+        settings,
+        payload.transactions || [],
+        priceSnapshots,
+        "all",
+        "cloudflare-d1-paper-ledger-summary"
+      );
+    }
     return jsonResponse(payload, 200, origin);
   }
 

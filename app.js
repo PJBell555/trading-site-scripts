@@ -807,6 +807,8 @@ let leaderBoardSummaryPeriod = "";
 let leaderBoardSummaryError = "";
 let leaderBoardSummaryRefreshing = false;
 let leaderBoardSummaryFromDisplayCache = false;
+let paperLedgerSummaryRows = [];
+let paperLedgerSummaryLoadedAt = 0;
 let activeSkillSystem = "micro-predictor";
 let activeCustomSkillId = "";
 let skillSearchQuery = "";
@@ -3204,6 +3206,21 @@ function getCurrentMartingaleMaxStep() {
 
 function getCurrentLedgerEmail() {
   return normalizeEmail(getCurrentUserProfile()?.email || getCurrentAccessEmail() || LEGACY_LEDGER_USER_EMAIL);
+}
+
+function getCurrentPaperLedgerSummaryRow() {
+  const email = getCurrentLedgerEmail();
+  if (!email || !paperLedgerSummaryRows.length) return null;
+  return paperLedgerSummaryRows.find((row) => normalizeEmail(row?.email || row?.user?.email) === email) || null;
+}
+
+function shouldUsePaperLedgerSummaryTotals() {
+  return Boolean(
+    transactionHistoryLoadedFromBackend
+    && !historyFiltersTouched
+    && normalizeHistoryCommodityFilter() === "all"
+    && historyPeriodFilter === "all"
+  );
 }
 
 function formatPossessiveName(name) {
@@ -8511,6 +8528,8 @@ function getBackendBackoffText(syncAt) {
 function clearCloudRuntimeLedgerState() {
   transactionHistory.length = 0;
   transactionHistoryLoadedFromBackend = false;
+  paperLedgerSummaryRows = [];
+  paperLedgerSummaryLoadedAt = 0;
   openPaperTrades.clear();
   pendingPaperActions.clear();
 }
@@ -12025,7 +12044,10 @@ async function saveSharedTransactionHistory() {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    const summaryRows = Array.isArray(data?.summary?.rows) ? data.summary.rows : [];
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
+    paperLedgerSummaryRows = summaryRows;
+    paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
     reconcilePaperStateFromHistory();
     sharedHistoryStatusEl.textContent = `Backend saved ${entries.length || transactionHistory.length} rows`;
     backendHistoryReady = true;
@@ -12151,7 +12173,10 @@ async function loadSharedTransactionHistory(manual = false) {
 
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
+    const summaryRows = Array.isArray(data?.summary?.rows) ? data.summary.rows : [];
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
+    paperLedgerSummaryRows = summaryRows;
+    paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     transactionHistoryLoadedFromBackend = true;
@@ -13480,14 +13505,27 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     periodEntries = displaySourceEntries.slice();
   }
 
-  const allTotal = getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries);
-  const filteredTotal = getProfitTotal(rowsToRender);
+  const paperSummaryRow = getCurrentPaperLedgerSummaryRow();
+  const usePaperSummaryTotals = shouldUsePaperLedgerSummaryTotals() && paperSummaryRow;
+  const paperSummaryClosedPnl = Number(paperSummaryRow?.closedPnl);
+  const paperSummaryRawRows = Number(paperSummaryRow?.rawRowCount);
+  const allTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
+    ? paperSummaryClosedPnl
+    : getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries);
+  const filteredTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
+    ? paperSummaryClosedPnl
+    : getProfitTotal(rowsToRender);
+  const serverTotalRows = usePaperSummaryTotals && Number.isFinite(paperSummaryRawRows)
+    ? paperSummaryRawRows
+    : displaySourceEntries.length;
 
-  renderPnlWithCapital(historyTotalAllEl, allTotal);
+  renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
   renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
-  historyTotalCountEl.textContent = `${rowsToRender.length} shown / ${displaySourceEntries.length} total`;
+  historyTotalCountEl.textContent = `${rowsToRender.length} shown / ${serverTotalRows} total`;
   if (sharedHistoryStatusEl && displaySourceEntries.length) {
-    sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
+    sharedHistoryStatusEl.textContent = usePaperSummaryTotals
+      ? `Cloudflare summary loaded ${serverTotalRows} server rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`
+      : `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
   }
 
   if (!rowsToRender.length) {
