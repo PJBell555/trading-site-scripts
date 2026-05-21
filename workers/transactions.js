@@ -151,6 +151,7 @@ const ACCOUNT_EMAIL_ALIASES = {
   "pete@ambeil.com": "peterambiel@gmail.com",
   "peter@ambiel.com": "peterambiel@gmail.com"
 };
+const MARKOV_METHOD_TEST_AGENT_EMAILS = new Set(["peter@pjbell.com", "aretwo3000@gmail.com"]);
 
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
@@ -2333,6 +2334,10 @@ function shouldUseExclusiveMartingale(user = {}) {
   return type.includes("martingale") || name.includes("martingale");
 }
 
+function isMarkovMethodTestAgent(user = {}) {
+  return MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizeEmail(user.email || user.userEmail || ""));
+}
+
 function getServerStrategySettings(user = {}) {
   const strategy = user.strategy && typeof user.strategy === "object" ? user.strategy : {};
   return {
@@ -2353,6 +2358,12 @@ function getServerStrategySettings(user = {}) {
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
     breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
     trendCaptureMode: strategy.trendCaptureMode !== false,
+    markovHedgeFundMethod: Object.prototype.hasOwnProperty.call(strategy, "markovHedgeFundMethod")
+      ? strategy.markovHedgeFundMethod === true
+      : isMarkovMethodTestAgent(user),
+    markovRegimeMoveBps: clamp(Number(strategy.markovRegimeMoveBps) || 8, 1, 100),
+    markovSidewaysThresholdBoost: clamp(Math.round(Number(strategy.markovSidewaysThresholdBoost) || 5), 0, 30),
+    markovSidewaysSizeMultiplier: clamp(Number(strategy.markovSidewaysSizeMultiplier) || 0.5, 0.1, 1),
     trendDayDirectionalHold: strategy.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: strategy.blockLongsInFallingTrend !== false,
     volatilityAwareStops: strategy.volatilityAwareStops !== false,
@@ -3706,6 +3717,40 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
   };
 }
 
+function getServerMarkovMethodAssessment(signal, micro, strategy, directionalContext) {
+  if (!strategy.markovHedgeFundMethod) {
+    return { enabled: false, state: "off", expectedSide: null, counterState: false, thresholdBoost: 0, sizeMultiplier: 1, reason: "" };
+  }
+
+  const threshold = Number(strategy.markovRegimeMoveBps) || 8;
+  const recentMove = Number(directionalContext?.ret180) || Number(directionalContext?.ret60) || Number(directionalContext?.recentMove) || 0;
+  const upEdge = Number(directionalContext?.upEdge) || Math.round((Number.isFinite(Number(micro?.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
+  const downEdge = Number(directionalContext?.downEdge) || Math.round((Number.isFinite(Number(micro?.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+  const bull = Boolean(
+    directionalContext?.isBullishTrend
+    || (micro?.ready && (recentMove >= threshold || (upEdge >= 58 && Number(directionalContext?.vwapDistance) > 0 && Number(directionalContext?.ret30) > 0)))
+  );
+  const bear = Boolean(
+    directionalContext?.isBearishTrend
+    || (micro?.ready && (recentMove <= -threshold || (downEdge >= 58 && Number(directionalContext?.vwapDistance) < 0 && Number(directionalContext?.ret30) < 0)))
+  );
+  const state = bear && !bull ? "bear" : bull && !bear ? "bull" : "sideways";
+  const expectedSide = state === "bear" ? "short" : state === "bull" ? "long" : null;
+  const activeSide = signal?.side || null;
+  const counterState = Boolean(expectedSide && activeSide && activeSide !== expectedSide);
+  const sideways = state === "sideways";
+
+  return {
+    enabled: true,
+    state,
+    expectedSide,
+    counterState,
+    thresholdBoost: sideways ? Number(strategy.markovSidewaysThresholdBoost) || 0 : 0,
+    sizeMultiplier: sideways ? Number(strategy.markovSidewaysSizeMultiplier) || 1 : 1,
+    reason: `Markov state ${state}: recent move ${recentMove.toFixed(2)} bps, up edge ${upEdge}%, down edge ${downEdge}%.`
+  };
+}
+
 function shouldHoldServerDirectionalShort(openTrade, price, strategy, directionalContext) {
   if (!strategy.trendDayDirectionalHold || openTrade.side !== "short" || !directionalContext?.shortContinuationConfirmed) return false;
   const stopPrice = Number(openTrade.stopPrice);
@@ -3766,7 +3811,7 @@ function applyServerProfitLockStop(openTrade, price, strategy, directionalContex
   };
 }
 
-function getServerEntryQualityGate(activeSignal, price, strategy, directionalContext, breakoutSignal = null, reentrySignal = null) {
+function getServerEntryQualityGate(activeSignal, price, strategy, directionalContext, breakoutSignal = null, reentrySignal = null, markovMethod = null) {
   if (!activeSignal?.side) return { ok: true, reason: "" };
   if (reentrySignal) return { ok: true, reason: "post-stop re-entry override" };
 
@@ -3776,9 +3821,19 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
   const ret60 = Number(directionalContext?.ret60) || 0;
   const ret180 = Number(directionalContext?.ret180) || 0;
   const vwapDistance = Number(directionalContext?.vwapDistance) || 0;
+  const downEdge = Number(directionalContext?.downEdge) || 50;
   const volatility = Number(directionalContext?.volatility) || 0;
   const noChaseMoveBps = Number(strategy.noChaseMoveBps) || 0;
   const pullbackMinRetraceBps = Number(strategy.pullbackMinRetraceBps) || 0;
+
+  if (markovMethod?.enabled && markovMethod.counterState && !breakoutSignal) {
+    if (side === "long" && markovMethod.state === "bear" && !directionalContext?.longReversalConfirmed) {
+      return { ok: false, reason: `Markov bear state blocks long without reversal confirmation. ${markovMethod.reason}` };
+    }
+    if (side === "short" && markovMethod.state === "bull" && !(ret30 < 0 && vwapDistance < 0 && downEdge >= 58)) {
+      return { ok: false, reason: `Markov bull state blocks short without breakdown confirmation. ${markovMethod.reason}` };
+    }
+  }
 
   if (strategy.trendDayBias) {
     if (side === "short" && directionalContext?.isBullishTrend && !(ret30 < 0 && vwapDistance < 0)) {
@@ -4514,15 +4569,8 @@ async function runPaperTradingScheduler(env, options = {}) {
                 closeReason = `Server scheduler closed ${openTradeConfig.name} ${openTrade.side} via current ${openTradePrice.source || "server price"} after profit-lock update`;
               }
             }
-            if (closeAction === "COVER STOP" && shouldHoldServerDirectionalShort(openTrade, closePrice.price, strategySettings, directionalContext)) {
-              closeAction = null;
-              closeReason = "";
-              lastDecision = `${commodity}: holding short through bearish trend-day bounce`;
-            }
-            if (closeAction === "SELL STOP" && shouldHoldServerDirectionalLong(openTrade, closePrice.price, strategySettings, directionalContext)) {
-              closeAction = null;
-              closeReason = "";
-              lastDecision = `${commodity}: holding long through bullish trend-day pullback`;
+            if (closeAction === "COVER STOP" || closeAction === "SELL STOP") {
+              closeReason = `${closeReason} Hard stop honored; directional hold rules cannot suppress protective stops.`.trim();
             }
           }
           if (!closeAction) continue;
@@ -4592,16 +4640,25 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
 
-        const regime = getServerRegimeAssessment(signal, micro, strategySettings);
         const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
         const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
         const reentrySignal = getServerPostStopReentrySignal(transactions, email, commodity, signal, strategySettings, directionalContext);
         const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
         const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal;
+        const activeSignal = reentrySignal
+          ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
+          : breakoutSignal
+            ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
+            : trendCaptureSignal
+              ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
+              : signal;
+        const regime = getServerRegimeAssessment(activeSignal, micro, strategySettings);
+        const markovMethod = getServerMarkovMethodAssessment(activeSignal, micro, strategySettings, directionalContext);
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
             + (regime.enabled ? regime.thresholdBoost : 0)
-            + (secondOpinionConsensus.enabled ? secondOpinionConsensus.thresholdBoost : 0),
+            + (secondOpinionConsensus.enabled ? secondOpinionConsensus.thresholdBoost : 0)
+            + (markovMethod.enabled ? markovMethod.thresholdBoost : 0),
           1,
           100
         );
@@ -4619,20 +4676,13 @@ async function runPaperTradingScheduler(env, options = {}) {
           continue;
         }
 
-        const activeSignal = reentrySignal
-          ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
-          : breakoutSignal
-          ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
-          : trendCaptureSignal
-          ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
-          : signal;
         if (strategySettings.blockLongsInFallingTrend && activeSignal.side === "long" && directionalContext.isBearishTrend && !directionalContext.longReversalConfirmed) {
           lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
         }
-        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal, reentrySignal);
+        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal, reentrySignal, markovMethod);
         if (!entryQuality.ok) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
@@ -4656,7 +4706,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? 1
           : directionalOverrideSignal
             ? strategySettings.flatSizeMultiplier
-            : regime.enabled ? regime.sizeMultiplier : 1;
+            : (regime.enabled ? regime.sizeMultiplier : 1) * (markovMethod.enabled ? markovMethod.sizeMultiplier : 1);
         const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext);
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,

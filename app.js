@@ -439,6 +439,7 @@ const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const KARPATHY_AUTO_APPLY_MIGRATION_KEY = "comhedge-karpathy-auto-apply-migration-v1";
+const MARKOV_TEST_AGENT_MIGRATION_KEY = "comhedge-markov-test-agent-migration-v1";
 const PAPER_TRADE_MODE = "P";
 const REAL_TRADE_MODE = "R";
 const DEFAULT_NON_EXEMPT_USER_EQUITY = 1000;
@@ -519,6 +520,7 @@ const ADVISORY_SCORE_BANDS = [
   { label: "71+", min: 71, max: 100 }
 ];
 const KARPATHY_OIL_COACH_TEXT = "Use the Karpathy loop to improve oil trading decisions by learning from closed trade outcomes and forecast accuracy. The advisory model makes the initial long, short, or wait call. The Karpathy loop reviews outcomes after the fact and adjusts thresholds over time. It should make the advisor more selective in flat or mixed markets. It should increase confidence only when market structure, momentum, and confirmation agree. It should not force extra trades or increase size without stronger evidence. Goal: better long/short/wait decisions, fewer weak trades, and smarter behavior in choppy oil markets.";
+const MARKOV_HEDGE_FUND_METHOD_TEXT = "Markov Hedge Fund Method overlay: classify oil into bull, bear, or sideways states from recent returns and transition evidence, then use the state as a probability gate. In bull state, prefer long continuation unless breakdown is confirmed. In bear state, prefer short continuation unless reversal is confirmed. In sideways state, raise the entry bar and reduce size. Treat the matrix-style regime read as a risk filter, not a reason to overtrade.";
 const DEFAULT_USER_STRATEGY = {
   name: "Martingale with Karpathy loop",
   type: "martingale-karpathy",
@@ -548,6 +550,10 @@ const DEFAULT_USER_STRATEGY = {
   breakoutMinVolatilityBps: 0.8,
   breakoutMinMoveBps: 3,
   trendCaptureMode: true,
+  markovHedgeFundMethod: false,
+  markovRegimeMoveBps: 8,
+  markovSidewaysThresholdBoost: 5,
+  markovSidewaysSizeMultiplier: 0.5,
   trendDayDirectionalHold: true,
   blockLongsInFallingTrend: true,
   volatilityAwareStops: true,
@@ -578,6 +584,7 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   flatMinEdgePercent: 58,
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
+  markovHedgeFundMethod: true,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
   profitLockMinMoveBps: 8,
@@ -598,6 +605,7 @@ const PETER_OIL_TEST_AGENT_STRATEGY = {
   flatMinEdgePercent: 58,
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
+  markovHedgeFundMethod: true,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
   profitLockMinMoveBps: 8,
@@ -3184,6 +3192,39 @@ function migrateKarpathyAutoApplyForAllUsers() {
   return changed;
 }
 
+function migrateMarkovMethodForTestAgents() {
+  let alreadyApplied = false;
+  try {
+    alreadyApplied = window.localStorage.getItem(MARKOV_TEST_AGENT_MIGRATION_KEY) === "true";
+  } catch (_error) {
+    alreadyApplied = false;
+  }
+  if (alreadyApplied) return false;
+
+  let changed = false;
+  userRoster.forEach((user) => {
+    const email = normalizeEmail(user.email);
+    const strategy = normalizeUserStrategy(user.strategy);
+    const shouldEnable = OIL_TEST_AGENT_EMAILS.has(email);
+    if (strategy.markovHedgeFundMethod !== shouldEnable) changed = true;
+    user.strategy = {
+      ...strategy,
+      markovHedgeFundMethod: shouldEnable
+    };
+  });
+
+  try {
+    window.localStorage.setItem(MARKOV_TEST_AGENT_MIGRATION_KEY, "true");
+  } catch (_error) {
+    // Migration state is also persisted to Cloudflare through user strategies.
+  }
+
+  if (changed) {
+    saveUserRoster();
+  }
+  return changed;
+}
+
 function getCurrentAccessEmail() {
   return normalizeEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
 }
@@ -3353,6 +3394,10 @@ function normalizeUserStrategy(strategy = {}) {
     breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
     breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50),
     trendCaptureMode: merged.trendCaptureMode !== false,
+    markovHedgeFundMethod: merged.markovHedgeFundMethod === true,
+    markovRegimeMoveBps: clamp(Number(merged.markovRegimeMoveBps) || DEFAULT_USER_STRATEGY.markovRegimeMoveBps, 1, 100),
+    markovSidewaysThresholdBoost: clamp(Math.round(Number(merged.markovSidewaysThresholdBoost) || DEFAULT_USER_STRATEGY.markovSidewaysThresholdBoost), 0, 30),
+    markovSidewaysSizeMultiplier: clamp(Number(merged.markovSidewaysSizeMultiplier) || DEFAULT_USER_STRATEGY.markovSidewaysSizeMultiplier, 0.1, 1),
     trendDayDirectionalHold: merged.trendDayDirectionalHold !== false,
     blockLongsInFallingTrend: merged.blockLongsInFallingTrend !== false,
     volatilityAwareStops: merged.volatilityAwareStops !== false,
@@ -3442,6 +3487,10 @@ const STRATEGY_HISTORY_FIELDS = [
   ["breakoutMinEdgePercent", "Breakout minimum edge"],
   ["breakoutMinVolatilityBps", "Breakout minimum volatility"],
   ["breakoutMinMoveBps", "Breakout minimum move"],
+  ["markovHedgeFundMethod", "Markov Hedge Fund Method"],
+  ["markovRegimeMoveBps", "Markov regime move"],
+  ["markovSidewaysThresholdBoost", "Markov sideways threshold boost"],
+  ["markovSidewaysSizeMultiplier", "Markov sideways size multiplier"],
   ["trendDayBias", "Trend-day bias"],
   ["noChaseEntries", "No-chase entries"],
   ["pullbackEntryRequired", "Pullback entry required"],
@@ -3458,9 +3507,9 @@ function formatStrategyFieldValue(key, value) {
   if (typeof value === "boolean") return value ? "On" : "Off";
   if (key.toLowerCase().includes("percent")) return `${value}%`;
   if (key.toLowerCase().includes("volatility")) return `${formatNumberInput(value, 2)} bps`;
-  if (key === "breakoutMinMoveBps" || key === "noChaseMoveBps" || key === "pullbackMinRetraceBps" || key === "profitLockMinMoveBps" || key === "missedOpportunityMoveBps") return `${formatNumberInput(value, 2)} bps`;
+  if (key === "breakoutMinMoveBps" || key === "markovRegimeMoveBps" || key === "noChaseMoveBps" || key === "pullbackMinRetraceBps" || key === "profitLockMinMoveBps" || key === "missedOpportunityMoveBps") return `${formatNumberInput(value, 2)} bps`;
   if (key === "profitLockGivebackPct") return `${formatNumberInput(value, 0)}%`;
-  if (key === "flatSizeMultiplier") return `${formatNumberInput(value, 2)}x`;
+  if (key === "flatSizeMultiplier" || key === "markovSidewaysSizeMultiplier") return `${formatNumberInput(value, 2)}x`;
   return String(value ?? "");
 }
 
@@ -3494,6 +3543,7 @@ function getRegimeAwareSeedBefore(strategy = getCurrentUserStrategy()) {
 
 const STRATEGY_BASELINE_TEXT = "Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.";
 const STRATEGY_REGIME_REFINEMENT_TEXT = "Refinement 5/9/2026: Regime-aware Martingale for Oil. Use the 4-step Martingale structure only when oil is trading with clear directional confirmation and real volatility. When the market is flat, mixed, or choppy, reduce Martingale aggressiveness instead of disabling it entirely. Flat / mixed regime: treat 1-minute edge near 50% as a wait condition, not a strong trade. Require sustained trend confirmation, VWAP reclaim, and improving 10s/30s momentum before increasing size. Reduce Martingale step size and/or cap the number of recovery steps. Do not let Martingale amplify weak C-grade setups. Volatile / trending regime: restore fuller Martingale sizing only when price, tape, and momentum are aligned. Allow the recovery sequence to work when there is genuine directional movement. Keep the Karpathy loop active so it can adjust advisory thresholds from closed-trade outcomes. Coach logic: the Karpathy loop should adjust thresholds, not force more trades. Martingale should respond to market regime, not stay fixed. The default in uncertainty should be smaller size, fewer recovery steps, and more confirmation.";
+const STRATEGY_MARKOV_REFINEMENT_TEXT = "Refinement 5/21/2026: Markov Hedge Fund Method for Peter Bell and D2 only. Use a Markov-style state transition overlay to classify oil as bull, bear, or sideways from recent return behavior and transition evidence. Bull state favors long continuation unless breakdown is confirmed. Bear state favors short continuation unless reversal is confirmed. Sideways state raises the entry threshold and reduces size. This is a paper-only test strategy switch, not personalized investment advice.";
 
 function ensureStrategySeedHistory(user, strategy = getCurrentUserStrategy()) {
   const existing = normalizeStrategyHistory(user?.strategyHistory);
@@ -3542,6 +3592,39 @@ function ensureStrategySeedHistory(user, strategy = getCurrentUserStrategy()) {
   return normalizeStrategyHistory(user.strategyHistory);
 }
 
+function seedMarkovStrategyHistoryForTestAgents() {
+  let changed = false;
+  userRoster.forEach((user) => {
+    if (!OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email))) return;
+    const history = normalizeStrategyHistory(user.strategyHistory);
+    if (history.some((entry) => entry.id === "strategy-change-0003-markov-hedge-fund-method")) {
+      user.strategyHistory = history;
+      return;
+    }
+    const after = normalizeUserStrategy(user.strategy);
+    const before = normalizeUserStrategy({
+      ...after,
+      markovHedgeFundMethod: false
+    });
+    user.strategyHistory = normalizeStrategyHistory([
+      {
+        id: "strategy-change-0003-markov-hedge-fund-method",
+        changedAt: "2026-05-21T00:00:00.000Z",
+        changedByName: "Peter Bell",
+        changedByEmail: "peter@pjbell.com",
+        summary: "Refinement 5/21/2026: Markov Hedge Fund Method enabled",
+        detail: STRATEGY_MARKOV_REFINEMENT_TEXT,
+        before,
+        after
+      },
+      ...history
+    ]);
+    changed = true;
+  });
+  if (changed) saveUserRoster();
+  return changed;
+}
+
 function getStrategyChangeSummary(before, after) {
   const changes = [];
   if (before.name !== after.name) changes.push("name");
@@ -3570,6 +3653,10 @@ function getStrategyChangeSummary(before, after) {
   if (before.breakoutMinEdgePercent !== after.breakoutMinEdgePercent) changes.push("breakout edge minimum");
   if (before.breakoutMinVolatilityBps !== after.breakoutMinVolatilityBps) changes.push("breakout volatility minimum");
   if (before.breakoutMinMoveBps !== after.breakoutMinMoveBps) changes.push("breakout move minimum");
+  if (before.markovHedgeFundMethod !== after.markovHedgeFundMethod) changes.push(after.markovHedgeFundMethod ? "enabled Markov Hedge Fund Method" : "disabled Markov Hedge Fund Method");
+  if (before.markovRegimeMoveBps !== after.markovRegimeMoveBps) changes.push("Markov regime move");
+  if (before.markovSidewaysThresholdBoost !== after.markovSidewaysThresholdBoost) changes.push("Markov sideways threshold boost");
+  if (before.markovSidewaysSizeMultiplier !== after.markovSidewaysSizeMultiplier) changes.push("Markov sideways size multiplier");
   if (before.trendCaptureMode !== after.trendCaptureMode) changes.push(after.trendCaptureMode ? "enabled trend capture mode" : "disabled trend capture mode");
   if (before.trendDayDirectionalHold !== after.trendDayDirectionalHold) changes.push(after.trendDayDirectionalHold ? "enabled trend-day directional hold" : "disabled trend-day directional hold");
   if (before.blockLongsInFallingTrend !== after.blockLongsInFallingTrend) changes.push(after.blockLongsInFallingTrend ? "enabled falling-trend long block" : "disabled falling-trend long block");
@@ -5354,6 +5441,10 @@ function saveUserStrategySettings(user, container) {
     pullbackEntryRequired: container.querySelector("[data-strategy-field='pullbackEntryRequired']")?.checked,
     profitLockTrailingStop: container.querySelector("[data-strategy-field='profitLockTrailingStop']")?.checked,
     missedOpportunityLearner: container.querySelector("[data-strategy-field='missedOpportunityLearner']")?.checked,
+    markovHedgeFundMethod: container.querySelector("[data-strategy-field='markovHedgeFundMethod']")?.checked,
+    markovRegimeMoveBps: container.querySelector("[data-strategy-field='markovRegimeMoveBps']")?.value,
+    markovSidewaysThresholdBoost: container.querySelector("[data-strategy-field='markovSidewaysThresholdBoost']")?.value,
+    markovSidewaysSizeMultiplier: container.querySelector("[data-strategy-field='markovSidewaysSizeMultiplier']")?.value,
     flatMaxMartingaleSteps: container.querySelector("[data-strategy-field='flatMaxMartingaleSteps']")?.value,
     flatSizeMultiplier: container.querySelector("[data-strategy-field='flatSizeMultiplier']")?.value,
     flatThresholdBoost: container.querySelector("[data-strategy-field='flatThresholdBoost']")?.value,
@@ -5548,6 +5639,10 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "breakoutMinEdgePercent", label: "Breakout minimum edge", value: strategy.breakoutMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%", help: "Minimum micro predictor probability required before the breakout override can participate. Applies to both long and short breakouts." },
     { key: "breakoutMinVolatilityBps", label: "Breakout minimum volatility", value: strategy.breakoutMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps", help: "Minimum live tick volatility required. This prevents breakout trades in dead or flat tape." },
     { key: "breakoutMinMoveBps", label: "Breakout minimum move", value: strategy.breakoutMinMoveBps, type: "number", min: 0, max: 50, step: 0.1, suffix: " bps", help: "Minimum 60-second directional move. Positive move can trigger long, negative move can trigger short." },
+    { key: "markovHedgeFundMethod", label: "Markov Hedge Fund Method", value: strategy.markovHedgeFundMethod, type: "checkbox", on: "State transition gate active", off: "Off", help: "Classifies oil into bull, bear, or sideways states from recent return behavior and uses the state as a probability gate. Bear state favors shorts, bull state favors longs, and sideways state raises the threshold and reduces size." },
+    { key: "markovRegimeMoveBps", label: "Markov regime move", value: strategy.markovRegimeMoveBps, type: "number", min: 1, max: 100, step: 0.1, suffix: " bps", help: "Minimum recent move used to separate bull or bear state from sideways for the live scheduler adaptation." },
+    { key: "markovSidewaysThresholdBoost", label: "Markov sideways threshold boost", value: strategy.markovSidewaysThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+", help: "Extra conviction required when the Markov state is sideways." },
+    { key: "markovSidewaysSizeMultiplier", label: "Markov sideways size multiplier", value: strategy.markovSidewaysSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x", help: "Capital multiplier used when the Markov state is sideways." },
     { key: "trendCaptureMode", label: "Trend capture mode", value: strategy.trendCaptureMode, type: "checkbox", on: "Follows confirmed trend days", off: "Off", help: "Lets the Cloudflare scheduler stay with a clear directional day, re-enter after trend-side stopouts, and avoid treating every pullback as a reason to abandon the broader move. Martingale sizing still works the normal way." },
     { key: "noChaseMoveBps", label: "No-chase move threshold", value: strategy.noChaseMoveBps, type: "number", min: 0, max: 100, step: 0.1, suffix: " bps", help: "If the recent move is larger than this threshold, the scheduler will not enter in the same direction without a pullback." },
     { key: "pullbackMinRetraceBps", label: "Pullback minimum retrace", value: strategy.pullbackMinRetraceBps, type: "number", min: 0, max: 30, step: 0.1, suffix: " bps", help: "Minimum short pullback or bounce required before entering with the trend." },
@@ -5831,7 +5926,7 @@ function renderAdvisorDecisionDetail(signal = lastPrimarySignal, tradePlan = las
     },
     {
       title: "Execution quality gates",
-      body: `Trend capture mode is ${strategy.trendCaptureMode ? "on" : "off"}, trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
+      body: `Markov Hedge Fund Method is ${strategy.markovHedgeFundMethod ? "on" : "off"}${tradePlan.markovMethod?.enabled ? ` with ${tradePlan.markovMethod.state} state` : ""}. Trend capture mode is ${strategy.trendCaptureMode ? "on" : "off"}, trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
     },
     {
       title: "Cloudflare scheduler",
@@ -6301,6 +6396,10 @@ function createUserProfilePanel(user) {
         <input data-strategy-field="missedOpportunityLearner" type="checkbox"${strategy.missedOpportunityLearner ? " checked" : ""} title="Logs strong moves the scheduler missed so we can study bad execution timing separately from bad forecasts.">
         Missed-opportunity learner <span class="profile-field-hint" title="Writes a Cloudflare Open Brain memory when price makes a large move but no trade opens.">logs missed moves</span>
       </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="markovHedgeFundMethod" type="checkbox"${strategy.markovHedgeFundMethod ? " checked" : ""} title="${escapeHtml(MARKOV_HEDGE_FUND_METHOD_TEXT)}">
+        Markov Hedge Fund Method <span class="profile-field-hint" title="${escapeHtml(MARKOV_HEDGE_FUND_METHOD_TEXT)}">state transition gate</span>
+      </label>
       <label>
         Flat max steps
         <input data-strategy-field="flatMaxMartingaleSteps" type="number" min="1" max="8" step="1" value="${strategy.flatMaxMartingaleSteps}">
@@ -6344,6 +6443,18 @@ function createUserProfilePanel(user) {
       <label>
         Breakout min 60s move bps <span class="profile-field-hint" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">?</span>
         <input data-strategy-field="breakoutMinMoveBps" type="number" min="0" max="50" step="0.1" value="${formatNumberInput(strategy.breakoutMinMoveBps, 2)}" title="Minimum 60-second directional move. Positive can trigger long, negative can trigger short.">
+      </label>
+      <label>
+        Markov regime move bps <span class="profile-field-hint" title="Minimum recent oil move used to label live state as bull or bear instead of sideways.">?</span>
+        <input data-strategy-field="markovRegimeMoveBps" type="number" min="1" max="100" step="0.1" value="${formatNumberInput(strategy.markovRegimeMoveBps, 2)}" title="Minimum recent oil move used to label live state as bull or bear instead of sideways.">
+      </label>
+      <label>
+        Markov sideways threshold boost <span class="profile-field-hint" title="Extra conviction required when the Markov state is sideways.">?</span>
+        <input data-strategy-field="markovSidewaysThresholdBoost" type="number" min="0" max="30" step="1" value="${strategy.markovSidewaysThresholdBoost}" title="Extra conviction required when the Markov state is sideways.">
+      </label>
+      <label>
+        Markov sideways size multiplier <span class="profile-field-hint" title="Capital multiplier used when the Markov state is sideways.">?</span>
+        <input data-strategy-field="markovSidewaysSizeMultiplier" type="number" min="0.1" max="1" step="0.05" value="${formatNumberInput(strategy.markovSidewaysSizeMultiplier, 2)}" title="Capital multiplier used when the Markov state is sideways.">
       </label>
       <label>
         No-chase move bps <span class="profile-field-hint" title="If the recent move is already larger than this, the scheduler waits instead of chasing.">?</span>
@@ -8404,6 +8515,9 @@ function getSignalExplanation(signal, tradePlan) {
   if (tradePlan.secondOpinionConsensus?.blocksEntry) {
     return `Waiting because the second-opinion consensus gate blocked this ${side} call: ${tradePlan.secondOpinionConsensus.detail}`;
   }
+  if (tradePlan.markovMethod?.enabled && tradePlan.markovMethod.counterState) {
+    return `Waiting because the Markov state is ${tradePlan.markovMethod.state}, which favors ${tradePlan.markovMethod.expectedSide}; counter-state entries need stronger reversal or breakdown confirmation.`;
+  }
   if (tradePlan.regime?.enabled && tradePlan.regime.blocksWeakSetup) {
     return `Waiting because the ${tradePlan.regime.regime} regime marks this as a weak setup; edge is ${tradePlan.regime.edgePercent}% and volatility is ${tradePlan.regime.volatility.toFixed(2)} bps.`;
   }
@@ -8474,6 +8588,31 @@ function getRegimeAssessment(signal, strategy = getCurrentUserStrategy()) {
         && momentumAligned
       )
     )
+  };
+}
+
+function getMarkovMethodAssessment(signal, strategy = getCurrentUserStrategy()) {
+  const micro = signal?.micro || {};
+  const threshold = Number(strategy.markovRegimeMoveBps) || DEFAULT_USER_STRATEGY.markovRegimeMoveBps;
+  const recentMove = Number(micro.ret180) || Number(micro.ret60) || 0;
+  const upEdge = Math.round((Number.isFinite(Number(micro.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
+  const downEdge = Math.round((Number.isFinite(Number(micro.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+  const bull = Boolean(micro.ready && (recentMove >= threshold || (upEdge >= 58 && Number(micro.vwapDistance) > 0 && Number(micro.ret30) > 0)));
+  const bear = Boolean(micro.ready && (recentMove <= -threshold || (downEdge >= 58 && Number(micro.vwapDistance) < 0 && Number(micro.ret30) < 0)));
+  const state = bear && !bull ? "bear" : bull && !bear ? "bull" : "sideways";
+  const expectedSide = state === "bear" ? "short" : state === "bull" ? "long" : null;
+  const activeSide = getSignalSide(signal);
+  const counterState = Boolean(expectedSide && activeSide && activeSide !== expectedSide);
+  const sideways = state === "sideways";
+
+  return {
+    enabled: strategy.markovHedgeFundMethod === true,
+    state,
+    expectedSide,
+    counterState,
+    thresholdBoost: sideways ? Number(strategy.markovSidewaysThresholdBoost) || 0 : 0,
+    sizeMultiplier: sideways ? Number(strategy.markovSidewaysSizeMultiplier) || 1 : 1,
+    detail: `Markov state ${state}: recent move ${recentMove.toFixed(2)} bps, up edge ${upEdge}%, down edge ${downEdge}%.`
   };
 }
 
@@ -8855,17 +8994,19 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const setupGrade = gradeSignal(signal, rewardRisk);
   const regime = getRegimeAssessment(signal, userStrategy);
   regime.blocksWeakSetup = regime.regime !== "trending" && setupGrade === "C" && !regime.highEdgeVolatilitySetup;
+  const markovMethod = getMarkovMethodAssessment(signal, userStrategy);
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
   const baseEntryThreshold = getPaperEntryThreshold(getSignalSide(signal));
   const coachThresholdBoost = getKarpathyCoachThresholdBoost(signal, regime, userStrategy);
   const secondOpinionConsensus = getSecondOpinionConsensus(signal);
-  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0) + coachThresholdBoost + secondOpinionConsensus.thresholdBoost, 1, 100);
+  const entryThreshold = clamp(baseEntryThreshold + (regime.enabled ? regime.thresholdBoost : 0) + coachThresholdBoost + secondOpinionConsensus.thresholdBoost + (markovMethod.enabled ? markovMethod.thresholdBoost : 0), 1, 100);
   const thresholdParts = [getPaperEntryThresholdSource()];
   if (regime.enabled && regime.thresholdBoost) thresholdParts.push("regime");
   if (coachThresholdBoost) thresholdParts.push("coach");
   if (secondOpinionConsensus.thresholdBoost) thresholdParts.push("2nd opinion");
+  if (markovMethod.enabled && markovMethod.thresholdBoost) thresholdParts.push("Markov");
   const entryThresholdSource = thresholdParts.join(" + ");
   const entryLabel = shortBias ? "Entry (sell short)" : longBias ? "Entry (buy)" : "Entry";
   const targetLabel = shortBias ? "Cover target" : longBias ? "Profit target" : "Profit target";
@@ -8875,8 +9016,9 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const feePerContractSide = getFeePerContractSide(config);
   const rawNextCapital = getMartingaleCapital(minTradeValue);
   const effectiveStep = regime.enabled ? Math.min(martingaleStep, regime.maxMartingaleStep) : martingaleStep;
+  const sizeMultiplier = (regime.enabled ? regime.sizeMultiplier : 1) * (markovMethod.enabled ? markovMethod.sizeMultiplier : 1);
   const nextCapital = Number.isFinite(rawNextCapital)
-    ? rawNextCapital * (regime.enabled ? regime.sizeMultiplier : 1)
+    ? rawNextCapital * sizeMultiplier
     : rawNextCapital;
   const plannedContracts = Number.isFinite(nextCapital) && Number.isFinite(minTradeValue)
     ? Math.max(1, Math.floor(nextCapital / minTradeValue))
@@ -8932,6 +9074,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     coachThresholdBoost,
     secondOpinionConsensus,
     regime,
+    markovMethod,
     entryThreshold,
     setupGrade,
     rewardRisk: `${rewardRisk.toFixed(2)}x`,
@@ -8943,6 +9086,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
       `${strategyName}: auto-enter long or short when conviction clears the ${entryThresholdSource} trading threshold of ${entryThreshold}. Learned Karpathy recommendation is ${learnedThreshold}.`,
       `${secondOpinionConsensus.label}: ${secondOpinionConsensus.detail}`,
       `Regime is ${regime.regime}: edge ${regime.edgePercent}%, volatility ${regime.volatility.toFixed(2)} bps, ${regime.momentumAligned ? "momentum aligned" : "confirmation incomplete"}.`,
+      markovMethod.enabled ? `${markovMethod.detail} ${markovMethod.counterState ? "Counter-state entries need reversal or breakdown confirmation." : "State agrees with the current trade filter."}` : "Markov Hedge Fund Method is off for this user.",
       `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
@@ -14676,7 +14820,9 @@ function initializeApp() {
   loadFeatureRequests();
   if (!requiresFreshCloudState()) loadLiveTradeLedger();
   const migratedKarpathyAutoApply = migrateKarpathyAutoApplyForAllUsers();
-  if (migratedKarpathyAutoApply) saveSharedSettings();
+  const migratedMarkovTestAgents = migrateMarkovMethodForTestAgents();
+  const seededMarkovHistory = seedMarkovStrategyHistoryForTestAgents();
+  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || seededMarkovHistory) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
   const liveContractInput = document.querySelector("#live-trade-contract");
   if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;
