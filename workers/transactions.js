@@ -1246,6 +1246,142 @@ async function loadOpenPaperTradesForUserD1(env, transactions = [], userEmail) {
   return getOpenPaperTradesForUser(transactions, email);
 }
 
+async function getD1OpenPaperTradeRows(env) {
+  await ensureTradeTransactionsTable(env);
+  const result = await env.DB.prepare(`
+    SELECT o.user_email, o.payload_json
+    FROM ${TRADE_TRANSACTION_TABLE} o
+    WHERE o.trade_mode = ?
+      AND UPPER(o.action) IN ('BUY', 'SELL SHORT')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ${TRADE_TRANSACTION_TABLE} c
+        WHERE c.trade_mode = o.trade_mode
+          AND c.user_email = o.user_email
+          AND c.trade_id = o.trade_id
+          AND c.transaction_time >= o.transaction_time
+          AND (
+            UPPER(c.action) LIKE '%TARGET%'
+            OR UPPER(c.action) LIKE '%STOP%'
+            OR UPPER(c.action) LIKE '%PRE-CLOSE%'
+            OR UPPER(c.action) LIKE '%ROLL%'
+            OR UPPER(c.action) LIKE '%PROFIT LOCK%'
+          )
+      )
+    ORDER BY o.transaction_time ASC
+  `).bind(PAPER_TRADE_MODE).all();
+  return getResults(result)
+    .map((row) => ({
+      userEmail: normalizeEmail(row.user_email),
+      trade: parseStoredJson(row.payload_json)
+    }))
+    .filter((row) => row.userEmail && isOpeningTransaction(row.trade) && !isStaleUnclosedOpeningTrade(row.trade));
+}
+
+async function getFirstStoredExitTick(env, openTrade, config, openedAt) {
+  const commodity = normalizeServerCommodityId(openTrade.commodity || config.id || inferServerCommodityFromContract(openTrade.contract));
+  const productKeys = Array.from(new Set(getServerConfigProductKeys(config)));
+  const productClause = productKeys.length
+    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    : "";
+  const targetPrice = Number(openTrade.targetPrice);
+  const stopPrice = Number(openTrade.originalStopPrice ?? openTrade.stopPrice);
+  if (!commodity || !Number.isFinite(targetPrice) || !Number.isFinite(stopPrice)) return null;
+  await ensurePriceTicksTable(env);
+  const condition = openTrade.side === "short"
+    ? "(price <= ? OR price >= ?)"
+    : "(price >= ? OR price <= ?)";
+  const row = await env.DB.prepare(`
+    SELECT price, tick_time, source
+    FROM price_ticks
+    WHERE commodity = ?
+      AND tick_time >= ?
+      ${productClause}
+      AND ${condition}
+    ORDER BY tick_time ASC
+    LIMIT 1
+  `).bind(
+    commodity,
+    openedAt.toISOString(),
+    ...productKeys,
+    targetPrice,
+    stopPrice
+  ).first();
+  if (!row) return null;
+  const price = Number(row.price);
+  const action = getServerExitTrigger(openTrade, price);
+  if (!action) return null;
+  return {
+    action,
+    price: getServerExitBoundaryPrice(openTrade, action, price),
+    source: `${row.source || "Cloudflare price tick"} protective sweep`,
+    time: row.tick_time
+  };
+}
+
+async function sweepBreachedOpenPaperTradesD1(env, settings = null) {
+  if (!hasRuntimeStore(env)) return { closedTrades: 0, decisions: [] };
+  const activeSettings = settings || canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+    env,
+    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+  ));
+  const usersByEmail = new Map((Array.isArray(activeSettings.users) ? activeSettings.users : [])
+    .map((user) => [normalizeEmail(user.email), user]));
+  const openRows = await getD1OpenPaperTradeRows(env);
+  const closes = [];
+  const decisions = [];
+
+  for (const row of openRows) {
+    const openTrade = {
+      ...row.trade,
+      commodity: firstPresent(row.trade.commodity, inferServerCommodityFromContract(row.trade.contract)),
+      tradeMode: PAPER_TRADE_MODE
+    };
+    const user = usersByEmail.get(row.userEmail) || { email: row.userEmail, name: openTrade.userName || row.userEmail };
+    const commodity = normalizeServerCommodityId(openTrade.commodity || inferServerCommodityFromContract(openTrade.contract));
+    if (!commodity) continue;
+    const config = getServerCommodityConfigForContract(user, commodity, openTrade.contract || "");
+    const openedAt = getTransactionDate(openTrade.openedAt || openTrade.time);
+    if (Number.isNaN(openedAt.getTime())) continue;
+    const tickExit = await getFirstStoredExitTick(env, openTrade, config, openedAt);
+    let exit = tickExit;
+    if (!exit) {
+      const currentPrice = await getServerMarketPrice(env, user, commodity, null, config);
+      const currentAction = currentPrice ? getServerExitTrigger(openTrade, currentPrice.price) : null;
+      if (currentAction) {
+        exit = {
+          action: currentAction,
+          price: getServerExitBoundaryPrice(openTrade, currentAction, currentPrice.price),
+          source: currentPrice.source || "Current server price protective sweep",
+          time: currentPrice.time || new Date().toISOString()
+        };
+      }
+    }
+    if (!exit) continue;
+    const close = makeServerCloseTransaction({
+      user,
+      email: row.userEmail,
+      commodity,
+      config,
+      openTrade,
+      price: { price: exit.price, source: exit.source, time: exit.time },
+      action: exit.action,
+      note: `Protective stop/target sweep closed ${config.name} ${openTrade.side} from D1 tick history at ${exit.time}. Hard stops and targets are evaluated before advisory logic.`
+    });
+    closes.push(close);
+    decisions.push({
+      email: row.userEmail,
+      name: user.name || "",
+      decision: `${commodity}: protective sweep ${close.action} ${close.contract} at ${close.price}`
+    });
+  }
+
+  if (closes.length) {
+    await upsertUnifiedTransactionRows(env, closes, PAPER_TRADE_MODE);
+  }
+  return { closedTrades: closes.length, decisions };
+}
+
 async function seedUnifiedTransactionsFromLegacyTable(env, tradeMode) {
   const normalizedMode = normalizeTradeMode(tradeMode);
   const legacyTable = normalizedMode === REAL_TRADE_MODE ? "actual_transactions" : "paper_transactions";
@@ -4929,9 +5065,13 @@ async function runPaperTradingScheduler(env, options = {}) {
       ...settings,
       users
     });
-    const priceSnapshots = await loadStoredPriceSnapshots(env);
-    await saveLeaderboardSummaryCache(env, settings, transactions, priceSnapshots);
-    await saveAdvisorySummaryCache(env);
+    if (options.skipCacheRefresh) {
+      run.cacheRefreshSkipped = true;
+    } else {
+      const priceSnapshots = await loadStoredPriceSnapshots(env);
+      await saveLeaderboardSummaryCache(env, settings, transactions, priceSnapshots);
+      await saveAdvisorySummaryCache(env);
+    }
     run.status = "completed";
   } catch (error) {
     run.status = "failed";
@@ -5001,9 +5141,11 @@ async function handlePaperSchedulerRoute(env, request, origin) {
   }
 
   const body = await request.json().catch(() => ({}));
+  const protectiveSweep = await sweepBreachedOpenPaperTradesD1(env);
   const run = await runPaperTradingScheduler(env, {
     force: body.force === true || url.searchParams.get("force") === "true"
   });
+  run.protectiveSweep = protectiveSweep;
   return jsonResponse(run, run.status === "failed" ? 500 : 200, origin);
 }
 
@@ -5970,7 +6112,17 @@ export default {
     ctx.waitUntil(getPriceSnapshots(env, true).catch((error) => {
       console.error("price snapshot refresh failed", error);
     }));
-    ctx.waitUntil(runPaperTradingScheduler(env).catch((error) => {
+    ctx.waitUntil(sweepBreachedOpenPaperTradesD1(env).then(() => (
+      runPaperTradingScheduler(env, { skipCacheRefresh: true })
+    )).then(() => (
+      refreshLeaderboardSummaryCache(env).catch((error) => {
+        console.error("leaderboard cache refresh failed", error);
+      })
+    )).then(() => (
+      saveAdvisorySummaryCache(env).catch((error) => {
+        console.error("advisory summary cache refresh failed", error);
+      })
+    )).catch((error) => {
       console.error("paper scheduler failed", error);
     }));
   }
