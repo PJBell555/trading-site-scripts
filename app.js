@@ -379,7 +379,7 @@ const confirmedLivePriceProductIds = new Map();
 const priceTickHistory = new Map();
 const productMinimums = new Map();
 const advisorySideState = new Map();
-const LIVE_PRICE_REFRESH_MS = 10000;
+const LIVE_PRICE_REFRESH_MS = 30000;
 const PAPER_CLOSE_PRICE_REFRESH_MS = 5000;
 const SNAPSHOT_PRICE_REFRESH_MS = 60000;
 const BACKEND_TRANSACTION_SYNC_MS = 300000;
@@ -456,6 +456,7 @@ const LEADERBOARD_PERIOD_KEY = "comhedge-leaderboard-period-v1";
 const LEADERBOARD_DISPLAY_CACHE_KEY = "comhedge-leaderboard-display-cache-v1";
 const LEADERBOARD_DISPLAY_CACHE_MAX_AGE_MS = 10 * 60 * 1000;
 const LOW_POWER_MODE_KEY = "comhedge-low-power-mode-v1";
+const DIRECT_COINBASE_FEED_KEY = "comhedge-direct-coinbase-feed-v1";
 const NORMAL_SIGNAL_THROTTLE_MS = 1000;
 const LOW_POWER_SIGNAL_THROTTLE_MS = 10000;
 const HIDDEN_SIGNAL_THROTTLE_MS = 15000;
@@ -796,6 +797,8 @@ let lastHomeMarketRenderAt = 0;
 let homeMarketHistory = null;
 let homeMarketHistoryKey = "";
 let homeMarketHistoryError = "";
+let homeMarketHistoryLoadedAt = 0;
+let homeMarketHistoryRequest = null;
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
@@ -894,9 +897,28 @@ function saveLowPowerMode() {
   syncLowPowerModeControls();
 }
 
+function isDirectCoinbaseFeedEnabled() {
+  const params = new URLSearchParams(window.location.search || "");
+  return params.get("direct-feed") === "1" || localStorage.getItem(DIRECT_COINBASE_FEED_KEY) === "true";
+}
+
 function getVisibleThrottle(normalMs, lowPowerMs, hiddenMs) {
   if (document.hidden) return hiddenMs;
   return lowPowerMode ? lowPowerMs : normalMs;
+}
+
+function scheduleAdaptiveInterval(callback, visibleMs, hiddenMs = Math.max(visibleMs, 120000)) {
+  const run = () => {
+    const delay = document.hidden ? hiddenMs : visibleMs;
+    window.setTimeout(async () => {
+      try {
+        await callback();
+      } finally {
+        run();
+      }
+    }, delay);
+  };
+  run();
 }
 
 function queueSignalRecalculation(reason = "live-update", options = {}) {
@@ -1076,13 +1098,26 @@ function setActiveSection(section) {
     renderCurrentUserStrategy();
     queueSignalRecalculation("advisory-open");
     scheduleAdvisorySectionRefresh();
+    loadSharedAdvisoryHistory();
+    loadSharedMicroPredictions();
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
-  if (section === "open-brain") renderOpenBrainMemory();
-  if (section === "leaderboard") renderLeaderBoard();
+  if (section === "open-brain") {
+    renderOpenBrainMemory();
+    loadOpenBrainEventsFromBackend();
+  }
+  if (section === "leaderboard") {
+    renderLeaderBoard();
+    loadLeaderBoardSummary();
+    loadLeaderBoardSchedulerStatus();
+  }
   if (section === "skills") renderSkillsWorkspace();
   if (section === "users") showUserManagement(true);
-  if (section === "actual-trades") renderLiveTradeLedger();
+  if (section === "trading") loadSharedTransactionHistory();
+  if (section === "actual-trades") {
+    renderLiveTradeLedger();
+    loadSharedTransactionHistory();
+  }
   if (section === "token-costs") renderTokenCosts();
 }
 
@@ -8436,17 +8471,17 @@ function getCoinbaseMinimumTradeValue(data, livePrice) {
 
 function getSnapshotUrl() {
   const apiUrl = getHistoryApiUrl();
-  return apiUrl ? `${apiUrl}/prices?ts=${Date.now()}` : `./prices.json?ts=${Date.now()}`;
+  return apiUrl ? `${apiUrl}/prices?lite=1` : "./prices.json";
 }
 
 function getStaticSnapshotUrl() {
-  return `./prices.json?ts=${Date.now()}`;
+  return "./prices.json";
 }
 
 function getPriceHistoryUrl(commodity = homeMarketCommodity, period = homeMarketPeriod) {
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) return "";
-  return `${apiUrl}/price-history?commodity=${encodeURIComponent(commodity)}&period=${encodeURIComponent(period)}&ts=${Date.now()}`;
+  return `${apiUrl}/price-history?commodity=${encodeURIComponent(commodity)}&period=${encodeURIComponent(period)}&lite=1`;
 }
 
 function hasUsableSnapshotPrices(data) {
@@ -8463,7 +8498,7 @@ async function loadSnapshotPrices() {
   }
 
   snapshotPricesLoadedAt = now;
-  snapshotPricesPromise = fetch(getSnapshotUrl(), { cache: "no-store" })
+  snapshotPricesPromise = fetch(getSnapshotUrl(), { cache: "default" })
     .then((response) => {
       if (!response.ok) throw new Error("snapshot unavailable");
       return response.json();
@@ -8474,7 +8509,7 @@ async function loadSnapshotPrices() {
     })
     .catch(async (error) => {
       if (getSnapshotUrl().startsWith("./")) throw error;
-      const response = await fetch(getStaticSnapshotUrl(), { cache: "no-store" });
+      const response = await fetch(getStaticSnapshotUrl(), { cache: "default" });
       if (!response.ok) throw error;
       const data = await response.json();
       return {
@@ -9101,6 +9136,13 @@ async function refreshCoinbasePrice(commodity, options = {}) {
   const forceRefresh = options.force === true;
   const config = getEffectiveCommodityConfig(commodity);
   if (!config) return;
+
+  if (!isDirectCoinbaseFeedEnabled()) {
+    await refreshSnapshotPrice(commodity);
+    if (runCloseSweep) queuePaperSweep({ immediate: forceRefresh });
+    return;
+  }
+
   const activeProductId = String(config.productId || config.ticker || "").trim();
   const socketProductMatches = activePriceSocketProductId === activeProductId;
   if (!isStoredPriceForActiveContract(commodity)) {
@@ -9168,6 +9210,11 @@ function closeCoinbaseWebSocket() {
 }
 
 function connectCoinbaseWebSocket(commodity) {
+  if (!isDirectCoinbaseFeedEnabled()) {
+    closeCoinbaseWebSocket();
+    return;
+  }
+
   const config = getEffectiveCommodityConfig(commodity);
 
   if (!config || config.productType !== "Coinbase futures contract") {
@@ -11783,13 +11830,27 @@ function getHomeMarketSamples() {
 async function loadHomeMarketPriceHistory() {
   if (!hasHistoryBackend()) return null;
   const key = `${homeMarketCommodity}:${homeMarketPeriod}`;
-  const response = await fetchWithTimeout(getPriceHistoryUrl(homeMarketCommodity, homeMarketPeriod), { cache: "no-store" }, 8000);
-  if (!response.ok) throw new Error("price history unavailable");
-  const data = await response.json();
-  homeMarketHistory = data;
-  homeMarketHistoryKey = key;
-  homeMarketHistoryError = "";
-  return data;
+  const now = Date.now();
+  if (homeMarketHistoryRequest && homeMarketHistoryKey === key && now - homeMarketHistoryLoadedAt < HOME_MARKET_REFRESH_MS) {
+    return homeMarketHistoryRequest;
+  }
+  homeMarketHistoryLoadedAt = now;
+  homeMarketHistoryRequest = fetchWithTimeout(getPriceHistoryUrl(homeMarketCommodity, homeMarketPeriod), { cache: "default" }, 8000)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("price history unavailable");
+      const data = await response.json();
+      homeMarketHistory = data;
+      homeMarketHistoryKey = key;
+      homeMarketHistoryError = "";
+      return data;
+    })
+    .catch((error) => {
+      if (homeMarketHistoryKey !== key) {
+        homeMarketHistoryRequest = null;
+      }
+      throw error;
+    });
+  return homeMarketHistoryRequest;
 }
 
 function renderHomeMarketControls() {
@@ -12587,14 +12648,18 @@ async function initializeBackendState() {
     sharedHistoryStatusEl.textContent = "Loading backend ledger";
   }
 
-  const historyLoad = autoSyncTransactionHistory();
+  const needsLedger = activeSection === "trading" || activeSection === "actual-trades";
+  const needsLeaderboard = activeSection === "leaderboard";
+  const needsAdvisory = activeSection === "advisories";
+  const needsHomePreview = activeSection === "home";
+  const historyLoad = needsLedger ? autoSyncTransactionHistory() : Promise.resolve(false);
   const settingsLoad = loadSharedSettings();
-  const leaderboardLoad = loadLeaderBoardSummary();
-  const schedulerLoad = loadLeaderBoardSchedulerStatus();
-  const advisorySummaryLoad = loadSharedAdvisorySummary();
-  const advisoryLoad = loadSharedAdvisoryHistory();
-  const microPredictionLoad = loadSharedMicroPredictions();
-  const openBrainLoad = loadOpenBrainEventsFromBackend();
+  const leaderboardLoad = needsLeaderboard ? loadLeaderBoardSummary() : Promise.resolve(false);
+  const schedulerLoad = needsLeaderboard ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
+  const advisorySummaryLoad = (needsAdvisory || needsHomePreview) ? loadSharedAdvisorySummary() : Promise.resolve(false);
+  const advisoryLoad = needsAdvisory ? loadSharedAdvisoryHistory() : Promise.resolve(false);
+  const microPredictionLoad = needsAdvisory ? loadSharedMicroPredictions() : Promise.resolve(false);
+  const openBrainLoad = activeSection === "open-brain" ? loadOpenBrainEventsFromBackend() : Promise.resolve(false);
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
@@ -14854,16 +14919,32 @@ function initializeApp() {
   initializeBackendState();
   connectCoinbaseWebSocket(commoditySelect.value);
   refreshSelectedCoinbasePrice();
-  window.setInterval(refreshSelectedCoinbasePrice, LIVE_PRICE_REFRESH_MS);
-  window.setInterval(loadSharedSettings, BACKEND_SETTINGS_SYNC_MS);
-  window.setInterval(autoSyncTransactionHistory, BACKEND_TRANSACTION_SYNC_MS);
-  window.setInterval(loadSharedAdvisoryHistory, BACKEND_ADVISORY_SYNC_MS);
-  window.setInterval(loadSharedMicroPredictions, BACKEND_ADVISORY_SYNC_MS);
-  homeMarketRefreshTimer = window.setInterval(refreshHomeMarketPreview, HOME_MARKET_REFRESH_MS);
-  window.setInterval(() => maybeAutoTriggerLLM(), LLM_SCHEDULE_CHECK_MS);
-  window.setInterval(heartbeatCurrentSession, SESSION_HEARTBEAT_MS);
-  // Even if the user is viewing a different commodity, keep stop/target logic moving for any open paper trades.
-  window.setInterval(() => queuePaperSweep(), Math.max(5000, Math.floor(LIVE_PRICE_REFRESH_MS / 2)));
+  scheduleAdaptiveInterval(() => refreshSelectedCoinbasePrice(), LIVE_PRICE_REFRESH_MS, 120000);
+  scheduleAdaptiveInterval(() => loadSharedSettings(), BACKEND_SETTINGS_SYNC_MS * 2, BACKEND_SETTINGS_SYNC_MS * 5);
+  scheduleAdaptiveInterval(() => {
+    if (activeSection === "trading" || activeSection === "actual-trades") return autoSyncTransactionHistory();
+    return false;
+  }, BACKEND_TRANSACTION_SYNC_MS, BACKEND_TRANSACTION_SYNC_MS * 2);
+  scheduleAdaptiveInterval(() => {
+    if (activeSection !== "advisories") return false;
+    loadSharedAdvisoryHistory();
+    return loadSharedMicroPredictions();
+  }, BACKEND_ADVISORY_SYNC_MS, BACKEND_ADVISORY_SYNC_MS * 2);
+  homeMarketRefreshTimer = window.setInterval(() => {
+    if (activeSection === "home" && !document.hidden) refreshHomeMarketPreview();
+  }, HOME_MARKET_REFRESH_MS);
+  scheduleAdaptiveInterval(() => {
+    if (activeSection === "advisories") return maybeAutoTriggerLLM();
+    return false;
+  }, LLM_SCHEDULE_CHECK_MS, LLM_SCHEDULE_CHECK_MS * 5);
+  scheduleAdaptiveInterval(heartbeatCurrentSession, SESSION_HEARTBEAT_MS, SESSION_HEARTBEAT_MS);
+  scheduleAdaptiveInterval(() => {
+    if (activeSection === "trading" || activeSection === "advisories") queuePaperSweep();
+  }, Math.max(30000, LIVE_PRICE_REFRESH_MS), 120000);
+  scheduleAdaptiveInterval(() => {
+    if (activeSection !== "leaderboard") return false;
+    return refreshLeaderBoardData();
+  }, 120000, 300000);
   window.addEventListener("resize", () => {
     renderHomeMarketPreview();
     queueAdvisoryChartRender();

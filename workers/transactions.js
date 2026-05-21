@@ -89,6 +89,12 @@ function jsonResponse(payload, status = 200, origin = "*") {
   });
 }
 
+function cachedJsonResponse(payload, status = 200, origin = "*", cacheControl = "public, max-age=10, stale-while-revalidate=30") {
+  const response = jsonResponse(payload, status, origin);
+  response.headers.set("Cache-Control", cacheControl);
+  return response;
+}
+
 function getAllowedOrigin(request, env) {
   const allowed = env.ALLOWED_ORIGIN || "*";
   if (allowed === "*") return "*";
@@ -3109,6 +3115,37 @@ async function getPriceSnapshots(env, forceRefresh = false) {
   };
 }
 
+function toLitePriceSnapshot(snapshot = {}) {
+  return {
+    id: snapshot.id,
+    ticker: snapshot.ticker,
+    productId: snapshot.productId,
+    productType: snapshot.productType,
+    contractMonth: snapshot.contractMonth,
+    fetchedAt: snapshot.fetchedAt,
+    price: snapshot.price,
+    bestBid: snapshot.bestBid,
+    bestAsk: snapshot.bestAsk,
+    lastTrade: snapshot.lastTrade,
+    minimumTradeValue: snapshot.minimumTradeValue,
+    method: snapshot.method,
+    ok: snapshot.ok,
+    stale: snapshot.stale,
+    error: snapshot.error,
+    refreshError: snapshot.refreshError
+  };
+}
+
+function toLitePriceSnapshotsPayload(payload = {}) {
+  return {
+    ...payload,
+    prices: Object.fromEntries(Object.entries(payload.prices || {}).map(([commodity, snapshot]) => [
+      commodity,
+      toLitePriceSnapshot(snapshot)
+    ]))
+  };
+}
+
 async function handlePriceSnapshotsRoute(env, request, origin) {
   if (request.method !== "GET") {
     return jsonResponse({ error: "Method not allowed" }, 405, origin);
@@ -3116,8 +3153,9 @@ async function handlePriceSnapshotsRoute(env, request, origin) {
 
   const url = new URL(request.url);
   const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
+  const lite = url.searchParams.get("lite") === "1" || url.searchParams.get("lite") === "true";
   const payload = await getPriceSnapshots(env, forceRefresh);
-  return jsonResponse(payload, 200, origin);
+  return cachedJsonResponse(lite ? toLitePriceSnapshotsPayload(payload) : payload, 200, origin);
 }
 
 function getPriceHistoryCutoff(period = "day") {
@@ -3217,7 +3255,7 @@ async function handlePriceHistoryRoute(env, request, origin) {
   const commodity = url.searchParams.get("commodity") || "oil";
   const period = url.searchParams.get("period") || "day";
   const payload = await getPriceHistory(env, commodity, period);
-  return jsonResponse(payload, 200, origin);
+  return cachedJsonResponse(payload, 200, origin, "public, max-age=30, stale-while-revalidate=120");
 }
 
 function getLeaderboardCutoff(period = "all") {
