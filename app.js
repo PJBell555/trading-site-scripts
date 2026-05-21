@@ -439,7 +439,7 @@ const STRATEGY_EDITS_KEY = "comhedge-strategy-edits-v1";
 const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const KARPATHY_AUTO_APPLY_MIGRATION_KEY = "comhedge-karpathy-auto-apply-migration-v1";
-const MARKOV_TEST_AGENT_MIGRATION_KEY = "comhedge-markov-test-agent-migration-v1";
+const MARKOV_TEST_AGENT_MIGRATION_KEY = "comhedge-markov-test-agent-migration-v2";
 const PAPER_TRADE_MODE = "P";
 const REAL_TRADE_MODE = "R";
 const DEFAULT_NON_EXEMPT_USER_EQUITY = 1000;
@@ -3219,6 +3219,8 @@ function migrateMarkovMethodForTestAgents() {
     // Migration state is also persisted to Cloudflare through user strategies.
   }
 
+  const seededHistory = seedMarkovStrategyHistoryForTestAgents();
+  changed = seededHistory || changed;
   if (changed) {
     saveUserRoster();
   }
@@ -13579,6 +13581,10 @@ function renderTransactionDetail(entry) {
     ["Net P/L", Number.isFinite(detail.netPnl) ? formatSignedMoney(detail.netPnl) : "-"],
     ["Return on margin", Number.isFinite(detail.marginReturn) ? `${detail.marginReturn >= 0 ? "+" : ""}${detail.marginReturn.toFixed(1)}%` : "-"],
     ["Return on notional", Number.isFinite(detail.notionalReturn) ? `${detail.notionalReturn >= 0 ? "+" : ""}${detail.notionalReturn.toFixed(2)}%` : "-"],
+    ["Markov method", entry.markovMethodEnabled ? "On" : entry.markovState ? "Off" : "-"],
+    ["Markov state", entry.markovState ? `${entry.markovState}${entry.markovExpectedSide ? ` / favors ${entry.markovExpectedSide}` : ""}` : "-"],
+    ["Markov trade effect", entry.markovMethodEnabled ? `${entry.markovThresholdBoost ? `+${entry.markovThresholdBoost} threshold` : "No threshold add"} / ${Number(entry.markovSizeMultiplier) ? `${formatNumberInput(Number(entry.markovSizeMultiplier), 2)}x size` : "normal size"}` : "-"],
+    ["Markov reason", entry.markovReason || "-"],
     ["Fee model", detail.feeLabel],
     ["Opened", detail.openedAt ? formatTradeTime(detail.openedAt) : "-"],
     ["Closed", detail.closedAt ? formatTradeTime(detail.closedAt) : entry.pnl === 0 ? "Open" : "-"],

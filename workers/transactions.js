@@ -138,7 +138,7 @@ function getTransactionKey(entry) {
 
 function isClosingTransaction(entry) {
   const action = String(entry.action || "").toUpperCase();
-  return Number(entry.pnl) !== 0 || ["TARGET", "STOP", "PRE-CLOSE", "ROLL"].some((word) => action.includes(word));
+  return ["TARGET", "STOP", "PRE-CLOSE", "ROLL", "PROFIT LOCK"].some((word) => action.includes(word));
 }
 
 function isOpeningTransaction(entry) {
@@ -152,6 +152,9 @@ const ACCOUNT_EMAIL_ALIASES = {
   "peter@ambiel.com": "peterambiel@gmail.com"
 };
 const MARKOV_METHOD_TEST_AGENT_EMAILS = new Set(["peter@pjbell.com", "aretwo3000@gmail.com"]);
+const MARKOV_METHOD_STRATEGY_CHANGE_ID = "strategy-change-0003-markov-hedge-fund-method";
+const MARKOV_METHOD_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Markov Hedge Fund Method enabled";
+const MARKOV_METHOD_STRATEGY_CHANGE_DETAIL = "Markov Hedge Fund Method for Peter Bell and D2 only. Classify oil as bull, bear, or sideways from recent return behavior and transition evidence. Bull state favors long continuation unless breakdown is confirmed. Bear state favors short continuation unless reversal is confirmed. Sideways state raises the entry threshold and reduces size. Paper-only test strategy switch.";
 
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
@@ -1201,6 +1204,48 @@ async function loadUnifiedTransactionPayloadD1(env, tradeMode, source) {
   };
 }
 
+async function loadOpenPaperTradesForUserD1(env, transactions = [], userEmail) {
+  if (!hasRuntimeStore(env)) return getOpenPaperTradesForUser(transactions, userEmail);
+  await ensureTradeTransactionsTable(env);
+  const email = normalizeEmail(userEmail);
+  if (!email) return [];
+  const result = await env.DB.prepare(`
+    SELECT o.payload_json
+    FROM ${TRADE_TRANSACTION_TABLE} o
+    WHERE o.trade_mode = ?
+      AND o.user_email = ?
+      AND UPPER(o.action) IN ('BUY', 'SELL SHORT')
+      AND NOT EXISTS (
+        SELECT 1
+        FROM ${TRADE_TRANSACTION_TABLE} c
+        WHERE c.trade_mode = o.trade_mode
+          AND c.user_email = o.user_email
+          AND c.trade_id = o.trade_id
+          AND c.transaction_time >= o.transaction_time
+          AND (
+            UPPER(c.action) LIKE '%TARGET%'
+            OR UPPER(c.action) LIKE '%STOP%'
+            OR UPPER(c.action) LIKE '%PRE-CLOSE%'
+            OR UPPER(c.action) LIKE '%ROLL%'
+            OR UPPER(c.action) LIKE '%PROFIT LOCK%'
+          )
+      )
+    ORDER BY o.transaction_time ASC
+  `).bind(PAPER_TRADE_MODE, email).all();
+  const directOpenTrades = getResults(result)
+    .map((row) => parseStoredJson(row.payload_json))
+    .filter(Boolean)
+    .map((entry) => ({
+      ...entry,
+      commodity: firstPresent(entry.commodity, inferServerCommodityFromContract(entry.contract)),
+      tradeMode: PAPER_TRADE_MODE
+    }))
+    .filter((entry) => isOpeningTransaction(entry) && !isStaleUnclosedOpeningTrade(entry));
+
+  if (directOpenTrades.length) return directOpenTrades;
+  return getOpenPaperTradesForUser(transactions, email);
+}
+
 async function seedUnifiedTransactionsFromLegacyTable(env, tradeMode) {
   const normalizedMode = normalizeTradeMode(tradeMode);
   const legacyTable = normalizedMode === REAL_TRADE_MODE ? "actual_transactions" : "paper_transactions";
@@ -1383,6 +1428,10 @@ async function ensureTradeTransactionsTable(env) {
   await env.DB.prepare(`
     CREATE INDEX IF NOT EXISTS idx_trade_transactions_mode_commodity
     ON ${TRADE_TRANSACTION_TABLE} (trade_mode, commodity, transaction_time DESC)
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_trade_transactions_open_lookup
+    ON ${TRADE_TRANSACTION_TABLE} (trade_mode, user_email, trade_id, transaction_time DESC, action)
   `).run();
 }
 
@@ -2162,6 +2211,49 @@ function mergeUserProfiles(existingProfiles = {}, incomingProfiles = {}) {
   }
 
   return merged;
+}
+
+function hasMarkovMethodHistoryEntry(history = []) {
+  return (Array.isArray(history) ? history : []).some((entry) => entry?.id === MARKOV_METHOD_STRATEGY_CHANGE_ID);
+}
+
+function applyMarkovMethodSeedToRecord(record = {}, email = "") {
+  const normalizedEmail = normalizeEmail(email || record.email);
+  if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
+
+  const history = Array.isArray(record.strategyHistory) ? record.strategyHistory : [];
+  if (hasMarkovMethodHistoryEntry(history)) return record;
+
+  const strategy = record.strategy && typeof record.strategy === "object" && !Array.isArray(record.strategy)
+    ? record.strategy
+    : {};
+  const before = {
+    ...strategy,
+    markovHedgeFundMethod: false
+  };
+  const after = {
+    ...strategy,
+    markovHedgeFundMethod: true,
+    markovRegimeMoveBps: Number(strategy.markovRegimeMoveBps) || 8,
+    markovSidewaysThresholdBoost: Number(strategy.markovSidewaysThresholdBoost) || 5,
+    markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5
+  };
+  const historyEntry = {
+    id: MARKOV_METHOD_STRATEGY_CHANGE_ID,
+    changedAt: "2026-05-21T00:00:00.000Z",
+    changedByName: "Peter Bell",
+    changedByEmail: "peter@pjbell.com",
+    summary: MARKOV_METHOD_STRATEGY_CHANGE_TEXT,
+    detail: MARKOV_METHOD_STRATEGY_CHANGE_DETAIL,
+    before,
+    after
+  };
+
+  return {
+    ...record,
+    strategy: after,
+    strategyHistory: [historyEntry, ...history].slice(0, 50)
+  };
 }
 
 async function saveAdvisoryFile(env, file, path, payload) {
@@ -4316,6 +4408,13 @@ function makeServerCloseTransaction({ user, email, commodity, config, openTrade,
     netPnl: pnl,
     pnl,
     capital: Number(openTrade.capital) || null,
+    markovMethodEnabled: Boolean(openTrade.markovMethodEnabled),
+    markovState: openTrade.markovState || "",
+    markovExpectedSide: openTrade.markovExpectedSide || "",
+    markovCounterState: Boolean(openTrade.markovCounterState),
+    markovThresholdBoost: Number(openTrade.markovThresholdBoost) || 0,
+    markovSizeMultiplier: Number(openTrade.markovSizeMultiplier) || null,
+    markovReason: openTrade.markovReason || "",
     openedAt: openTrade.openedAt || openTrade.time,
     closedAt: new Date().toISOString(),
     note
@@ -4418,8 +4517,9 @@ async function runPaperTradingScheduler(env, options = {}) {
 
   const startedAt = new Date().toISOString();
   const run = {
-    runId: `paper-scheduler-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    runId: `paper-scheduler-d1-open-v2-${Date.now()}-${Math.random().toString(16).slice(2)}`,
     startedAt,
+    schedulerSchema: "d1-open-trade-lookup-v2",
     status: "running",
     evaluatedUsers: 0,
     openedTrades: 0,
@@ -4439,7 +4539,10 @@ async function runPaperTradingScheduler(env, options = {}) {
   }
 
   try {
-    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+      env,
+      await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+    ));
     const modelSettings = normalizeServerModelSettings(settings.modelSettings);
     const users = Array.isArray(settings.users) ? settings.users : [];
     const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
@@ -4457,7 +4560,7 @@ async function runPaperTradingScheduler(env, options = {}) {
       }
 
       run.evaluatedUsers += 1;
-      const openTrades = getOpenPaperTradesForUser(transactions, email);
+      const openTrades = await loadOpenPaperTradesForUserD1(env, transactions, email);
       const enabledOpenTrades = getEnabledCommodityOpenTrades(openTrades, schedulerSettings.commodities);
       let activeOpenCount = enabledOpenTrades.length;
       const strategySettings = getServerStrategySettings(user);
@@ -4516,7 +4619,9 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true }, config)
           : null;
         const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
-        const commodityOpenTrades = openTrades.filter((trade) => trade.commodity === commodity);
+        const commodityOpenTrades = openTrades.filter((trade) => (
+          normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)) === commodity
+        ));
         for (const openTrade of commodityOpenTrades) {
           const openTradeConfig = getServerCommodityConfigForContract(user, commodity, openTrade.contract || config.ticker);
           const openTradePrice = openTradeConfig.productId === config.productId
@@ -4633,7 +4738,9 @@ async function runPaperTradingScheduler(env, options = {}) {
         }
 
         const latestEnabledOpenTrades = getEnabledCommodityOpenTrades(getOpenPaperTradesForUser(transactions, email), schedulerSettings.commodities);
-        const hasCommodityOpen = latestEnabledOpenTrades.some((trade) => normalizeServerCommodityId(trade.commodity) === commodity);
+        const hasCommodityOpen = latestEnabledOpenTrades.some((trade) => (
+          normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)) === commodity
+        ));
         if (hasCommodityOpen) continue;
         if (exclusiveMartingale && latestEnabledOpenTrades.length > 0) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: martingale sequence already has an open trade`;
@@ -4663,7 +4770,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           100
         );
         if ((!signal.side || signal.conviction < effectiveThreshold) && !directionalOverrideSignal) {
-          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}`;
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${markovMethod.enabled ? `, Markov ${markovMethod.state}` : ""}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -4735,16 +4842,23 @@ async function runPaperTradingScheduler(env, options = {}) {
           estimatedExitFee: terms.estimatedExitFee,
           totalEstimatedFees: terms.totalEstimatedFees,
           feePerContractSide: terms.feePerContractSide,
+          markovMethodEnabled: Boolean(markovMethod.enabled),
+          markovState: markovMethod.state,
+          markovExpectedSide: markovMethod.expectedSide,
+          markovCounterState: Boolean(markovMethod.counterState),
+          markovThresholdBoost: markovMethod.thresholdBoost,
+          markovSizeMultiplier: markovMethod.sizeMultiplier,
+          markovReason: markovMethod.reason,
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
           note: reentrySignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : breakoutSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : trendCaptureSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}`
-            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${secondOpinionConsensus.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
         await recordOpenBrainServerEvent(
@@ -4768,6 +4882,7 @@ async function runPaperTradingScheduler(env, options = {}) {
         );
         run.openedTrades += 1;
         activeOpenCount += 1;
+        const markovDecisionText = markovMethod.enabled ? `; Markov ${markovMethod.state}` : "";
         lastDecision = reentrySignal
           ? `${commodity}: opened ${activeSignal.side} post-stop re-entry at ${price.price}`
           : breakoutSignal
@@ -4775,6 +4890,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           : trendCaptureSignal
           ? `${commodity}: opened ${activeSignal.side} trend capture at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
+        lastDecision = `${lastDecision}${markovDecisionText}`;
       }
 
       updateUserPaperSchedulerSettings(user, {
@@ -4782,7 +4898,24 @@ async function runPaperTradingScheduler(env, options = {}) {
         lastEvaluationAt: new Date().toISOString(),
         lastDecision
       });
-      run.decisions.push({ email, name: user.name || "", decision: lastDecision });
+      run.decisions.push({
+        email,
+        name: user.name || "",
+        decision: lastDecision,
+        openTradeCount: openTrades.length,
+        enabledOpenTradeCount: enabledOpenTrades.length,
+        activeOpenCount,
+        openTradeIds: openTrades.slice(0, 5).map((trade) => ({
+          id: trade.tradeId || trade.id || "",
+          action: trade.action || "",
+          side: trade.side || "",
+          commodity: normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)),
+          contract: trade.contract || "",
+          entryPrice: Number(trade.entryPrice ?? trade.price ?? 0) || null,
+          targetPrice: Number(trade.targetPrice ?? 0) || null,
+          stopPrice: Number(trade.originalStopPrice ?? trade.stopPrice ?? 0) || null
+        }))
+      });
     }
 
     await upsertUnifiedTransactionRows(env, transactions, PAPER_TRADE_MODE);
@@ -4791,6 +4924,10 @@ async function runPaperTradingScheduler(env, options = {}) {
       users,
       generatedAt: new Date().toISOString(),
       source: "cloudflare-d1-shared-settings"
+    });
+    await upsertUserStrategyRecordsD1(env, {
+      ...settings,
+      users
     });
     const priceSnapshots = await loadStoredPriceSnapshots(env);
     await saveLeaderboardSummaryCache(env, settings, transactions, priceSnapshots);
@@ -4942,10 +5079,16 @@ function canonicalizeSettingsPayload(settings = defaultSettingsPayload()) {
     });
   });
 
+  const normalizedUsers = Array.from(usersByEmail.values()).map((user) => applyMarkovMethodSeedToRecord(user, user.email));
+  const normalizedProfiles = Object.fromEntries(Object.entries(profilesByEmail).map(([email, profile]) => [
+    email,
+    applyMarkovMethodSeedToRecord(profile, email)
+  ]));
+
   return {
     ...settings,
-    users: Array.from(usersByEmail.values()),
-    userProfiles: profilesByEmail
+    users: normalizedUsers,
+    userProfiles: normalizedProfiles
   };
 }
 
