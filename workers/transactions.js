@@ -3655,10 +3655,7 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
       user: {
         name: user.name || email,
         email,
-        avatarDataUrl: user.avatarDataUrl || "",
-        paperTrading: user.paperTrading || {},
-        strategy: user.strategy || {},
-        strategyHistory: user.strategyHistory || []
+        avatarDataUrl: user.avatarDataUrl || ""
       },
       name: user.name || email,
       email,

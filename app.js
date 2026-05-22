@@ -13082,6 +13082,16 @@ async function loadLeaderBoardSummary(manual = false) {
     renderLeaderBoard();
     return true;
   } catch (error) {
+    const recoveredFromLedger = await loadSharedTransactionHistory(true);
+    if (recoveredFromLedger && hasFreshCloudTradingState()) {
+      leaderBoardSummaryRows = [];
+      leaderBoardSummaryLoadedAt = 0;
+      leaderBoardSummaryPeriod = "";
+      leaderBoardSummaryError = "";
+      leaderBoardSummaryFromDisplayCache = false;
+      renderLeaderBoard();
+      return true;
+    }
     if (!leaderBoardSummaryLoadedAt || leaderBoardSummaryPeriod !== leaderboardPeriodMode) {
       loadLeaderBoardDisplayCache(leaderboardPeriodMode);
     }
