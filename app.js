@@ -9512,12 +9512,21 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const rawNextCapital = getMartingaleCapital(minTradeValue);
   const effectiveStep = regime.enabled ? Math.min(martingaleStep, regime.maxMartingaleStep) : martingaleStep;
   const sizeMultiplier = (regime.enabled ? regime.sizeMultiplier : 1) * (markovMethod.enabled ? markovMethod.sizeMultiplier : 1);
-  const nextCapital = Number.isFinite(rawNextCapital)
+  const adjustedNextCapital = Number.isFinite(rawNextCapital)
     ? rawNextCapital * sizeMultiplier
     : rawNextCapital;
-  const plannedContracts = Number.isFinite(nextCapital) && Number.isFinite(minTradeValue)
-    ? Math.max(1, Math.floor(nextCapital / minTradeValue))
+  const plannedContracts = Number.isFinite(adjustedNextCapital) && Number.isFinite(minTradeValue)
+    ? Math.max(1, Math.floor(adjustedNextCapital / minTradeValue))
     : null;
+  const minimumCommittedCapital = Number.isFinite(plannedContracts) && Number.isFinite(minTradeValue)
+    ? plannedContracts * minTradeValue
+    : null;
+  const minimumContractFloorApplied = Number.isFinite(adjustedNextCapital)
+    && Number.isFinite(minimumCommittedCapital)
+    && adjustedNextCapital < minimumCommittedCapital;
+  const nextCapital = Number.isFinite(minimumCommittedCapital)
+    ? minimumCommittedCapital
+    : adjustedNextCapital;
   const notionalValue = Number.isFinite(livePrice) && Number.isFinite(plannedContracts)
     ? livePrice * contractMultiplier * plannedContracts
     : null;
@@ -9563,6 +9572,8 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     minLong: `1 contract / ${formatMoney(longMargin)}`,
     minShort: `1 contract / ${formatMoney(shortMargin)}`,
     nextCapital,
+    adjustedNextCapital,
+    minimumContractFloorApplied,
     learnedThreshold,
     entryThresholdSource,
     baseEntryThreshold,
@@ -9582,7 +9593,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
       `${secondOpinionConsensus.label}: ${secondOpinionConsensus.detail}`,
       `Regime is ${regime.regime}: edge ${regime.edgePercent}%, volatility ${regime.volatility.toFixed(2)} bps, ${regime.momentumAligned ? "momentum aligned" : "confirmation incomplete"}.`,
       markovMethod.enabled ? `${markovMethod.detail} ${markovMethod.counterState ? "Counter-state entries need reversal or breakdown confirmation." : "State agrees with the current trade filter."}` : "Markov Hedge Fund Method is off for this user.",
-      `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each.`,
+      `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each${minimumContractFloorApplied ? `; the strategy multiplier asked for ${formatMoney(adjustedNextCapital)}, but the one-contract minimum floor applies` : ""}.`,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
     ]
@@ -14196,7 +14207,9 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const displayClosedPnl = getPaperClosedPnlForCapital(capitalFilter);
   const displayEquity = displayStartCapital + displayClosedPnl;
   const signalSide = getSignalSide(signal);
-  const nextCapital = getMartingaleCapital(tradePlan.minTradeValue);
+  const nextCapital = Number.isFinite(Number(tradePlan.nextCapital))
+    ? Number(tradePlan.nextCapital)
+    : getMartingaleCapital(tradePlan.minTradeValue);
   const decision = getPaperDecision(signal, tradePlan, openTrade);
   const staleStopTrade = !openTrade && getLatestUnclosedOpeningTrade(commodity);
   const marketStatus = getFuturesMarketStatus();
