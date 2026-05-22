@@ -1477,7 +1477,7 @@ body {
 .oil-execution-grid {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
 }
 
 .oil-learning-grid > div,

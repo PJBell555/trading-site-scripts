@@ -804,6 +804,10 @@ let homeMarketHistoryKey = "";
 let homeMarketHistoryError = "";
 let homeMarketHistoryLoadedAt = 0;
 let homeMarketHistoryRequest = null;
+let oilShadowBacktestHistory = null;
+let oilShadowBacktestLoadedAt = 0;
+let oilShadowBacktestRequest = null;
+let oilShadowBacktestError = "";
 let lastAdvisorySnapshotKey = "";
 let appStarted = false;
 let userSearchQuery = "";
@@ -4783,6 +4787,151 @@ function createOilExecutionReviewCard(user) {
   return card;
 }
 
+function getOilShadowBacktestSamples() {
+  const serverSamples = Array.isArray(oilShadowBacktestHistory?.samples)
+    ? normalizeHomeMarketHistorySamples(oilShadowBacktestHistory.samples)
+    : [];
+  if (serverSamples.length >= 12) return serverSamples;
+  const cutoff = Date.now() - (24 * 60 * 60 * 1000);
+  const fallback = normalizeHomeMarketHistorySamples(advisoryHistory
+    .filter((entry) => entry.commodity === "oil" && getTransactionDate(entry.time).getTime() >= cutoff)
+    .map((entry) => ({ time: entry.time, price: entry.price, source: "advisory snapshot" })));
+  return fallback;
+}
+
+function scoreOilShadowVariant(samples = [], strategy = {}, variant = {}) {
+  const lookahead = 5;
+  const minMoveBps = Number(variant.minMoveBps) || Number(strategy.missedOpportunityMoveBps) || 16;
+  const stopBps = Number(variant.stopBps) || 80;
+  const targetBps = Number(variant.targetBps) || 100;
+  const feeBps = 8;
+  const trades = [];
+
+  for (let index = 3; index < samples.length - lookahead; index += lookahead) {
+    const prior = samples[index - 3];
+    const entry = samples[index];
+    const future = samples.slice(index + 1, index + lookahead + 1);
+    if (!prior || !entry || future.length < lookahead) continue;
+    const setupMoveBps = ((entry.price - prior.price) / prior.price) * 10000;
+    const side = setupMoveBps <= -minMoveBps ? "short" : setupMoveBps >= minMoveBps ? "long" : "";
+    if (!side) continue;
+    if (variant.requiresMarkov && ((side === "short" && setupMoveBps > -Math.max(8, Number(strategy.markovRegimeMoveBps) || 8)) || (side === "long" && setupMoveBps < Math.max(8, Number(strategy.markovRegimeMoveBps) || 8)))) continue;
+    if (variant.reentry && Math.abs(setupMoveBps) < Math.max(minMoveBps, Number(strategy.noChaseMoveBps) || 0)) continue;
+
+    let exit = future[future.length - 1];
+    for (const sample of future) {
+      const moveBps = side === "short"
+        ? ((entry.price - sample.price) / entry.price) * 10000
+        : ((sample.price - entry.price) / entry.price) * 10000;
+      if (moveBps <= -stopBps || moveBps >= targetBps) {
+        exit = sample;
+        break;
+      }
+    }
+    const grossBps = side === "short"
+      ? ((entry.price - exit.price) / entry.price) * 10000
+      : ((exit.price - entry.price) / entry.price) * 10000;
+    trades.push({
+      side,
+      entryPrice: entry.price,
+      exitPrice: exit.price,
+      pnlBps: grossBps - feeBps
+    });
+  }
+
+  const wins = trades.filter((trade) => trade.pnlBps > 0).length;
+  const netBps = trades.reduce((total, trade) => total + trade.pnlBps, 0);
+  const avgBps = trades.length ? netBps / trades.length : 0;
+  let peak = 0;
+  let equity = 0;
+  let maxDrawdownBps = 0;
+  trades.forEach((trade) => {
+    equity += trade.pnlBps;
+    peak = Math.max(peak, equity);
+    maxDrawdownBps = Math.min(maxDrawdownBps, equity - peak);
+  });
+  return {
+    ...variant,
+    trades: trades.length,
+    winRate: trades.length ? (wins / trades.length) * 100 : NaN,
+    netBps,
+    avgBps,
+    maxDrawdownBps
+  };
+}
+
+function getOilShadowBacktest(user) {
+  const samples = getOilShadowBacktestSamples();
+  const strategy = normalizeUserStrategy(user.strategy);
+  if (samples.length < 12) {
+    return {
+      ready: false,
+      sampleCount: samples.length,
+      status: oilShadowBacktestError || "Waiting for Cloudflare oil price history.",
+      variants: []
+    };
+  }
+  const variants = [
+    scoreOilShadowVariant(samples, strategy, { id: "current", name: "Current rules", minMoveBps: strategy.missedOpportunityMoveBps, requiresMarkov: strategy.markovHedgeFundMethod, reentry: strategy.missedOpportunityReentry }),
+    scoreOilShadowVariant(samples, strategy, { id: "markov", name: "Markov only", minMoveBps: Math.max(12, strategy.markovRegimeMoveBps), requiresMarkov: true, reentry: false }),
+    scoreOilShadowVariant(samples, strategy, { id: "reentry", name: "Missed re-entry", minMoveBps: Math.max(strategy.noChaseMoveBps, strategy.missedOpportunityMoveBps), requiresMarkov: true, reentry: true }),
+    scoreOilShadowVariant(samples, strategy, { id: "strict", name: "Strict confirmation", minMoveBps: Math.max(strategy.missedOpportunityMoveBps + 8, strategy.noChaseMoveBps + 8), requiresMarkov: true, reentry: false })
+  ];
+  const ranked = variants
+    .filter((variant) => variant.trades > 0)
+    .sort((left, right) => right.avgBps - left.avgBps || right.netBps - left.netBps);
+  const best = ranked[0] || variants[0];
+  const current = variants[0];
+  const edge = best && current ? best.avgBps - current.avgBps : 0;
+  return {
+    ready: true,
+    sampleCount: samples.length,
+    firstTime: samples[0]?.time,
+    lastTime: samples[samples.length - 1]?.time,
+    variants,
+    best,
+    current,
+    recommendation: best && best.id !== "current" && best.trades >= 3 && edge > 4
+      ? `Shadow lab favors ${best.name}: average ${best.avgBps.toFixed(1)} bps versus current ${current.avgBps.toFixed(1)} bps. Keep as recommendation until confirmed by more samples.`
+      : "No variant has enough edge over current rules yet. Keep collecting shadow samples before promoting a rule change.",
+    confidence: best?.trades >= 8 ? "Medium" : best?.trades >= 3 ? "Low" : "Insufficient"
+  };
+}
+
+function createOilShadowBacktestCard(user) {
+  const lab = getOilShadowBacktest(user);
+  const card = document.createElement("section");
+  card.className = "user-profile-subcard oil-execution-card oil-shadow-lab-card";
+  card.innerHTML = `
+    <h3>Strategy Lab <span>${lab.ready ? escapeHtml(`${lab.confidence} confidence`) : "Waiting for data"}</span></h3>
+    <div class="oil-execution-body">
+      <div class="oil-execution-grid">
+        <div><span>Samples replayed</span><strong>${lab.sampleCount}</strong><small>${lab.ready ? `${formatTradeTime(lab.firstTime)} to ${formatTradeTime(lab.lastTime)}` : escapeHtml(lab.status)}</small></div>
+        <div><span>Best variant</span><strong>${escapeHtml(lab.best?.name || "-")}</strong><small>${lab.best?.trades ? `${lab.best.trades} shadow trades` : "No trades scored"}</small></div>
+        <div><span>Average edge</span><strong class="${Number(lab.best?.avgBps) >= 0 ? "gain" : "loss"}">${Number.isFinite(Number(lab.best?.avgBps)) ? `${lab.best.avgBps.toFixed(1)} bps` : "-"}</strong><small>After estimated fees</small></div>
+        <div><span>Drawdown</span><strong class="loss">${Number.isFinite(Number(lab.best?.maxDrawdownBps)) ? `${Math.abs(lab.best.maxDrawdownBps).toFixed(1)} bps` : "-"}</strong><small>Shadow max drawdown</small></div>
+      </div>
+      <div class="oil-execution-notes">
+        <div>
+          <span class="stat-label">Recommendation</span>
+          <p>${escapeHtml(lab.ready ? lab.recommendation : lab.status)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Promotion rule</span>
+          <p>Shadow results do not place trades. A variant needs repeated positive average edge, acceptable drawdown, and enough samples before it should become a live paper rule.</p>
+        </div>
+        ${lab.variants?.length ? lab.variants.map((variant) => `
+          <div>
+            <span class="stat-label">${escapeHtml(variant.name)}</span>
+            <p>${variant.trades} trades / ${Number.isFinite(variant.winRate) ? formatPercent(variant.winRate) : "-"} win rate / ${variant.avgBps.toFixed(1)} bps average / ${variant.netBps.toFixed(1)} bps net</p>
+          </div>
+        `).join("") : ""}
+      </div>
+    </div>
+  `;
+  return card;
+}
+
 function getMatchedClosingTransactions(entries = [], allEntries = entries) {
   const openings = allEntries.filter(isOpeningTransaction);
   const byOpening = new Map();
@@ -6256,6 +6405,7 @@ function createUserProfilePanel(user) {
   const oilMissionCard = isOilTestAgent(user) ? createOilMissionCard(user) : null;
   const oilLearningCard = isOilTestAgent(user) ? createOilLearningCard(user) : null;
   const oilExecutionReviewCard = isOilTestAgent(user) ? createOilExecutionReviewCard(user) : null;
+  const oilShadowBacktestCard = isOilTestAgent(user) ? createOilShadowBacktestCard(user) : null;
   const photoLabel = document.createElement("label");
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
@@ -7013,6 +7163,7 @@ function createUserProfilePanel(user) {
   if (oilMissionCard) wrapper.append(oilMissionCard);
   if (oilLearningCard) wrapper.append(oilLearningCard);
   if (oilExecutionReviewCard) wrapper.append(oilExecutionReviewCard);
+  if (oilShadowBacktestCard) wrapper.append(oilShadowBacktestCard);
   wrapper.append(commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
@@ -12077,6 +12228,32 @@ async function loadHomeMarketPriceHistory() {
   return homeMarketHistoryRequest;
 }
 
+async function loadOilShadowBacktestHistory() {
+  if (!hasHistoryBackend()) return null;
+  const now = Date.now();
+  if (oilShadowBacktestRequest && now - oilShadowBacktestLoadedAt < HOME_MARKET_REFRESH_MS) {
+    return oilShadowBacktestRequest;
+  }
+  oilShadowBacktestLoadedAt = now;
+  oilShadowBacktestRequest = fetchWithTimeout(getPriceHistoryUrl("oil", "day"), { cache: "no-store" }, 8000)
+    .then(async (response) => {
+      if (!response.ok) throw new Error("shadow price history unavailable");
+      const data = await response.json();
+      oilShadowBacktestHistory = data;
+      oilShadowBacktestError = "";
+      if (activeSection === "users") renderUserManagement();
+      return data;
+    })
+    .catch((error) => {
+      oilShadowBacktestError = error.message || "shadow price history unavailable";
+      return null;
+    })
+    .finally(() => {
+      oilShadowBacktestRequest = null;
+    });
+  return oilShadowBacktestRequest;
+}
+
 function renderHomeMarketControls() {
   if (homeMarketSwitcherEl && !homeMarketSwitcherEl.children.length) {
     commodities.forEach(({ id, name }) => {
@@ -12887,6 +13064,7 @@ async function initializeBackendState() {
   const settingsLoad = loadSharedSettings();
   const leaderboardLoad = needsLeaderboard ? loadLeaderBoardSummary() : Promise.resolve(false);
   const schedulerLoad = (needsLeaderboard || needsUserProfiles) ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
+  const shadowBacktestLoad = needsUserProfiles ? loadOilShadowBacktestHistory() : Promise.resolve(false);
   const advisorySummaryLoad = (needsAdvisory || needsHomePreview) ? loadSharedAdvisorySummary() : Promise.resolve(false);
   const microPredictionLoad = needsAdvisory ? loadSharedMicroPredictions() : Promise.resolve(false);
   const openBrainLoad = activeSection === "open-brain" ? loadOpenBrainEventsFromBackend() : Promise.resolve(false);
@@ -12895,6 +13073,7 @@ async function initializeBackendState() {
     settingsLoad,
     leaderboardLoad,
     schedulerLoad,
+    shadowBacktestLoad,
     advisorySummaryLoad,
     microPredictionLoad,
     openBrainLoad
