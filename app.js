@@ -812,6 +812,7 @@ let leaderboardRankMode = LEADERBOARD_DEFAULT_RANK;
 let leaderboardPeriodMode = LEADERBOARD_DEFAULT_PERIOD;
 const leaderBoardSchedulerStatus = new Map();
 let leaderBoardSchedulerLoadedAt = 0;
+let leaderBoardSchedulerHealth = null;
 let leaderBoardSummaryRows = [];
 let leaderBoardSummaryLoadedAt = 0;
 let leaderBoardSummaryPeriod = "";
@@ -4567,6 +4568,146 @@ function createOilLearningCard(user) {
   return card;
 }
 
+function getSchedulerDecisionGateLabel(status = {}) {
+  const gate = String(status.gate || status.audit?.gate || "").trim();
+  if (gate) {
+    return {
+      "opened": "Opened trade",
+      "closed": "Closed trade",
+      "threshold": "Entry threshold",
+      "second-opinion": "Second opinion",
+      "trend-bias": "Trend bias",
+      "entry-quality": "Entry quality",
+      "regime-step-cap": "Regime step cap",
+      "regime-confirmation": "Regime confirmation",
+      "max-open": "Max open trades",
+      "open-trade": "Existing open trade",
+      "market": "Market calendar",
+      "price": "Price freshness",
+      "contract-roll": "Contract roll",
+      "not-evaluated": "Not evaluated"
+    }[gate] || gate;
+  }
+
+  const decision = String(status.lastDecision || "").toLowerCase();
+  if (decision.includes("opened")) return "Opened trade";
+  if (decision.includes("closed")) return "Closed trade";
+  if (decision.includes("max open")) return "Max open trades";
+  if (decision.includes("market closed") || decision.includes("pre-close")) return "Market calendar";
+  if (decision.includes("no fresh price")) return "Price freshness";
+  if (decision.includes("second opinion")) return "Second opinion";
+  if (decision.includes("falling trend") || decision.includes("trend blocks")) return "Trend bias";
+  if (decision.includes("markov") && decision.includes("not confirmed")) return "Markov confirmation";
+  if (decision.includes("no open") || decision.includes("/")) return "Entry threshold";
+  return "Latest decision";
+}
+
+function getUserMarkovTradeEvidence(user) {
+  const entries = getUserPaperLedgerEntries(user);
+  const markovEntries = entries.filter((entry) => entry.markovMethodEnabled || entry.markovState);
+  const closed = markovEntries.filter(isClosingTransaction);
+  const open = markovEntries.filter(isOpeningTransaction);
+  const pnl = closed.reduce((total, entry) => total + getDisplayPnl(entry), 0);
+  const latest = markovEntries
+    .slice()
+    .sort((left, right) => getTransactionDate(right.closedAt || right.openedAt || right.time) - getTransactionDate(left.closedAt || left.openedAt || left.time))[0];
+  return {
+    total: markovEntries.length,
+    openCount: open.length,
+    closedCount: closed.length,
+    pnl,
+    latest
+  };
+}
+
+function getOilExecutionReview(user) {
+  const email = normalizeEmail(user?.email);
+  const liveStatus = leaderBoardSchedulerStatus.get(email);
+  const fallbackPaper = normalizeServerPaperTrading(user?.paperTrading);
+  const status = liveStatus || {
+    source: "Profile fallback status",
+    enabled: fallbackPaper.enabled,
+    commodities: fallbackPaper.commodities,
+    entryThreshold: fallbackPaper.entryThreshold,
+    maxOpenTrades: fallbackPaper.maxOpenTrades,
+    lastEvaluationAt: fallbackPaper.lastEvaluationAt,
+    lastDecision: fallbackPaper.lastDecision
+  };
+  const audit = status.audit || {};
+  const markov = audit.markov || status.markov || null;
+  const marketMove = getOilDayMoveSummary();
+  const entries = getUserPaperLedgerEntries(user);
+  const dayPnl = getUserDayPnl(user, entries) + getUserOpenPnl(user, entries);
+  const markovEvidence = getUserMarkovTradeEvidence(user);
+  const lock = leaderBoardSchedulerHealth?.lock || null;
+  const schedulerHealth = lock
+    ? (lock.active ? `Active run lock until ${formatTradeTime(lock.expiresAt)}.` : "No active scheduler lock.")
+    : (leaderBoardSchedulerLoadedAt ? "Scheduler responded, lock detail unavailable." : "Scheduler status has not loaded yet.");
+  const lastChecked = status.lastEvaluationAt ? formatTradeTime(status.lastEvaluationAt) : "Never";
+  const missed = marketMove.ready && marketMove.expectedSide !== "wait" && dayPnl <= 0;
+  const missedText = missed
+    ? `Audit ${marketMove.expectedSide} capture: oil moved ${marketMove.label}, but this account has ${formatSignedMoney(dayPnl)} today.`
+    : marketMove.detail;
+  const markovText = markov?.enabled
+    ? `Markov is ${markov.state || "active"}${markov.expectedSide ? ` and favors ${markov.expectedSide}` : ""}. ${markov.overrideReady ? "Override was ready on the last scheduler pass." : "Override was not confirmed on the last scheduler pass."}`
+    : "Markov status is not present on the latest scheduler pass yet.";
+  const evidenceText = markovEvidence.total
+    ? `${markovEvidence.closedCount} closed Markov-tagged rows, ${formatSignedMoney(markovEvidence.pnl)} closed P/L. Latest: ${markovEvidence.latest?.action || "trade"} ${markovEvidence.latest?.contract || ""} ${markovEvidence.latest?.markovState ? `(${markovEvidence.latest.markovState})` : ""}.`
+    : "No Markov-tagged trade rows yet. New opens and closes will show Markov state in transaction detail.";
+
+  return {
+    source: status.source || "Scheduler status",
+    lastChecked,
+    lastDecision: status.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision,
+    gateLabel: getSchedulerDecisionGateLabel(status),
+    schedulerHealth,
+    missedText,
+    markovText,
+    evidenceText,
+    actionText: missed
+      ? "Next improvement: compare the blocking gate against the move, then tighten the rule that blocked a valid short or long."
+      : "Next improvement: keep collecting closed-trade and missed-move evidence before loosening entries.",
+    threshold: status.entryThreshold || fallbackPaper.entryThreshold,
+    maxOpenTrades: status.maxOpenTrades || fallbackPaper.maxOpenTrades
+  };
+}
+
+function createOilExecutionReviewCard(user) {
+  const review = getOilExecutionReview(user);
+  const card = document.createElement("section");
+  card.className = "user-profile-subcard oil-execution-card";
+  card.innerHTML = `
+    <h3>Execution Review <span>${escapeHtml(review.gateLabel)}</span></h3>
+    <div class="oil-execution-body">
+      <div class="oil-execution-grid">
+        <div><span>Last checked</span><strong>${escapeHtml(review.lastChecked)}</strong><small>${escapeHtml(review.source)}</small></div>
+        <div><span>Blocking gate</span><strong>${escapeHtml(review.gateLabel)}</strong><small>${escapeHtml(review.lastDecision)}</small></div>
+        <div><span>Paper gate</span><strong>${escapeHtml(String(review.threshold || "-"))}/100</strong><small>Max ${escapeHtml(String(review.maxOpenTrades || "-"))} open trade${Number(review.maxOpenTrades) === 1 ? "" : "s"}</small></div>
+        <div><span>Scheduler health</span><strong>${leaderBoardSchedulerHealth?.lock?.active ? "Running" : "Ready"}</strong><small>${escapeHtml(review.schedulerHealth)}</small></div>
+      </div>
+      <div class="oil-execution-notes">
+        <div>
+          <span class="stat-label">Missed opportunity audit</span>
+          <p>${escapeHtml(review.missedText)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Markov strategy read</span>
+          <p>${escapeHtml(review.markovText)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Trade evidence</span>
+          <p>${escapeHtml(review.evidenceText)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Next rule work</span>
+          <p>${escapeHtml(review.actionText)}</p>
+        </div>
+      </div>
+    </div>
+  `;
+  return card;
+}
+
 function getMatchedClosingTransactions(entries = [], allEntries = entries) {
   const openings = allEntries.filter(isOpeningTransaction);
   const byOpening = new Map();
@@ -6037,6 +6178,7 @@ function createUserProfilePanel(user) {
   const profileCard = document.createElement("section");
   const oilMissionCard = isOilTestAgent(user) ? createOilMissionCard(user) : null;
   const oilLearningCard = isOilTestAgent(user) ? createOilLearningCard(user) : null;
+  const oilExecutionReviewCard = isOilTestAgent(user) ? createOilExecutionReviewCard(user) : null;
   const photoLabel = document.createElement("label");
   const photoInput = document.createElement("input");
   const photoHint = document.createElement("span");
@@ -6789,6 +6931,7 @@ function createUserProfilePanel(user) {
   wrapper.append(profileCard);
   if (oilMissionCard) wrapper.append(oilMissionCard);
   if (oilLearningCard) wrapper.append(oilLearningCard);
+  if (oilExecutionReviewCard) wrapper.append(oilExecutionReviewCard);
   wrapper.append(commoditiesCard, strategyCard, brokerCard, serverPaperCard, statsCard, actionsCard, historyCard);
   return wrapper;
 }
@@ -12595,6 +12738,7 @@ async function loadLeaderBoardSchedulerStatus(manual = false) {
     const response = await fetchWithTimeout(`${getPaperSchedulerUrl()}?ts=${Date.now()}`, { cache: "no-store" });
     if (!response.ok) throw new Error("scheduler unavailable");
     const payload = await response.json();
+    leaderBoardSchedulerHealth = payload.schedulerHealth || null;
     leaderBoardSchedulerStatus.clear();
     (Array.isArray(payload.users) ? payload.users : []).forEach((user) => {
       const email = normalizeEmail(user.email);
@@ -12606,7 +12750,9 @@ async function loadLeaderBoardSchedulerStatus(manual = false) {
         entryThreshold: user.entryThreshold,
         maxOpenTrades: user.maxOpenTrades,
         lastEvaluationAt: user.lastEvaluationAt,
-        lastDecision: user.lastDecision
+        lastDecision: user.lastDecision,
+        gate: user.gate || "",
+        audit: user.audit || null
       });
     });
     const runs = Array.isArray(payload.runs) ? payload.runs : [];
@@ -12630,12 +12776,15 @@ async function loadLeaderBoardSchedulerStatus(manual = false) {
             ...existing,
             source: "Recent Cloudflare scheduler run",
             lastEvaluationAt: evaluatedAt,
-            lastDecision: decision.decision || existingDecision
+            lastDecision: decision.decision || existingDecision,
+            gate: decision.gate || existing.gate || "",
+            audit: decision.audit || existing.audit || null
           });
         });
       });
     leaderBoardSchedulerLoadedAt = Date.now();
     renderLeaderBoard();
+    if (activeSection === "users") renderUserManagement();
     return true;
   } catch (error) {
     if (manual && leaderboardUpdatedEl) leaderboardUpdatedEl.textContent = "Scheduler status unavailable";
@@ -12650,12 +12799,13 @@ async function initializeBackendState() {
 
   const needsLedger = activeSection === "trading" || activeSection === "actual-trades";
   const needsLeaderboard = activeSection === "leaderboard";
+  const needsUserProfiles = activeSection === "users";
   const needsAdvisory = activeSection === "advisories";
   const needsHomePreview = activeSection === "home";
   const historyLoad = needsLedger ? autoSyncTransactionHistory() : Promise.resolve(false);
   const settingsLoad = loadSharedSettings();
   const leaderboardLoad = needsLeaderboard ? loadLeaderBoardSummary() : Promise.resolve(false);
-  const schedulerLoad = needsLeaderboard ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
+  const schedulerLoad = (needsLeaderboard || needsUserProfiles) ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
   const advisorySummaryLoad = (needsAdvisory || needsHomePreview) ? loadSharedAdvisorySummary() : Promise.resolve(false);
   const microPredictionLoad = needsAdvisory ? loadSharedMicroPredictions() : Promise.resolve(false);
   const openBrainLoad = activeSection === "open-brain" ? loadOpenBrainEventsFromBackend() : Promise.resolve(false);

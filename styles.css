@@ -1462,14 +1462,28 @@ body {
   padding: 18px 28px 22px;
 }
 
+.oil-execution-body {
+  display: grid;
+  gap: 16px;
+  padding: 18px 28px 22px;
+}
+
 .oil-learning-grid {
   display: grid;
   gap: 14px;
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
+.oil-execution-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
 .oil-learning-grid > div,
-.oil-learning-notes > div {
+.oil-learning-notes > div,
+.oil-execution-grid > div,
+.oil-execution-notes > div {
   background: rgba(15, 23, 42, 0.72);
   border: 1px solid rgba(148, 163, 184, 0.18);
   border-radius: 8px;
@@ -1480,12 +1494,15 @@ body {
 }
 
 .oil-learning-grid span,
-.oil-learning-grid small {
+.oil-learning-grid small,
+.oil-execution-grid span,
+.oil-execution-grid small {
   color: var(--muted);
   font-weight: 800;
 }
 
-.oil-learning-grid strong {
+.oil-learning-grid strong,
+.oil-execution-grid strong {
   color: #f8fafc;
   overflow-wrap: anywhere;
 }
@@ -1496,7 +1513,14 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.oil-learning-notes p {
+.oil-execution-notes {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.oil-learning-notes p,
+.oil-execution-notes p {
   color: var(--muted);
   font-weight: 800;
   line-height: 1.45;
@@ -5185,6 +5209,8 @@ textarea::placeholder {
   .d2-mission-grid,
   .oil-learning-grid,
   .oil-learning-notes,
+  .oil-execution-grid,
+  .oil-execution-notes,
   .user-stat-grid,
   .user-add-form,
   .user-search-row,

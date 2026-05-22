@@ -4907,6 +4907,32 @@ async function loadPaperSchedulerRuns(env) {
   return getResults(result).map((row) => parseStoredJson(row.payload_json)).filter(Boolean);
 }
 
+async function getPaperSchedulerLockStatus(env) {
+  await ensurePaperSchedulerLocksTable(env);
+  const row = await env.DB.prepare(`
+    SELECT lock_key, owner, expires_at, updated_at
+    FROM paper_scheduler_locks
+    WHERE lock_key = ?
+  `).bind(PAPER_SCHEDULER_LOCK_KEY).first();
+  if (!row) {
+    return {
+      active: false,
+      detail: "No scheduler lock is currently active."
+    };
+  }
+  const expiresAt = getTransactionDate(row.expires_at).getTime();
+  const active = Number.isFinite(expiresAt) && expiresAt > Date.now();
+  return {
+    active,
+    owner: row.owner || "",
+    expiresAt: row.expires_at || "",
+    updatedAt: row.updated_at || "",
+    detail: active
+      ? `Scheduler lock is active until ${row.expires_at}.`
+      : `Scheduler lock expired at ${row.expires_at}.`
+  };
+}
+
 async function runPaperTradingScheduler(env, options = {}) {
   if (!hasRuntimeStore(env)) {
     return { status: "skipped", reason: "d1-not-configured" };
@@ -4978,6 +5004,25 @@ async function runPaperTradingScheduler(env, options = {}) {
       }
       let lastDecision = "No eligible commodities evaluated";
       const marketSchedule = getUserMarketScheduleStatus(schedulerSettings);
+      let lastDecisionAudit = {
+        gate: "not-evaluated",
+        reason: lastDecision,
+        markov: null,
+        price: null,
+        signal: null,
+        action: "wait"
+      };
+      const setDecisionAudit = (gate, reason, extra = {}) => {
+        lastDecisionAudit = {
+          gate,
+          reason,
+          markov: extra.markov || lastDecisionAudit.markov || null,
+          price: extra.price || lastDecisionAudit.price || null,
+          signal: extra.signal || lastDecisionAudit.signal || null,
+          action: extra.action || "wait",
+          missedOpportunity: extra.missedOpportunity || null
+        };
+      };
 
       for (const commodity of schedulerSettings.commodities) {
         const config = getServerCommodityConfig(user, commodity);
@@ -4986,6 +5031,7 @@ async function runPaperTradingScheduler(env, options = {}) {
         const price = await getServerMarketPrice(env, user, commodity, advisory);
         if (!price) {
           lastDecision = `${commodity}: skipped, no fresh price`;
+          setDecisionAudit("price", lastDecision, { action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
@@ -5062,6 +5108,7 @@ async function runPaperTradingScheduler(env, options = {}) {
             : await getServerMarketPrice(env, user, commodity, advisory, openTradeConfig);
           if (!openTradePrice) {
             lastDecision = `${commodity}: skipped close, no fresh price for ${openTrade.contract || openTradeConfig.ticker}`;
+            setDecisionAudit("price", lastDecision, { price: { commodity, value: price.price, source: price.source }, action: "skip" });
             continue;
           }
           const openTradeRoll = getServerContractRollStatus(openTradeConfig);
@@ -5145,28 +5192,44 @@ async function runPaperTradingScheduler(env, options = {}) {
           run.closedTrades += 1;
           activeOpenCount = Math.max(0, activeOpenCount - 1);
           lastDecision = `${commodity}: closed ${openTrade.side} at ${closePrice.price}`;
+          setDecisionAudit("closed", lastDecision, {
+            markov: openTrade.markovMethodEnabled ? {
+              enabled: true,
+              state: openTrade.markovState || "",
+              expectedSide: openTrade.markovExpectedSide || "",
+              overrideReady: false,
+              reason: openTrade.markovReason || ""
+            } : null,
+            price: { commodity, value: closePrice.price, source: closePrice.source },
+            signal: { label: closeAction, side: openTrade.side, conviction: 0 },
+            action: "closed"
+          });
         }
 
         if (!marketSchedule.isOpen) {
           lastDecision = `${commodity}: market closed by user calendar`;
+          setDecisionAudit("market", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (marketSchedule.flattenWindow) {
           lastDecision = `${commodity}: pre-close flatten window, no new trades`;
+          setDecisionAudit("market", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (!contractRoll.shouldOpen) {
           lastDecision = `${commodity}: ${contractRoll.detail}`;
+          setDecisionAudit("contract-roll", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (activeOpenCount >= schedulerSettings.maxOpenTrades) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: max open trades reached`;
+          setDecisionAudit("max-open", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           continue;
         }
 
@@ -5174,9 +5237,14 @@ async function runPaperTradingScheduler(env, options = {}) {
         const hasCommodityOpen = latestEnabledOpenTrades.some((trade) => (
           normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)) === commodity
         ));
-        if (hasCommodityOpen) continue;
+        if (hasCommodityOpen) {
+          lastDecision = `${commodity}: existing commodity trade already open`;
+          setDecisionAudit("open-trade", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          continue;
+        }
         if (exclusiveMartingale && latestEnabledOpenTrades.length > 0) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: martingale sequence already has an open trade`;
+          setDecisionAudit("open-trade", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           continue;
         }
 
@@ -5186,6 +5254,17 @@ async function runPaperTradingScheduler(env, options = {}) {
         const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
         const markovMethod = getServerMarkovMethodAssessment(signal, micro, strategySettings, directionalContext);
         const markovSignal = getServerMarkovDirectionalSignal(signal, markovMethod, strategySettings, directionalContext);
+        const markovAudit = markovMethod.enabled
+          ? {
+            enabled: true,
+            state: markovMethod.state,
+            expectedSide: markovMethod.expectedSide,
+            overrideReady: Boolean(markovSignal),
+            thresholdBoost: markovMethod.thresholdBoost,
+            sizeMultiplier: markovMethod.sizeMultiplier,
+            reason: markovMethod.reason
+          }
+          : { enabled: false, reason: "Markov Hedge Fund Method is off for this account." };
         const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal || markovSignal;
         const activeSignal = reentrySignal
           ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
@@ -5207,6 +5286,12 @@ async function runPaperTradingScheduler(env, options = {}) {
         );
         if ((!signal.side || signal.conviction < effectiveThreshold) && !directionalOverrideSignal) {
           lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${markovMethod.enabled ? `, Markov ${markovMethod.state}${markovMethod.expectedSide ? ` favors ${markovMethod.expectedSide}` : ""}${markovSignal ? ", override ready" : ", override not confirmed"}` : ""}`;
+          setDecisionAudit("threshold", lastDecision, {
+            markov: markovAudit,
+            price: { commodity, value: price.price, source: price.source },
+            signal: { label: signal.label, side: signal.side, conviction: signal.conviction, effectiveThreshold },
+            missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
+          });
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -5214,6 +5299,12 @@ async function runPaperTradingScheduler(env, options = {}) {
 
         if (secondOpinionConsensus.blocksEntry && !directionalOverrideSignal) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
+          setDecisionAudit("second-opinion", lastDecision, {
+            markov: markovAudit,
+            price: { commodity, value: price.price, source: price.source },
+            signal: { label: signal.label, side: signal.side, conviction: signal.conviction, effectiveThreshold },
+            missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
+          });
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -5221,6 +5312,12 @@ async function runPaperTradingScheduler(env, options = {}) {
 
         if (strategySettings.blockLongsInFallingTrend && activeSignal.side === "long" && directionalContext.isBearishTrend && !directionalContext.longReversalConfirmed) {
           lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
+          setDecisionAudit("trend-bias", lastDecision, {
+            markov: markovAudit,
+            price: { commodity, value: price.price, source: price.source },
+            signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
+            missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
+          });
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -5228,6 +5325,12 @@ async function runPaperTradingScheduler(env, options = {}) {
         const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal || markovSignal, reentrySignal, markovMethod);
         if (!entryQuality.ok) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
+          setDecisionAudit("entry-quality", lastDecision, {
+            markov: markovAudit,
+            price: { commodity, value: price.price, source: price.source },
+            signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
+            missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
+          });
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -5237,11 +5340,13 @@ async function runPaperTradingScheduler(env, options = {}) {
           : 1;
         if (!directionalOverrideSignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
+          setDecisionAudit("regime-step-cap", lastDecision, { markov: markovAudit, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
           run.skippedTrades += 1;
           continue;
         }
         if (!directionalOverrideSignal && regime.enabled && !regime.confirmationOk) {
           lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
+          setDecisionAudit("regime-confirmation", lastDecision, { markov: markovAudit, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
           run.skippedTrades += 1;
           continue;
         }
@@ -5331,6 +5436,12 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? `${commodity}: opened ${activeSignal.side} Markov ${markovMethod.state} at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
         lastDecision = `${lastDecision}${markovDecisionText}`;
+        setDecisionAudit("opened", lastDecision, {
+          markov: markovAudit,
+          price: { commodity, value: price.price, source: price.source },
+          signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
+          action: "opened"
+        });
       }
 
       updateUserPaperSchedulerSettings(user, {
@@ -5342,6 +5453,8 @@ async function runPaperTradingScheduler(env, options = {}) {
         email,
         name: user.name || "",
         decision: lastDecision,
+        gate: lastDecisionAudit.gate,
+        audit: lastDecisionAudit,
         openTradeCount: openTrades.length,
         enabledOpenTradeCount: enabledOpenTrades.length,
         activeOpenCount,
@@ -5435,6 +5548,9 @@ async function handlePaperSchedulerRoute(env, request, origin) {
     return jsonResponse({
       generatedAt: new Date().toISOString(),
       storage: "d1",
+      schedulerHealth: {
+        lock: await getPaperSchedulerLockStatus(env)
+      },
       users,
       runs: await loadPaperSchedulerRuns(env)
     }, 200, origin);
