@@ -6652,20 +6652,28 @@ export default {
   },
 
   async scheduled(_controller, env, ctx) {
-    ctx.waitUntil(getPriceSnapshots(env, true).catch((error) => {
-      console.error("price snapshot refresh failed", error);
-    }));
-    ctx.waitUntil(sweepBreachedOpenPaperTradesD1(env).then(() => (
-      runPaperTradingScheduler(env, { skipCacheRefresh: true })
-    )).then(() => (
-      refreshLeaderboardSummaryCache(env).catch((error) => {
+    ctx.waitUntil((async () => {
+      try {
+        await getPriceSnapshots(env, true);
+      } catch (error) {
+        console.error("price snapshot refresh failed", error);
+      }
+
+      await sweepBreachedOpenPaperTradesD1(env);
+      await runPaperTradingScheduler(env, { skipCacheRefresh: true });
+
+      try {
+        await refreshLeaderboardSummaryCache(env);
+      } catch (error) {
         console.error("leaderboard cache refresh failed", error);
-      })
-    )).then(() => (
-      saveAdvisorySummaryCache(env).catch((error) => {
+      }
+
+      try {
+        await saveAdvisorySummaryCache(env);
+      } catch (error) {
         console.error("advisory summary cache refresh failed", error);
-      })
-    )).catch((error) => {
+      }
+    })().catch((error) => {
       console.error("paper scheduler failed", error);
     }));
   }

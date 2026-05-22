@@ -785,6 +785,7 @@ let lastSignalRecalcAt = 0;
 let chartRenderTimer = null;
 let lastChartRenderAt = 0;
 let advisorySectionRefreshTimer = null;
+let advisoryHeavyDataTimer = null;
 let paperSweepTimer = null;
 let lastPaperSweepAt = 0;
 let livePricePaintTimer = null;
@@ -989,6 +990,16 @@ function scheduleAdvisorySectionRefresh() {
   }, 160);
 }
 
+function scheduleAdvisoryHeavyDataLoad() {
+  if (advisoryHeavyDataTimer) return;
+  advisoryHeavyDataTimer = window.setTimeout(() => {
+    advisoryHeavyDataTimer = null;
+    if (activeSection !== "advisories" || document.hidden) return;
+    loadSharedAdvisoryHistory().catch(() => {});
+    loadSharedMicroPredictions().catch(() => {});
+  }, 1200);
+}
+
 function queuePaperSweep(options = {}) {
   const immediate = options.immediate === true;
   const now = Date.now();
@@ -1108,8 +1119,7 @@ function setActiveSection(section) {
     renderCurrentUserStrategy();
     queueSignalRecalculation("advisory-open");
     scheduleAdvisorySectionRefresh();
-    loadSharedAdvisoryHistory();
-    loadSharedMicroPredictions();
+    scheduleAdvisoryHeavyDataLoad();
   }
   if (section === "second-opinion") updateSecondOpinionRunState();
   if (section === "open-brain") {
@@ -13136,7 +13146,7 @@ async function initializeBackendState() {
   const schedulerLoad = (needsLeaderboard || needsUserProfiles) ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
   const shadowBacktestLoad = needsUserProfiles ? loadOilShadowBacktestHistory() : Promise.resolve(false);
   const advisorySummaryLoad = (needsAdvisory || needsHomePreview) ? loadSharedAdvisorySummary() : Promise.resolve(false);
-  const microPredictionLoad = needsAdvisory ? loadSharedMicroPredictions() : Promise.resolve(false);
+  const microPredictionLoad = Promise.resolve(false);
   const openBrainLoad = activeSection === "open-brain" ? loadOpenBrainEventsFromBackend() : Promise.resolve(false);
   const [loadedHistory] = await Promise.all([
     historyLoad,
@@ -13152,9 +13162,7 @@ async function initializeBackendState() {
   calculateSignal();
   closeOnlyPaperSweep();
   if (needsAdvisory) {
-    window.setTimeout(() => {
-      loadSharedAdvisoryHistory().catch(() => {});
-    }, 750);
+    scheduleAdvisoryHeavyDataLoad();
   }
   return loadedHistory;
 }
@@ -15411,8 +15419,8 @@ function initializeApp() {
   }, BACKEND_TRANSACTION_SYNC_MS, BACKEND_TRANSACTION_SYNC_MS * 2);
   scheduleAdaptiveInterval(() => {
     if (activeSection !== "advisories") return false;
-    loadSharedAdvisoryHistory();
-    return loadSharedMicroPredictions();
+    scheduleAdvisoryHeavyDataLoad();
+    return true;
   }, BACKEND_ADVISORY_SYNC_MS, BACKEND_ADVISORY_SYNC_MS * 2);
   homeMarketRefreshTimer = window.setInterval(() => {
     if (activeSection === "home" && !document.hidden) refreshHomeMarketPreview();
