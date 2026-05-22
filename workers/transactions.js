@@ -3530,7 +3530,9 @@ async function handlePriceHistoryRoute(env, request, origin) {
   return cachedJsonResponse(payload, 200, origin, "public, max-age=30, stale-while-revalidate=120");
 }
 
-function getLeaderboardCutoff(period = "all") {
+function getLeaderboardCutoff(period = "all", cutoffOverride = null) {
+  const override = Number(cutoffOverride);
+  if (Number.isFinite(override) && override > 0) return override;
   const now = Date.now();
   if (period === "hour") return now - (60 * 60 * 1000);
   if (period === "day") return now - (24 * 60 * 60 * 1000);
@@ -3624,9 +3626,9 @@ function getMatchedClosingTransactions(entries = [], allEntries = entries) {
   return Array.from(byOpening.values());
 }
 
-function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapshots = {}, period = "all") {
+function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapshots = {}, period = "all", cutoffOverride = null) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
-  const cutoff = getLeaderboardCutoff(normalizedPeriod);
+  const cutoff = getLeaderboardCutoff(normalizedPeriod, cutoffOverride);
   const modelSettings = normalizeServerModelSettings(settings.modelSettings);
   const users = Array.isArray(settings.users) ? settings.users : [];
   return users.map((user) => {
@@ -3677,14 +3679,16 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
   });
 }
 
-function buildServerLeaderboardSummary(settings = {}, transactions = [], priceSnapshots = {}, period = "all", source = "cloudflare-d1-leaderboard") {
+function buildServerLeaderboardSummary(settings = {}, transactions = [], priceSnapshots = {}, period = "all", source = "cloudflare-d1-leaderboard", cutoffOverride = null) {
   const normalizedPeriod = normalizeLeaderboardPeriod(period);
+  const cutoff = getLeaderboardCutoff(normalizedPeriod, cutoffOverride);
   return {
     generatedAt: new Date().toISOString(),
     source,
     storage: "d1",
     period: normalizedPeriod,
-    rows: getServerLeaderboardRows(settings, transactions, priceSnapshots, normalizedPeriod)
+    cutoff,
+    rows: getServerLeaderboardRows(settings, transactions, priceSnapshots, normalizedPeriod, cutoffOverride)
   };
 }
 
@@ -3733,6 +3737,28 @@ async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
   const url = new URL(request.url);
   const period = normalizeLeaderboardPeriod(url.searchParams.get("period") || "all");
   const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
+  const requestedCutoff = Number(url.searchParams.get("cutoff"));
+  const cutoffOverride = Number.isFinite(requestedCutoff) && requestedCutoff > 0 ? requestedCutoff : null;
+  if (cutoffOverride) {
+    const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+      env,
+      await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+    ));
+    const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+    const priceSnapshots = await loadStoredPriceSnapshots(env);
+    return jsonResponse(
+      buildServerLeaderboardSummary(
+        settings,
+        payload.transactions || [],
+        priceSnapshots,
+        period,
+        "cloudflare-d1-leaderboard-live-window",
+        cutoffOverride
+      ),
+      200,
+      origin
+    );
+  }
   const cached = !forceRefresh ? await loadLeaderboardSummaryCache(env, period, { allowStale: true }) : null;
   if (cached && !cached.stale) {
     return jsonResponse(cached, 200, origin);

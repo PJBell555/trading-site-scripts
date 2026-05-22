@@ -4228,6 +4228,11 @@ function getRawUserPaperLedgerEntries(user) {
 
 function getLeaderBoardPeriodCutoff(mode = leaderboardPeriodMode) {
   const option = LEADERBOARD_PERIOD_OPTIONS[mode] || LEADERBOARD_PERIOD_OPTIONS[LEADERBOARD_DEFAULT_PERIOD];
+  if (mode === "day") {
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    return startOfToday.getTime();
+  }
   return Number.isFinite(option.ms) ? Date.now() - option.ms : null;
 }
 
@@ -13057,7 +13062,9 @@ async function loadLeaderBoardSummary(manual = false) {
   renderLeaderBoard();
   try {
     const refreshParam = manual ? "&refresh=1" : "";
-    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${refreshParam}&ts=${Date.now()}`;
+    const cutoff = getLeaderBoardPeriodCutoff(leaderboardPeriodMode);
+    const cutoffParam = Number.isFinite(cutoff) ? `&cutoff=${encodeURIComponent(String(cutoff))}` : "";
+    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${cutoffParam}${refreshParam}&ts=${Date.now()}`;
     const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("leaderboard unavailable");
     const payload = await response.json();
