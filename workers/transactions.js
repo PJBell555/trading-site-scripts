@@ -2940,6 +2940,58 @@ function getServerKarpathyRecommendation(transactions = [], userEmail, currentTh
   };
 }
 
+function getServerContinuousLearningLoop(transactions = [], user = {}, strategy = {}, scheduler = {}, decisionAudit = {}) {
+  const email = normalizeEmail(user.email || user.userEmail || "");
+  const closed = getClosedPaperTradesForUser(transactions, email).slice(0, 20);
+  const recent = closed.slice(0, 8);
+  const sampleCount = recent.length;
+  const wins = recent.filter((entry) => Number(entry.pnl) > 0).length;
+  const netPnl = recent.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
+  const avgPnl = sampleCount ? netPnl / sampleCount : 0;
+  const winRate = sampleCount ? wins / sampleCount : 0;
+  const lossStreak = getServerLossStreak(closed);
+  const markovRows = getTransactionsForUser(transactions, email).filter((entry) => entry.markovMethodEnabled || entry.markovState);
+  const markovClosed = markovRows.filter(isClosingTransaction);
+  const markovPnl = markovClosed.reduce((total, entry) => total + (Number(entry.pnl) || 0), 0);
+  const blockedGate = decisionAudit?.gate || "not-evaluated";
+  const missed = decisionAudit?.missedOpportunity || null;
+  const needsMoreData = sampleCount < 5;
+  const losing = sampleCount >= 3 && avgPnl < 0;
+  const blockedOpportunity = Boolean(missed && Math.abs(Number(missed.moveBps) || 0) >= (Number(strategy.missedOpportunityMoveBps) || 20));
+  const nextAdjustment = blockedOpportunity
+    ? `Review ${blockedGate} after missed ${missed.side || "directional"} move of ${Number(missed.moveBps || 0).toFixed(2)} bps.`
+    : losing
+      ? "Keep threshold strict and inspect losing setup tags before lowering friction."
+      : needsMoreData
+        ? `Collect ${5 - sampleCount} more closed trade${5 - sampleCount === 1 ? "" : "s"} before changing risk.`
+        : "Compare Markov-tagged trades against non-Markov trades before changing size.";
+  const finding = blockedOpportunity
+    ? "Missed opportunity needs gate review."
+    : losing
+      ? "Recent average P/L is negative."
+      : needsMoreData
+        ? "Learning sample is still small."
+        : "Enough recent trades exist for rule review.";
+
+  return {
+    enabled: Boolean(strategy.karpathyLoop || strategy.advisoryOutcomeLearner || strategy.missedOpportunityLearner || strategy.missedOpportunityReentry || strategy.markovHedgeFundMethod),
+    cadence: "Cloudflare scheduler pass",
+    objective: "Improve paper oil entries, exits, and skipped-trade decisions from closed P/L, Markov evidence, and missed opportunities.",
+    sampleCount,
+    winRate,
+    avgPnl,
+    lossStreak,
+    markovClosedCount: markovClosed.length,
+    markovPnl,
+    blockedGate,
+    finding,
+    nextAdjustment,
+    guardrail: "Paper-only. Do not increase live risk from this loop; change one rule at a time after evidence.",
+    updatedAt: new Date().toISOString(),
+    schedulerThreshold: scheduler.entryThreshold
+  };
+}
+
 function getServerConfigProductKeys(config = {}) {
   return [
     config.productId,
@@ -5503,6 +5555,16 @@ async function runPaperTradingScheduler(env, options = {}) {
           action: "opened"
         });
       }
+
+      const continuousLearningLoop = getServerContinuousLearningLoop(transactions, user, strategySettings, schedulerSettings, lastDecisionAudit);
+      user.strategy = {
+        ...(user.strategy && typeof user.strategy === "object" ? user.strategy : {}),
+        continuousLearningLoop
+      };
+      lastDecisionAudit = {
+        ...lastDecisionAudit,
+        learningLoop: continuousLearningLoop
+      };
 
       updateUserPaperSchedulerSettings(user, {
         ...schedulerSettings,

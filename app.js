@@ -534,6 +534,7 @@ const DEFAULT_USER_STRATEGY = {
   karpathyConfirmationGate: true,
   karpathyAutoApply: true,
   karpathyRecommendation: null,
+  continuousLearningLoop: null,
   advisoryOutcomeLearner: true,
   skillsAccess: true,
   openBrainAccess: true,
@@ -3469,6 +3470,9 @@ function normalizeUserStrategy(strategy = {}) {
     karpathyRecommendation: merged.karpathyRecommendation && typeof merged.karpathyRecommendation === "object"
       ? merged.karpathyRecommendation
       : null,
+    continuousLearningLoop: merged.continuousLearningLoop && typeof merged.continuousLearningLoop === "object"
+      ? merged.continuousLearningLoop
+      : null,
     advisoryOutcomeLearner: merged.advisoryOutcomeLearner !== false,
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
@@ -4692,6 +4696,7 @@ function getOilExecutionReview(user) {
   };
   const audit = status.audit || {};
   const markov = audit.markov || status.markov || null;
+  const learningLoop = audit.learningLoop || normalizeUserStrategy(user?.strategy).continuousLearningLoop || null;
   const marketMove = getOilDayMoveSummary();
   const entries = getUserPaperLedgerEntries(user);
   const dayPnl = getUserDayPnl(user, entries) + getUserOpenPnl(user, entries);
@@ -4711,6 +4716,12 @@ function getOilExecutionReview(user) {
   const evidenceText = markovEvidence.total
     ? `${markovEvidence.closedCount} closed Markov-tagged rows, ${formatSignedMoney(markovEvidence.pnl)} closed P/L. Latest: ${markovEvidence.latest?.action || "trade"} ${markovEvidence.latest?.contract || ""} ${markovEvidence.latest?.markovState ? `(${markovEvidence.latest.markovState})` : ""}.`
     : "No Markov-tagged trade rows yet. New opens and closes will show Markov state in transaction detail.";
+  const learningLoopText = learningLoop?.enabled
+    ? `${learningLoop.finding || "Learning loop active"} ${learningLoop.nextAdjustment || ""}`
+    : "Continuous learning loop will appear after the next completed Cloudflare scheduler pass.";
+  const learningLoopMetric = learningLoop?.enabled
+    ? `${Number(learningLoop.sampleCount) || 0} recent closed / ${formatSignedMoney(Number(learningLoop.avgPnl) || 0)} avg`
+    : "Waiting for next pass";
 
   return {
     source: status.source || "Scheduler status",
@@ -4721,6 +4732,8 @@ function getOilExecutionReview(user) {
     missedText,
     markovText,
     evidenceText,
+    learningLoopText,
+    learningLoopMetric,
     actionText: missed
       ? "Next improvement: compare the blocking gate against the move, then tighten the rule that blocked a valid short or long."
       : "Next improvement: keep collecting closed-trade and missed-move evidence before loosening entries.",
@@ -4741,6 +4754,7 @@ function createOilExecutionReviewCard(user) {
         <div><span>Blocking gate</span><strong>${escapeHtml(review.gateLabel)}</strong><small>${escapeHtml(review.lastDecision)}</small></div>
         <div><span>Paper gate</span><strong>${escapeHtml(String(review.threshold || "-"))}/100</strong><small>Max ${escapeHtml(String(review.maxOpenTrades || "-"))} open trade${Number(review.maxOpenTrades) === 1 ? "" : "s"}</small></div>
         <div><span>Scheduler health</span><strong>${leaderBoardSchedulerHealth?.lock?.active ? "Running" : "Ready"}</strong><small>${escapeHtml(review.schedulerHealth)}</small></div>
+        <div><span>Learning loop</span><strong>${escapeHtml(review.learningLoopMetric)}</strong><small>Runs on each completed scheduler pass</small></div>
       </div>
       <div class="oil-execution-notes">
         <div>
@@ -4754,6 +4768,10 @@ function createOilExecutionReviewCard(user) {
         <div>
           <span class="stat-label">Trade evidence</span>
           <p>${escapeHtml(review.evidenceText)}</p>
+        </div>
+        <div>
+          <span class="stat-label">Continuous learning loop</span>
+          <p>${escapeHtml(review.learningLoopText)}</p>
         </div>
         <div>
           <span class="stat-label">Next rule work</span>
