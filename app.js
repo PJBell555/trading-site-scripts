@@ -484,7 +484,8 @@ const LEADERBOARD_RANK_OPTIONS = {
 const LEADERBOARD_PERIOD_OPTIONS = {
   all: { label: "All Time", ms: null },
   hour: { label: "Hour", ms: 60 * 60 * 1000 },
-  day: { label: "Day", ms: 24 * 60 * 60 * 1000 },
+  h24: { label: "24h", ms: 24 * 60 * 60 * 1000 },
+  day: { label: "Today", ms: 24 * 60 * 60 * 1000 },
   week: { label: "Week", ms: 7 * 24 * 60 * 60 * 1000 },
   month: { label: "Month", ms: 31 * 24 * 60 * 60 * 1000 },
   year: { label: "Year", ms: 366 * 24 * 60 * 60 * 1000 }
@@ -5480,9 +5481,12 @@ function drawLeaderBoardChart(rows) {
     context.fillStyle = "#dbeafe";
     context.font = `700 ${18 * scale}px Aptos, Segoe UI, sans-serif`;
     context.textAlign = "center";
+    const periodLabel = LEADERBOARD_PERIOD_OPTIONS[leaderboardPeriodMode]?.label || "selected window";
     const message = leaderBoardSummaryError && !leaderBoardSummaryLoadedAt
       ? "Waiting for server to show trades"
-      : (hasFreshCloudTradingState() || leaderBoardSummaryLoadedAt) ? "No closed trades to chart yet" : "Waiting for server to show trades";
+      : (hasFreshCloudTradingState() || leaderBoardSummaryLoadedAt)
+        ? `No closed trades to chart for ${periodLabel}`
+        : "Waiting for server to show trades";
     context.fillText(message, width / 2, height / 2);
     return;
   }

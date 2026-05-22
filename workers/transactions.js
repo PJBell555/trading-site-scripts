@@ -3433,6 +3433,7 @@ async function handlePriceSnapshotsRoute(env, request, origin) {
 function getPriceHistoryCutoff(period = "day") {
   const now = Date.now();
   if (period === "hour") return now - (60 * 60 * 1000);
+  if (period === "h24") return now - (24 * 60 * 60 * 1000);
   if (period === "day") return now - (24 * 60 * 60 * 1000);
   if (period === "week") return now - (7 * 24 * 60 * 60 * 1000);
   if (period === "month") return now - (31 * 24 * 60 * 60 * 1000);
@@ -3535,6 +3536,7 @@ function getLeaderboardCutoff(period = "all", cutoffOverride = null) {
   if (Number.isFinite(override) && override > 0) return override;
   const now = Date.now();
   if (period === "hour") return now - (60 * 60 * 1000);
+  if (period === "h24") return now - (24 * 60 * 60 * 1000);
   if (period === "day") return now - (24 * 60 * 60 * 1000);
   if (period === "week") return now - (7 * 24 * 60 * 60 * 1000);
   if (period === "month") return now - (30 * 24 * 60 * 60 * 1000);
@@ -3542,7 +3544,7 @@ function getLeaderboardCutoff(period = "all", cutoffOverride = null) {
   return 0;
 }
 
-const LEADERBOARD_PERIODS = ["all", "hour", "day", "week", "month", "year"];
+const LEADERBOARD_PERIODS = ["all", "hour", "h24", "day", "week", "month", "year"];
 const LEADERBOARD_SUMMARY_CACHE_PREFIX = "leaderboard-summary";
 const LEADERBOARD_SUMMARY_MAX_AGE_MS = 10 * 60 * 1000;
 const ADVISORY_SUMMARY_CACHE_KEY = "advisory-summary";
