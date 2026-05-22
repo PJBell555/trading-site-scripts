@@ -4840,6 +4840,18 @@ function scoreOilShadowVariant(samples = [], strategy = {}, variant = {}) {
   }
 
   const wins = trades.filter((trade) => trade.pnlBps > 0).length;
+  const longTrades = trades.filter((trade) => trade.side === "long");
+  const shortTrades = trades.filter((trade) => trade.side === "short");
+  const summarizeSide = (items) => {
+    const sideWins = items.filter((trade) => trade.pnlBps > 0).length;
+    const sideNet = items.reduce((total, trade) => total + trade.pnlBps, 0);
+    return {
+      trades: items.length,
+      winRate: items.length ? (sideWins / items.length) * 100 : NaN,
+      avgBps: items.length ? sideNet / items.length : 0,
+      netBps: sideNet
+    };
+  };
   const netBps = trades.reduce((total, trade) => total + trade.pnlBps, 0);
   const avgBps = trades.length ? netBps / trades.length : 0;
   let peak = 0;
@@ -4856,7 +4868,55 @@ function scoreOilShadowVariant(samples = [], strategy = {}, variant = {}) {
     winRate: trades.length ? (wins / trades.length) * 100 : NaN,
     netBps,
     avgBps,
-    maxDrawdownBps
+    maxDrawdownBps,
+    long: summarizeSide(longTrades),
+    short: summarizeSide(shortTrades)
+  };
+}
+
+function getOilShadowPromotionGate(best = {}, current = {}, variants = []) {
+  const sampleWindows = variants.filter((variant) => variant.trades >= 3 && variant.avgBps > 0).length;
+  const edge = (Number(best.avgBps) || 0) - (Number(current.avgBps) || 0);
+  const gates = [
+    {
+      key: "sample-count",
+      label: "Minimum sample",
+      pass: (Number(best.trades) || 0) >= 20,
+      detail: `${Number(best.trades) || 0}/20 shadow trades`
+    },
+    {
+      key: "positive-edge",
+      label: "Positive edge",
+      pass: (Number(best.avgBps) || 0) > 0,
+      detail: `${Number(best.avgBps || 0).toFixed(1)} bps average after fees`
+    },
+    {
+      key: "beats-current",
+      label: "Beats current",
+      pass: edge >= 5,
+      detail: `${edge.toFixed(1)} bps better than current`
+    },
+    {
+      key: "drawdown",
+      label: "Drawdown limit",
+      pass: Math.abs(Number(best.maxDrawdownBps) || 0) <= 160,
+      detail: `${Math.abs(Number(best.maxDrawdownBps) || 0).toFixed(1)} bps max drawdown`
+    },
+    {
+      key: "cross-variant",
+      label: "Not one-off",
+      pass: sampleWindows >= 2,
+      detail: `${sampleWindows}/2 positive variants`
+    }
+  ];
+  const passed = gates.filter((gate) => gate.pass).length;
+  return {
+    gates,
+    passed,
+    total: gates.length,
+    eligible: passed === gates.length,
+    status: passed === gates.length ? "Eligible for promotion" : "Watch only",
+    summary: `${passed}/${gates.length} promotion gates passed`
   };
 }
 
@@ -4883,6 +4943,7 @@ function getOilShadowBacktest(user) {
   const best = ranked[0] || variants[0];
   const current = variants[0];
   const edge = best && current ? best.avgBps - current.avgBps : 0;
+  const promotionGate = getOilShadowPromotionGate(best, current, variants);
   return {
     ready: true,
     sampleCount: samples.length,
@@ -4891,8 +4952,9 @@ function getOilShadowBacktest(user) {
     variants,
     best,
     current,
+    promotionGate,
     recommendation: best && best.id !== "current" && best.trades >= 3 && edge > 4
-      ? `Shadow lab favors ${best.name}: average ${best.avgBps.toFixed(1)} bps versus current ${current.avgBps.toFixed(1)} bps. Keep as recommendation until confirmed by more samples.`
+      ? `Shadow lab favors ${best.name}: average ${best.avgBps.toFixed(1)} bps versus current ${current.avgBps.toFixed(1)} bps. ${promotionGate.eligible ? "Promotion gates pass; review before applying." : "Keep as watch-only until promotion gates pass."}`
       : "No variant has enough edge over current rules yet. Keep collecting shadow samples before promoting a rule change.",
     confidence: best?.trades >= 8 ? "Medium" : best?.trades >= 3 ? "Low" : "Insufficient"
   };
@@ -4900,16 +4962,18 @@ function getOilShadowBacktest(user) {
 
 function createOilShadowBacktestCard(user) {
   const lab = getOilShadowBacktest(user);
+  const promotion = lab.promotionGate || { gates: [], status: "Watch only", summary: "Waiting for shadow results" };
   const card = document.createElement("section");
   card.className = "user-profile-subcard oil-execution-card oil-shadow-lab-card";
   card.innerHTML = `
-    <h3>Strategy Lab <span>${lab.ready ? escapeHtml(`${lab.confidence} confidence`) : "Waiting for data"}</span></h3>
+    <h3>Strategy Lab <span>${lab.ready ? escapeHtml(`${promotion.status} / ${lab.confidence} confidence`) : "Waiting for data"}</span></h3>
     <div class="oil-execution-body">
       <div class="oil-execution-grid">
         <div><span>Samples replayed</span><strong>${lab.sampleCount}</strong><small>${lab.ready ? `${formatTradeTime(lab.firstTime)} to ${formatTradeTime(lab.lastTime)}` : escapeHtml(lab.status)}</small></div>
         <div><span>Best variant</span><strong>${escapeHtml(lab.best?.name || "-")}</strong><small>${lab.best?.trades ? `${lab.best.trades} shadow trades` : "No trades scored"}</small></div>
         <div><span>Average edge</span><strong class="${Number(lab.best?.avgBps) >= 0 ? "gain" : "loss"}">${Number.isFinite(Number(lab.best?.avgBps)) ? `${lab.best.avgBps.toFixed(1)} bps` : "-"}</strong><small>After estimated fees</small></div>
         <div><span>Drawdown</span><strong class="loss">${Number.isFinite(Number(lab.best?.maxDrawdownBps)) ? `${Math.abs(lab.best.maxDrawdownBps).toFixed(1)} bps` : "-"}</strong><small>Shadow max drawdown</small></div>
+        <div><span>Promotion gate</span><strong>${escapeHtml(promotion.status)}</strong><small>${escapeHtml(promotion.summary)}</small></div>
       </div>
       <div class="oil-execution-notes">
         <div>
@@ -4918,12 +4982,18 @@ function createOilShadowBacktestCard(user) {
         </div>
         <div>
           <span class="stat-label">Promotion rule</span>
-          <p>Shadow results do not place trades. A variant needs repeated positive average edge, acceptable drawdown, and enough samples before it should become a live paper rule.</p>
+          <p>Shadow results do not place trades. A variant remains watch-only until every gate below passes, then it still needs review before becoming a live paper rule.</p>
         </div>
+        ${promotion.gates?.length ? promotion.gates.map((gate) => `
+          <div>
+            <span class="stat-label">${gate.pass ? "Passed" : "Blocked"} / ${escapeHtml(gate.label)}</span>
+            <p>${escapeHtml(gate.detail)}</p>
+          </div>
+        `).join("") : ""}
         ${lab.variants?.length ? lab.variants.map((variant) => `
           <div>
             <span class="stat-label">${escapeHtml(variant.name)}</span>
-            <p>${variant.trades} trades / ${Number.isFinite(variant.winRate) ? formatPercent(variant.winRate) : "-"} win rate / ${variant.avgBps.toFixed(1)} bps average / ${variant.netBps.toFixed(1)} bps net</p>
+            <p>${variant.trades} trades / ${Number.isFinite(variant.winRate) ? formatPercent(variant.winRate) : "-"} win rate / ${variant.avgBps.toFixed(1)} bps average / ${variant.netBps.toFixed(1)} bps net. Long: ${variant.long.trades} trades, ${variant.long.avgBps.toFixed(1)} bps avg. Short: ${variant.short.trades} trades, ${variant.short.avgBps.toFixed(1)} bps avg.</p>
           </div>
         `).join("") : ""}
       </div>
