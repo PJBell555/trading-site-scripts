@@ -2557,8 +2557,6 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
   if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
 
   const history = Array.isArray(record.strategyHistory) ? record.strategyHistory : [];
-  if (hasMarkovMethodHistoryEntry(history)) return record;
-
   const strategy = record.strategy && typeof record.strategy === "object" && !Array.isArray(record.strategy)
     ? record.strategy
     : {};
@@ -2573,6 +2571,13 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
     markovSidewaysThresholdBoost: Number(strategy.markovSidewaysThresholdBoost) || 5,
     markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5
   };
+  if (hasMarkovMethodHistoryEntry(history)) {
+    return {
+      ...record,
+      strategy: after,
+      strategyHistory: history
+    };
+  }
   const historyEntry = {
     id: MARKOV_METHOD_STRATEGY_CHANGE_ID,
     changedAt: "2026-05-21T00:00:00.000Z",
@@ -2785,9 +2790,9 @@ function getServerStrategySettings(user = {}) {
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
     breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
     trendCaptureMode: strategy.trendCaptureMode !== false,
-    markovHedgeFundMethod: Object.prototype.hasOwnProperty.call(strategy, "markovHedgeFundMethod")
-      ? strategy.markovHedgeFundMethod === true
-      : isMarkovMethodTestAgent(user),
+    markovHedgeFundMethod: isMarkovMethodTestAgent(user)
+      ? true
+      : strategy.markovHedgeFundMethod === true,
     markovRegimeMoveBps: clamp(Number(strategy.markovRegimeMoveBps) || 8, 1, 100),
     markovSidewaysThresholdBoost: clamp(Math.round(Number(strategy.markovSidewaysThresholdBoost) || 5), 0, 30),
     markovSidewaysSizeMultiplier: clamp(Number(strategy.markovSidewaysSizeMultiplier) || 0.5, 0.1, 1),
@@ -4210,6 +4215,31 @@ function getServerMarkovMethodAssessment(signal, micro, strategy, directionalCon
   };
 }
 
+function getServerMarkovDirectionalSignal(signal, markovMethod, strategy, directionalContext) {
+  if (!markovMethod?.enabled || !markovMethod.expectedSide || markovMethod.state === "sideways") return null;
+  const side = markovMethod.expectedSide;
+  const edge = side === "short"
+    ? Number(directionalContext?.downEdge) || 50
+    : Number(directionalContext?.upEdge) || 50;
+  const minEdge = Math.max(55, Math.min(
+    Number(strategy.breakoutMinEdgePercent) || 55,
+    Number(strategy.trendingMinEdgePercent) || 58
+  ));
+  const volatility = Number(directionalContext?.volatility) || 0;
+  const minVolatility = Math.max(0.5, Number(strategy.breakoutMinVolatilityBps) || 0.8);
+  if (edge < minEdge || volatility < minVolatility) return null;
+
+  if (side === "short" && !directionalContext?.shortContinuationConfirmed) return null;
+  if (side === "long" && !directionalContext?.longContinuationConfirmed) return null;
+
+  return {
+    side,
+    label: side === "short" ? "Markov Bear Short" : "Markov Bull Long",
+    conviction: Math.max(Number(signal?.conviction) || 0, edge),
+    detail: `${markovMethod.reason} Markov directional override accepted: ${side} continuation, edge ${edge}%, volatility ${volatility.toFixed(2)} bps.`
+  };
+}
+
 function shouldHoldServerDirectionalShort(openTrade, price, strategy, directionalContext) {
   if (!strategy.trendDayDirectionalHold || openTrade.side !== "short" || !directionalContext?.shortContinuationConfirmed) return false;
   const stopPrice = Number(openTrade.stopPrice);
@@ -5154,16 +5184,19 @@ async function runPaperTradingScheduler(env, options = {}) {
         const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
         const reentrySignal = getServerPostStopReentrySignal(transactions, email, commodity, signal, strategySettings, directionalContext);
         const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
-        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal;
+        const markovMethod = getServerMarkovMethodAssessment(signal, micro, strategySettings, directionalContext);
+        const markovSignal = getServerMarkovDirectionalSignal(signal, markovMethod, strategySettings, directionalContext);
+        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal || markovSignal;
         const activeSignal = reentrySignal
           ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
           : breakoutSignal
             ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
             : trendCaptureSignal
               ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
+              : markovSignal
+                ? { ...signal, side: markovSignal.side, label: markovSignal.label, conviction: markovSignal.conviction }
               : signal;
         const regime = getServerRegimeAssessment(activeSignal, micro, strategySettings);
-        const markovMethod = getServerMarkovMethodAssessment(activeSignal, micro, strategySettings, directionalContext);
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
             + (regime.enabled ? regime.thresholdBoost : 0)
@@ -5173,7 +5206,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           100
         );
         if ((!signal.side || signal.conviction < effectiveThreshold) && !directionalOverrideSignal) {
-          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${markovMethod.enabled ? `, Markov ${markovMethod.state}` : ""}`;
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${markovMethod.enabled ? `, Markov ${markovMethod.state}${markovMethod.expectedSide ? ` favors ${markovMethod.expectedSide}` : ""}${markovSignal ? ", override ready" : ", override not confirmed"}` : ""}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
           run.skippedTrades += 1;
           continue;
@@ -5192,7 +5225,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           run.skippedTrades += 1;
           continue;
         }
-        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal, reentrySignal, markovMethod);
+        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal || markovSignal, reentrySignal, markovMethod);
         if (!entryQuality.ok) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
           await recordServerMissedOpportunity(env, { email, user, commodity, signal: activeSignal, price, strategy: strategySettings, directionalContext, advisoryBreakout, reason: lastDecision });
@@ -5261,6 +5294,8 @@ async function runPaperTradingScheduler(env, options = {}) {
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : trendCaptureSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            : markovSignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${markovSignal.detail}`
             : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}; ${secondOpinionConsensus.detail}`
         });
         transactions.push(open);
@@ -5292,6 +5327,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
           : trendCaptureSignal
           ? `${commodity}: opened ${activeSignal.side} trend capture at ${price.price}`
+          : markovSignal
+          ? `${commodity}: opened ${activeSignal.side} Markov ${markovMethod.state} at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;
         lastDecision = `${lastDecision}${markovDecisionText}`;
       }
