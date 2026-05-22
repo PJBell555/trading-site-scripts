@@ -161,6 +161,10 @@ const MARKOV_METHOD_TEST_AGENT_EMAILS = new Set(["peter@pjbell.com", "aretwo3000
 const MARKOV_METHOD_STRATEGY_CHANGE_ID = "strategy-change-0003-markov-hedge-fund-method";
 const MARKOV_METHOD_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Markov Hedge Fund Method enabled";
 const MARKOV_METHOD_STRATEGY_CHANGE_DETAIL = "Markov Hedge Fund Method for Peter Bell and D2 only. Classify oil as bull, bear, or sideways from recent return behavior and transition evidence. Bull state favors long continuation unless breakdown is confirmed. Bear state favors short continuation unless reversal is confirmed. Sideways state raises the entry threshold and reduces size. Paper-only test strategy switch.";
+const PETER_MISSED_REENTRY_EMAIL = "peter@pjbell.com";
+const PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID = "strategy-change-0004-peter-missed-opportunity-reentry";
+const PETER_MISSED_REENTRY_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Peter missed-opportunity re-entry enabled";
+const PETER_MISSED_REENTRY_STRATEGY_CHANGE_DETAIL = "Peter only. If oil has already made a large intraday move, Markov favors the same side, and live tape confirms continuation after a pullback or bounce, the Cloudflare scheduler may open a small step-1 paper trade instead of waiting for the slow advisory score. D2 remains off for this rule.";
 
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
@@ -2552,47 +2556,60 @@ function hasMarkovMethodHistoryEntry(history = []) {
   return (Array.isArray(history) ? history : []).some((entry) => entry?.id === MARKOV_METHOD_STRATEGY_CHANGE_ID);
 }
 
+function hasPeterMissedReentryHistoryEntry(history = []) {
+  return (Array.isArray(history) ? history : []).some((entry) => entry?.id === PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID);
+}
+
 function applyMarkovMethodSeedToRecord(record = {}, email = "") {
   const normalizedEmail = normalizeEmail(email || record.email);
   if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
 
-  const history = Array.isArray(record.strategyHistory) ? record.strategyHistory : [];
+  let history = Array.isArray(record.strategyHistory) ? record.strategyHistory : [];
   const strategy = record.strategy && typeof record.strategy === "object" && !Array.isArray(record.strategy)
     ? record.strategy
     : {};
+  const missedReentryEnabled = normalizedEmail === PETER_MISSED_REENTRY_EMAIL;
   const before = {
     ...strategy,
-    markovHedgeFundMethod: false
+    markovHedgeFundMethod: false,
+    missedOpportunityReentry: false
   };
   const after = {
     ...strategy,
     markovHedgeFundMethod: true,
     markovRegimeMoveBps: Number(strategy.markovRegimeMoveBps) || 8,
     markovSidewaysThresholdBoost: Number(strategy.markovSidewaysThresholdBoost) || 5,
-    markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5
+    markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5,
+    missedOpportunityReentry: missedReentryEnabled
   };
-  if (hasMarkovMethodHistoryEntry(history)) {
-    return {
-      ...record,
-      strategy: after,
-      strategyHistory: history
-    };
+  if (!hasMarkovMethodHistoryEntry(history)) {
+    history = [{
+      id: MARKOV_METHOD_STRATEGY_CHANGE_ID,
+      changedAt: "2026-05-21T00:00:00.000Z",
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: MARKOV_METHOD_STRATEGY_CHANGE_TEXT,
+      detail: MARKOV_METHOD_STRATEGY_CHANGE_DETAIL,
+      before,
+      after
+    }, ...history].slice(0, 50);
   }
-  const historyEntry = {
-    id: MARKOV_METHOD_STRATEGY_CHANGE_ID,
-    changedAt: "2026-05-21T00:00:00.000Z",
-    changedByName: "Peter Bell",
-    changedByEmail: "peter@pjbell.com",
-    summary: MARKOV_METHOD_STRATEGY_CHANGE_TEXT,
-    detail: MARKOV_METHOD_STRATEGY_CHANGE_DETAIL,
-    before,
-    after
-  };
-
+  if (missedReentryEnabled && !hasPeterMissedReentryHistoryEntry(history)) {
+    history = [{
+      id: PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID,
+      changedAt: "2026-05-21T00:00:00.000Z",
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: PETER_MISSED_REENTRY_STRATEGY_CHANGE_TEXT,
+      detail: PETER_MISSED_REENTRY_STRATEGY_CHANGE_DETAIL,
+      before: { ...after, missedOpportunityReentry: false },
+      after
+    }, ...history].slice(0, 50);
+  }
   return {
     ...record,
     strategy: after,
-    strategyHistory: [historyEntry, ...history].slice(0, 50)
+    strategyHistory: history
   };
 }
 
@@ -2770,6 +2787,10 @@ function isMarkovMethodTestAgent(user = {}) {
   return MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizeEmail(user.email || user.userEmail || ""));
 }
 
+function isPeterMissedOpportunityReentryUser(user = {}) {
+  return normalizeEmail(user.email || user.userEmail || "") === "peter@pjbell.com";
+}
+
 function getServerStrategySettings(user = {}) {
   const strategy = user.strategy && typeof user.strategy === "object" ? user.strategy : {};
   return {
@@ -2805,6 +2826,7 @@ function getServerStrategySettings(user = {}) {
     pullbackEntryRequired: strategy.pullbackEntryRequired !== false,
     profitLockTrailingStop: strategy.profitLockTrailingStop !== false,
     missedOpportunityLearner: strategy.missedOpportunityLearner !== false,
+    missedOpportunityReentry: isPeterMissedOpportunityReentryUser(user),
     noChaseMoveBps: clamp(Number(strategy.noChaseMoveBps) || 18, 0, 100),
     pullbackMinRetraceBps: clamp(Number(strategy.pullbackMinRetraceBps) || 2, 0, 30),
     profitLockMinMoveBps: clamp(Number(strategy.profitLockMinMoveBps) || 10, 0, 100),
@@ -4240,6 +4262,35 @@ function getServerMarkovDirectionalSignal(signal, markovMethod, strategy, direct
   };
 }
 
+function getServerMissedOpportunityReentrySignal(signal, markovMethod, strategy, directionalContext, advisoryBreakout) {
+  if (!strategy.missedOpportunityReentry || !markovMethod?.enabled || !markovMethod.expectedSide || markovMethod.state === "sideways") return null;
+  if (!advisoryBreakout?.ready) return null;
+  const moveBps = Number(advisoryBreakout.moveBps) || Number(directionalContext?.recentMove) || 0;
+  const minMove = Math.max(Number(strategy.missedOpportunityMoveBps) || 20, Number(strategy.noChaseMoveBps) || 0);
+  if (Math.abs(moveBps) < minMove) return null;
+  const side = moveBps < 0 ? "short" : "long";
+  if (side !== markovMethod.expectedSide) return null;
+  const edge = side === "short"
+    ? Number(directionalContext?.downEdge) || 50
+    : Number(directionalContext?.upEdge) || 50;
+  const minEdge = Math.max(53, Math.min(
+    Number(strategy.breakoutMinEdgePercent) || 55,
+    Number(strategy.trendingMinEdgePercent) || 58
+  ) - 2);
+  const volatility = Number(directionalContext?.volatility) || 0;
+  const minVolatility = Math.max(0.5, (Number(strategy.breakoutMinVolatilityBps) || 0.8) * 0.75);
+  if (edge < minEdge || volatility < minVolatility) return null;
+  if (side === "short" && !directionalContext?.shortContinuationConfirmed) return null;
+  if (side === "long" && !directionalContext?.longContinuationConfirmed) return null;
+
+  return {
+    side,
+    label: side === "short" ? "Missed Opportunity Short Re-entry" : "Missed Opportunity Long Re-entry",
+    conviction: Math.max(Number(signal?.conviction) || 0, edge),
+    detail: `${markovMethod.reason} Missed-opportunity re-entry accepted for Peter: ${side} after ${moveBps.toFixed(2)} bps move, edge ${edge}%, volatility ${volatility.toFixed(2)} bps.`
+  };
+}
+
 function shouldHoldServerDirectionalShort(openTrade, price, strategy, directionalContext) {
   if (!strategy.trendDayDirectionalHold || openTrade.side !== "short" || !directionalContext?.shortContinuationConfirmed) return false;
   const stopPrice = Number(openTrade.stopPrice);
@@ -5083,7 +5134,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.noChaseEntries
           || strategySettings.pullbackEntryRequired
           || strategySettings.profitLockTrailingStop
-          || strategySettings.missedOpportunityLearner)
+          || strategySettings.missedOpportunityLearner
+          || strategySettings.missedOpportunityReentry)
           ? await getLatestServerMicroPrediction(env, commodity, config)
           : null;
         const advisoryBreakout = (strategySettings.breakoutParticipation
@@ -5094,7 +5146,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.trendDayBias
           || strategySettings.noChaseEntries
           || strategySettings.pullbackEntryRequired
-          || strategySettings.missedOpportunityLearner)
+          || strategySettings.missedOpportunityLearner
+          || strategySettings.missedOpportunityReentry)
           ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true }, config)
           : null;
         const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
@@ -5254,27 +5307,30 @@ async function runPaperTradingScheduler(env, options = {}) {
         const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
         const markovMethod = getServerMarkovMethodAssessment(signal, micro, strategySettings, directionalContext);
         const markovSignal = getServerMarkovDirectionalSignal(signal, markovMethod, strategySettings, directionalContext);
+        const missedOpportunityReentrySignal = getServerMissedOpportunityReentrySignal(signal, markovMethod, strategySettings, directionalContext, advisoryBreakout);
         const markovAudit = markovMethod.enabled
           ? {
             enabled: true,
             state: markovMethod.state,
             expectedSide: markovMethod.expectedSide,
-            overrideReady: Boolean(markovSignal),
+            overrideReady: Boolean(markovSignal || missedOpportunityReentrySignal),
             thresholdBoost: markovMethod.thresholdBoost,
             sizeMultiplier: markovMethod.sizeMultiplier,
             reason: markovMethod.reason
           }
           : { enabled: false, reason: "Markov Hedge Fund Method is off for this account." };
-        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal || markovSignal;
+        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal || missedOpportunityReentrySignal || markovSignal;
         const activeSignal = reentrySignal
           ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
           : breakoutSignal
             ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
             : trendCaptureSignal
               ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
-              : markovSignal
-                ? { ...signal, side: markovSignal.side, label: markovSignal.label, conviction: markovSignal.conviction }
-              : signal;
+              : missedOpportunityReentrySignal
+                ? { ...signal, side: missedOpportunityReentrySignal.side, label: missedOpportunityReentrySignal.label, conviction: missedOpportunityReentrySignal.conviction }
+                : markovSignal
+                  ? { ...signal, side: markovSignal.side, label: markovSignal.label, conviction: markovSignal.conviction }
+                  : signal;
         const regime = getServerRegimeAssessment(activeSignal, micro, strategySettings);
         const effectiveThreshold = clamp(
           schedulerSettings.entryThreshold
@@ -5322,7 +5378,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           run.skippedTrades += 1;
           continue;
         }
-        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal || markovSignal, reentrySignal, markovMethod);
+        const entryQuality = getServerEntryQualityGate(activeSignal, price, strategySettings, directionalContext, breakoutSignal || trendCaptureSignal || missedOpportunityReentrySignal || markovSignal, reentrySignal, markovMethod);
         if (!entryQuality.ok) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
           setDecisionAudit("entry-quality", lastDecision, {
@@ -5399,6 +5455,8 @@ async function runPaperTradingScheduler(env, options = {}) {
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : trendCaptureSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            : missedOpportunityReentrySignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${missedOpportunityReentrySignal.detail}`
             : markovSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${markovSignal.detail}`
             : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}; ${secondOpinionConsensus.detail}`
@@ -5432,6 +5490,8 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
           : trendCaptureSignal
           ? `${commodity}: opened ${activeSignal.side} trend capture at ${price.price}`
+          : missedOpportunityReentrySignal
+          ? `${commodity}: opened ${activeSignal.side} missed-opportunity re-entry at ${price.price}`
           : markovSignal
           ? `${commodity}: opened ${activeSignal.side} Markov ${markovMethod.state} at ${price.price}`
           : `${commodity}: opened ${activeSignal.side} at ${price.price}`;

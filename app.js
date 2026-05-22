@@ -440,6 +440,7 @@ const CUSTOM_STRATEGIES_KEY = "comhedge-custom-strategies-v1";
 const LIVE_TRADE_LEDGER_KEY = "comhedge-live-trades-v1";
 const KARPATHY_AUTO_APPLY_MIGRATION_KEY = "comhedge-karpathy-auto-apply-migration-v1";
 const MARKOV_TEST_AGENT_MIGRATION_KEY = "comhedge-markov-test-agent-migration-v2";
+const PETER_MISSED_REENTRY_MIGRATION_KEY = "comhedge-peter-missed-reentry-migration-v1";
 const PAPER_TRADE_MODE = "P";
 const REAL_TRADE_MODE = "R";
 const DEFAULT_NON_EXEMPT_USER_EQUITY = 1000;
@@ -564,6 +565,7 @@ const DEFAULT_USER_STRATEGY = {
   pullbackEntryRequired: true,
   profitLockTrailingStop: true,
   missedOpportunityLearner: true,
+  missedOpportunityReentry: false,
   noChaseMoveBps: 18,
   pullbackMinRetraceBps: 2,
   profitLockMinMoveBps: 10,
@@ -586,6 +588,7 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
   markovHedgeFundMethod: true,
+  missedOpportunityReentry: false,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
   profitLockMinMoveBps: 8,
@@ -607,6 +610,7 @@ const PETER_OIL_TEST_AGENT_STRATEGY = {
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
   markovHedgeFundMethod: true,
+  missedOpportunityReentry: true,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
   profitLockMinMoveBps: 8,
@@ -3263,6 +3267,57 @@ function migrateMarkovMethodForTestAgents() {
   return changed;
 }
 
+function migratePeterMissedOpportunityReentry() {
+  let alreadyApplied = false;
+  try {
+    alreadyApplied = window.localStorage.getItem(PETER_MISSED_REENTRY_MIGRATION_KEY) === "true";
+  } catch (_error) {
+    alreadyApplied = false;
+  }
+  if (alreadyApplied) return false;
+
+  let changed = false;
+  userRoster.forEach((user) => {
+    const email = normalizeEmail(user.email);
+    if (email !== "peter@pjbell.com" && email !== "aretwo3000@gmail.com") return;
+    const strategy = normalizeUserStrategy(user.strategy);
+    const shouldEnable = email === "peter@pjbell.com";
+    if (strategy.missedOpportunityReentry !== shouldEnable) changed = true;
+    user.strategy = {
+      ...strategy,
+      missedOpportunityReentry: shouldEnable
+    };
+    const history = normalizeStrategyHistory(user.strategyHistory);
+    if (shouldEnable && !history.some((entry) => entry.id === "strategy-change-0004-peter-missed-opportunity-reentry")) {
+      changed = true;
+      user.strategyHistory = normalizeStrategyHistory([
+        {
+          id: "strategy-change-0004-peter-missed-opportunity-reentry",
+          changedAt: new Date().toISOString(),
+          changedByName: "Peter Bell",
+          changedByEmail: "peter@pjbell.com",
+          summary: "Refinement 5/21/2026: Peter missed-opportunity re-entry enabled",
+          detail: "Peter only. If oil has already made a large intraday move, Markov favors the same side, and live tape confirms continuation after a pullback or bounce, the Cloudflare scheduler may open a small step-1 paper trade instead of waiting for the slow advisory score. D2 remains off for this rule.",
+          before: { ...strategy, missedOpportunityReentry: false },
+          after: { ...strategy, missedOpportunityReentry: true }
+        },
+        ...history
+      ]);
+    } else {
+      user.strategyHistory = history;
+    }
+  });
+
+  try {
+    window.localStorage.setItem(PETER_MISSED_REENTRY_MIGRATION_KEY, "true");
+  } catch (_error) {
+    // Migration state is also persisted to Cloudflare through user strategies.
+  }
+
+  if (changed) saveUserRoster();
+  return changed;
+}
+
 function getCurrentAccessEmail() {
   return normalizeEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
 }
@@ -3445,6 +3500,7 @@ function normalizeUserStrategy(strategy = {}) {
     pullbackEntryRequired: merged.pullbackEntryRequired !== false,
     profitLockTrailingStop: merged.profitLockTrailingStop !== false,
     missedOpportunityLearner: merged.missedOpportunityLearner !== false,
+    missedOpportunityReentry: merged.missedOpportunityReentry === true,
     noChaseMoveBps: clamp(Number(merged.noChaseMoveBps) || DEFAULT_USER_STRATEGY.noChaseMoveBps, 0, 100),
     pullbackMinRetraceBps: clamp(Number(merged.pullbackMinRetraceBps) || DEFAULT_USER_STRATEGY.pullbackMinRetraceBps, 0, 30),
     profitLockMinMoveBps: clamp(Number(merged.profitLockMinMoveBps) || DEFAULT_USER_STRATEGY.profitLockMinMoveBps, 0, 100),
@@ -3534,6 +3590,7 @@ const STRATEGY_HISTORY_FIELDS = [
   ["pullbackEntryRequired", "Pullback entry required"],
   ["profitLockTrailingStop", "Profit-lock trailing stop"],
   ["missedOpportunityLearner", "Missed-opportunity learner"],
+  ["missedOpportunityReentry", "Missed-opportunity re-entry"],
   ["noChaseMoveBps", "No-chase move"],
   ["pullbackMinRetraceBps", "Pullback minimum retrace"],
   ["profitLockMinMoveBps", "Profit-lock minimum move"],
@@ -5619,6 +5676,7 @@ function saveUserStrategySettings(user, container) {
     pullbackEntryRequired: container.querySelector("[data-strategy-field='pullbackEntryRequired']")?.checked,
     profitLockTrailingStop: container.querySelector("[data-strategy-field='profitLockTrailingStop']")?.checked,
     missedOpportunityLearner: container.querySelector("[data-strategy-field='missedOpportunityLearner']")?.checked,
+    missedOpportunityReentry: container.querySelector("[data-strategy-field='missedOpportunityReentry']")?.checked,
     markovHedgeFundMethod: container.querySelector("[data-strategy-field='markovHedgeFundMethod']")?.checked,
     markovRegimeMoveBps: container.querySelector("[data-strategy-field='markovRegimeMoveBps']")?.value,
     markovSidewaysThresholdBoost: container.querySelector("[data-strategy-field='markovSidewaysThresholdBoost']")?.value,
@@ -5806,6 +5864,7 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "pullbackEntryRequired", label: "Pullback entry required", value: strategy.pullbackEntryRequired, type: "checkbox", on: "Requires retest/reclaim or bounce/failure", off: "Off", help: "Separates advisory direction from execution. A long bias waits for pullback/reclaim; a short bias waits for bounce/failure." },
     { key: "profitLockTrailingStop", label: "Profit-lock trailing stop", value: strategy.profitLockTrailingStop, type: "checkbox", on: "Moves stop after favorable move", off: "Off", help: "When an open trade moves far enough in favor, Cloudflare raises/lowers the stop to lock some of the move instead of leaving the original stop unchanged." },
     { key: "missedOpportunityLearner", label: "Missed-opportunity learner", value: strategy.missedOpportunityLearner, type: "checkbox", on: "Logs strong moves missed by execution", off: "Off", help: "Records when price makes a large move but the scheduler did not enter, so we can study bad timing separately from bad direction." },
+    { key: "missedOpportunityReentry", label: "Missed-opportunity re-entry", value: strategy.missedOpportunityReentry, type: "checkbox", on: "Peter can re-enter small with confirmed missed moves", off: "Off", help: "Peter-only test: after a large missed oil move, Markov must agree and live tape must confirm continuation before a small paper re-entry can open." },
     { key: "flatMaxMartingaleSteps", label: "Flat/mixed step cap", value: strategy.flatMaxMartingaleSteps, type: "number", min: 1, max: 8, step: 1 },
     { key: "flatSizeMultiplier", label: "Flat/mixed size multiplier", value: strategy.flatSizeMultiplier, type: "number", min: 0.1, max: 1, step: 0.05, suffix: "x" },
     { key: "flatThresholdBoost", label: "Flat/mixed threshold boost", value: strategy.flatThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+" },
@@ -6574,6 +6633,10 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="missedOpportunityLearner" type="checkbox"${strategy.missedOpportunityLearner ? " checked" : ""} title="Logs strong moves the scheduler missed so we can study bad execution timing separately from bad forecasts.">
         Missed-opportunity learner <span class="profile-field-hint" title="Writes a Cloudflare Open Brain memory when price makes a large move but no trade opens.">logs missed moves</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="missedOpportunityReentry" type="checkbox"${strategy.missedOpportunityReentry ? " checked" : ""} title="Peter-only experiment: after a large missed oil move, Markov and live tape can open a small paper re-entry with the move.">
+        Missed-opportunity re-entry <span class="profile-field-hint" title="For Peter: if oil already moved, Markov agrees, and continuation is confirmed after a bounce or pullback, Cloudflare may open a small paper trade instead of waiting for the slower advisory threshold.">Peter experiment</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="markovHedgeFundMethod" type="checkbox"${strategy.markovHedgeFundMethod ? " checked" : ""} title="${escapeHtml(MARKOV_HEDGE_FUND_METHOD_TEXT)}">
@@ -15045,8 +15108,9 @@ function initializeApp() {
   if (!requiresFreshCloudState()) loadLiveTradeLedger();
   const migratedKarpathyAutoApply = migrateKarpathyAutoApplyForAllUsers();
   const migratedMarkovTestAgents = migrateMarkovMethodForTestAgents();
+  const migratedPeterMissedReentry = migratePeterMissedOpportunityReentry();
   const seededMarkovHistory = seedMarkovStrategyHistoryForTestAgents();
-  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || seededMarkovHistory) saveSharedSettings();
+  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || migratedPeterMissedReentry || seededMarkovHistory) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
   const liveContractInput = document.querySelector("#live-trade-contract");
   if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;
