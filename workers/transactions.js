@@ -425,6 +425,16 @@ function getOpenRouterModel(modelId = "") {
   return models[modelId] || modelId || "openrouter/auto";
 }
 
+async function fetchWithTimeout(url, options = {}, timeoutMs = 25000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort("timeout"), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function getServerModelRoute(modelId, fallbackRoute = ADVISORY_MODEL_DEFAULT) {
   const id = String(modelId || "").trim();
   return SERVER_MODEL_ROUTES[id] || id || fallbackRoute;
@@ -457,6 +467,8 @@ const SERVER_DEFAULT_PRIMARY_MODEL_ID = "gpt-5-5";
 const SERVER_DEFAULT_CRITIC_MODEL_ID = "gpt-5-mini";
 const SERVER_SECOND_OPINION_DEFAULT_MODELS = ["perplexity", "gemini", "claude"];
 const SERVER_SECOND_OPINION_DEFAULT_PROMPTS = ["technician", "risk-manager", "macro"];
+const SERVER_LLM_ADVISORY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const OPENROUTER_FETCH_TIMEOUT_MS = 25000;
 const SERVER_SECOND_OPINION_MODELS = {
   "sonnet-4.6": { name: "Sonnet 4.6", tilt: -1 },
   "haiku-4.5": { name: "Haiku 4.5", tilt: 0 },
@@ -659,7 +671,7 @@ async function createOpenRouterAdvisory(env, body = {}) {
   const model = getOpenRouterAdvisoryModel(getServerModelRoute(modelSettings.primaryModelId));
   const startedAt = Date.now();
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
@@ -677,7 +689,7 @@ async function createOpenRouterAdvisory(env, body = {}) {
       // is robust to text responses.
       ...(model.startsWith("perplexity/") ? {} : { response_format: { type: "json_object" } })
     })
-  });
+  }, OPENROUTER_FETCH_TIMEOUT_MS);
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
@@ -710,7 +722,7 @@ async function createOpenRouterCriticReview(env, primaryAdvisory, body = {}, cri
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
   const startedAt = Date.now();
 
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
@@ -726,7 +738,7 @@ async function createOpenRouterCriticReview(env, primaryAdvisory, body = {}, cri
       reasoning: { effort: "low" },
       response_format: { type: "json_object" }
     })
-  });
+  }, OPENROUTER_FETCH_TIMEOUT_MS);
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
@@ -765,6 +777,187 @@ function consolidatePrimaryAndCritic(primary, criticReview) {
     primaryConviction,
     criticConviction
   };
+}
+
+function getServerAdvisoryTone(value) {
+  const tone = String(value || "").trim().toLowerCase();
+  return ["long", "short", "wait"].includes(tone) ? tone : "wait";
+}
+
+function getServerAdvisoryLabel(tone, conviction) {
+  const normalizedTone = getServerAdvisoryTone(tone);
+  if (normalizedTone === "wait") return "Wait";
+  const strength = Number(conviction) >= 70 ? "Strong" : Number(conviction) >= 55 ? "Moderate" : "Lean";
+  return `${strength} ${normalizedTone === "long" ? "Long" : "Short"}`;
+}
+
+function getServerAdvisoryAction(tone) {
+  const normalizedTone = getServerAdvisoryTone(tone);
+  if (normalizedTone === "long") return "Lean long small";
+  if (normalizedTone === "short") return "Lean short small";
+  return "No trade";
+}
+
+function getServerActiveProductKeys(config = {}) {
+  return [config.productId, config.ticker]
+    .map((item) => String(item || "").trim().toLowerCase())
+    .filter((item, index, all) => item && all.indexOf(item) === index);
+}
+
+function isServerAdvisoryFreshForContract(advisory, config = {}) {
+  if (!advisory) return false;
+  const advisoryTime = getTransactionDate(advisory.time || advisory.updatedAt || advisory.updated_at);
+  const ageMs = Date.now() - advisoryTime.getTime();
+  if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > SERVER_LLM_ADVISORY_MAX_AGE_MS) return false;
+
+  const price = Number(advisory.price);
+  const conviction = Number(advisory.conviction ?? advisory.llmScore ?? advisory.localScore);
+  if (!Number.isFinite(price) || price <= 0 || !Number.isFinite(conviction)) return false;
+
+  const activeKeys = getServerActiveProductKeys(config);
+  const advisoryKey = String(advisory.productId || advisory.product_id || advisory.contract || advisory.ticker || "").trim().toLowerCase();
+  return !activeKeys.length || activeKeys.includes(advisoryKey);
+}
+
+function buildServerOpenRouterAdvisoryBody({ user = {}, commodity = "oil", config = {}, price = null, strategySettings = {}, schedulerSettings = {}, previousAdvisory = null }) {
+  return {
+    commodity,
+    commodityName: config.name || commodity,
+    horizon: "intraday",
+    context: {
+      currentPrice: Number(price?.price) || null,
+      priceSource: price?.source || "",
+      priceTime: price?.time || "",
+      contract: config.ticker || "",
+      productId: config.productId || config.ticker || "",
+      contractMonth: config.contractMonth || "",
+      contractExpiresAt: config.contractExpiresAt || "",
+      userStrategy: user.strategy?.name || user.strategyName || "",
+      entryThreshold: schedulerSettings.entryThreshold,
+      maxOpenTrades: schedulerSettings.maxOpenTrades,
+      strategySwitches: {
+        karpathyEnabled: strategySettings.karpathyEnabled,
+        advisoryOutcomeLearner: strategySettings.advisoryOutcomeLearner,
+        secondOpinionGate: schedulerSettings.secondOpinionGateEnabled,
+        trendCaptureMode: strategySettings.trendCaptureMode,
+        breakoutParticipation: strategySettings.breakoutParticipation,
+        pullbackEntryRequired: strategySettings.pullbackEntryRequired,
+        profitLockTrailingStop: strategySettings.profitLockTrailingStop
+      },
+      previousAdvisory: previousAdvisory ? {
+        time: previousAdvisory.time,
+        contract: previousAdvisory.contract || previousAdvisory.productId,
+        tone: previousAdvisory.tone,
+        conviction: previousAdvisory.conviction,
+        price: previousAdvisory.price
+      } : null
+    }
+  };
+}
+
+async function createAndStoreServerOpenRouterAdvisory(env, params = {}) {
+  const {
+    commodity = "oil",
+    config = {},
+    price = null,
+    modelSettings = normalizeServerModelSettings()
+  } = params;
+  const body = buildServerOpenRouterAdvisoryBody(params);
+  const startedAt = Date.now();
+  const primary = await createOpenRouterAdvisory(env, body);
+  const primaryTokenLog = await safeRecordTokenUsage(env, {
+    provider: "OpenRouter",
+    model: primary.model,
+    job: "scheduled-primary-advisory",
+    usage: primary.usage,
+    metadata: {
+      commodity,
+      contract: config.ticker || config.productId,
+      productId: config.productId,
+      horizon: body.horizon,
+      elapsedMs: primary.elapsedMs
+    }
+  });
+
+  const criticModel = modelSettings.criticModelId
+    ? getOpenRouterCriticModel(getServerModelRoute(modelSettings.criticModelId))
+    : null;
+  let critic = null;
+  let criticError = null;
+  let criticTokenLog = null;
+  if (criticModel) {
+    try {
+      critic = await createOpenRouterCriticReview(env, primary.advisory, body, criticModel);
+      criticTokenLog = await safeRecordTokenUsage(env, {
+        provider: "OpenRouter",
+        model: critic.model,
+        job: "scheduled-critic-review",
+        usage: critic.usage,
+        metadata: {
+          commodity,
+          contract: config.ticker || config.productId,
+          productId: config.productId,
+          horizon: body.horizon,
+          elapsedMs: critic.elapsedMs
+        }
+      });
+    } catch (error) {
+      criticError = error.message;
+    }
+  }
+
+  const consolidated = critic ? consolidatePrimaryAndCritic(primary, critic) : primary.advisory;
+  const conviction = clamp(Math.round(Number(consolidated?.conviction ?? primary.advisory?.conviction ?? 50)), 0, 100);
+  const tone = getServerAdvisoryTone(consolidated?.tone || primary.advisory?.tone);
+  const snapshot = normalizeAdvisorySnapshot({
+    time: new Date().toISOString(),
+    commodity,
+    commodityName: config.name || commodity,
+    contract: config.ticker || config.productId || "",
+    productId: config.productId || config.ticker || "",
+    contractMonth: config.contractMonth || "",
+    horizon: body.horizon,
+    price: Number(price?.price),
+    priceSource: price?.source || "Cloudflare scheduler price",
+    bounded: 0,
+    conviction,
+    tone,
+    label: getServerAdvisoryLabel(tone, conviction),
+    action: getServerAdvisoryAction(tone)
+  });
+
+  if (!snapshot) {
+    throw new Error("OpenRouter advisory did not produce a storable snapshot");
+  }
+
+  await upsertAdvisorySnapshotsD1(env, [snapshot]);
+  return {
+    advisory: snapshot,
+    refreshed: true,
+    model: primary.model,
+    criticModel,
+    criticError,
+    elapsedMs: Date.now() - startedAt,
+    tokenLog: {
+      primary: primaryTokenLog,
+      critic: criticTokenLog
+    }
+  };
+}
+
+async function getOrRefreshServerOpenRouterAdvisory(env, params = {}) {
+  const existing = params.previousAdvisory || await getLatestAdvisoryByCommodity(env, params.commodity, params.config);
+  if (!params.force && isServerAdvisoryFreshForContract(existing, params.config)) {
+    return { advisory: existing, refreshed: false, reason: "fresh" };
+  }
+  if (!params.price || !Number.isFinite(Number(params.price.price)) || Number(params.price.price) <= 0) {
+    return { advisory: existing, refreshed: false, reason: "no-fresh-price" };
+  }
+  try {
+    return await createAndStoreServerOpenRouterAdvisory(env, params);
+  } catch (error) {
+    return { advisory: existing, refreshed: false, reason: "openrouter-error", error: error.message };
+  }
 }
 
 function hasTokenUsageStore(env) {
@@ -2123,7 +2316,7 @@ async function createOpenRouterOpinion(env, body = {}) {
 
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
   const model = getOpenRouterModel(body.modelId || body.model);
-  const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
       "Authorization": `Bearer ${apiKey}`,
@@ -2138,7 +2331,7 @@ async function createOpenRouterOpinion(env, body = {}) {
       max_tokens: 500,
       response_format: { type: "json_object" }
     })
-  });
+  }, OPENROUTER_FETCH_TIMEOUT_MS);
 
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
@@ -4721,6 +4914,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     const users = Array.isArray(settings.users) ? settings.users : [];
     const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
     const transactions = payload.transactions || [];
+    const advisoryRefreshCache = new Map();
 
     for (const user of users) {
       const email = normalizeEmail(user.email);
@@ -4758,12 +4952,47 @@ async function runPaperTradingScheduler(env, options = {}) {
       for (const commodity of schedulerSettings.commodities) {
         const config = getServerCommodityConfig(user, commodity);
         const contractRoll = getServerContractRollStatus(config);
-        const advisory = await getLatestAdvisoryByCommodity(env, commodity, config);
+        let advisory = await getLatestAdvisoryByCommodity(env, commodity, config);
         const price = await getServerMarketPrice(env, user, commodity, advisory);
         if (!price) {
           lastDecision = `${commodity}: skipped, no fresh price`;
           run.skippedTrades += 1;
           continue;
+        }
+        const advisoryCacheKey = [
+          commodity,
+          String(config.productId || config.ticker || "").toLowerCase()
+        ].join("|");
+        let advisoryRefresh = advisoryRefreshCache.get(advisoryCacheKey);
+        if (!advisoryRefresh) {
+          advisoryRefresh = await getOrRefreshServerOpenRouterAdvisory(env, {
+            user,
+            commodity,
+            config,
+            price,
+            strategySettings,
+            schedulerSettings,
+            previousAdvisory: advisory,
+            modelSettings,
+            force: options.forceAdvisory === true
+          });
+          advisoryRefreshCache.set(advisoryCacheKey, advisoryRefresh);
+        }
+        if (advisoryRefresh.advisory) {
+          advisory = advisoryRefresh.advisory;
+        }
+        if (advisoryRefresh.refreshed) {
+          run.decisions.push({
+            email: "system",
+            name: "OpenRouter advisory",
+            decision: `${commodity}: refreshed ${config.ticker || config.productId} via ${advisoryRefresh.model}${advisoryRefresh.criticModel ? ` + ${advisoryRefresh.criticModel}` : ""}`
+          });
+        } else if (advisoryRefresh.error) {
+          run.decisions.push({
+            email: "system",
+            name: "OpenRouter advisory",
+            decision: `${commodity}: refresh failed for ${config.ticker || config.productId} - ${advisoryRefresh.error}`
+          });
         }
 
         const signal = getServerSignal(advisory);
@@ -5181,7 +5410,8 @@ async function handlePaperSchedulerRoute(env, request, origin) {
   const body = await request.json().catch(() => ({}));
   const protectiveSweep = await sweepBreachedOpenPaperTradesD1(env);
   const run = await runPaperTradingScheduler(env, {
-    force: body.force === true || url.searchParams.get("force") === "true"
+    force: body.force === true || url.searchParams.get("force") === "true",
+    forceAdvisory: body.forceAdvisory === true || url.searchParams.get("forceAdvisory") === "true"
   });
   run.protectiveSweep = protectiveSweep;
   return jsonResponse(run, run.status === "failed" ? 500 : 200, origin);

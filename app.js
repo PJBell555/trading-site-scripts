@@ -12657,7 +12657,6 @@ async function initializeBackendState() {
   const leaderboardLoad = needsLeaderboard ? loadLeaderBoardSummary() : Promise.resolve(false);
   const schedulerLoad = needsLeaderboard ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
   const advisorySummaryLoad = (needsAdvisory || needsHomePreview) ? loadSharedAdvisorySummary() : Promise.resolve(false);
-  const advisoryLoad = needsAdvisory ? loadSharedAdvisoryHistory() : Promise.resolve(false);
   const microPredictionLoad = needsAdvisory ? loadSharedMicroPredictions() : Promise.resolve(false);
   const openBrainLoad = activeSection === "open-brain" ? loadOpenBrainEventsFromBackend() : Promise.resolve(false);
   const [loadedHistory] = await Promise.all([
@@ -12669,10 +12668,14 @@ async function initializeBackendState() {
     microPredictionLoad,
     openBrainLoad
   ]);
-  advisoryLoad.catch(() => {});
 
   calculateSignal();
   closeOnlyPaperSweep();
+  if (needsAdvisory) {
+    window.setTimeout(() => {
+      loadSharedAdvisoryHistory().catch(() => {});
+    }, 750);
+  }
   return loadedHistory;
 }
 
