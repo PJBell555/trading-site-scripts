@@ -9195,7 +9195,10 @@ function isUsableMarketPrice(commodity) {
     : latestPriceTimes.get(commodity);
   const updatedDate = updatedAt ? getTransactionDate(updatedAt) : null;
   const ageMs = updatedDate && Number.isFinite(updatedDate.getTime()) ? Date.now() - updatedDate.getTime() : Infinity;
-  const liveSource = source === "Coinbase WebSocket" || source === "Coinbase live";
+  const liveSource = source === "Coinbase WebSocket"
+    || source === "Coinbase live"
+    || source === "Cloudflare snapshot"
+    || source === "Cloudflare advisory summary";
   const freshEnough = liveSource && ageMs <= PAPER_EXIT_PRICE_STALE_MS;
   return Number.isFinite(price) && price > 0 && freshEnough;
 }
