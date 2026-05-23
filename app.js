@@ -13066,9 +13066,7 @@ async function loadLeaderBoardSummary(manual = false) {
   renderLeaderBoard();
   try {
     const refreshParam = manual ? "&refresh=1" : "";
-    const cutoff = getLeaderBoardPeriodCutoff(leaderboardPeriodMode);
-    const cutoffParam = Number.isFinite(cutoff) ? `&cutoff=${encodeURIComponent(String(cutoff))}` : "";
-    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${cutoffParam}${refreshParam}&ts=${Date.now()}`;
+    const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${refreshParam}&ts=${Date.now()}`;
     const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("leaderboard unavailable");
     const payload = await response.json();

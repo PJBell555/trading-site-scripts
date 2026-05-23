@@ -3739,24 +3739,7 @@ async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
   const requestedCutoff = Number(url.searchParams.get("cutoff"));
   const cutoffOverride = Number.isFinite(requestedCutoff) && requestedCutoff > 0 ? requestedCutoff : null;
   if (cutoffOverride) {
-    const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-      env,
-      await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-    ));
-    const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
-    const priceSnapshots = await loadStoredPriceSnapshots(env);
-    return jsonResponse(
-      buildServerLeaderboardSummary(
-        settings,
-        payload.transactions || [],
-        priceSnapshots,
-        period,
-        "cloudflare-d1-leaderboard-live-window",
-        cutoffOverride
-      ),
-      200,
-      origin
-    );
+    console.log("leaderboard cutoff ignored; serving cached period summary", { period, cutoffOverride });
   }
   const cached = !forceRefresh ? await loadLeaderboardSummaryCache(env, period, { allowStale: true }) : null;
   if (cached && !cached.stale) {
@@ -6252,8 +6235,10 @@ async function handleD1TransactionLedger(env, request, table, source, origin) {
 async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source, origin) {
   const normalizedMode = normalizeTradeMode(tradeMode);
   if (request.method === "GET") {
+    const url = new URL(request.url);
     const payload = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
-    if (normalizedMode === PAPER_TRADE_MODE) {
+    const includeSummary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
+    if (normalizedMode === PAPER_TRADE_MODE && includeSummary) {
       const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
         env,
         await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
