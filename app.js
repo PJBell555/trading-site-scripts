@@ -832,6 +832,7 @@ let leaderBoardSummaryRefreshing = false;
 let leaderBoardSummaryFromDisplayCache = false;
 let paperLedgerSummaryRows = [];
 let paperLedgerSummaryLoadedAt = 0;
+let paperLedgerSummaryInFlight = false;
 let activeSkillSystem = "micro-predictor";
 let activeCustomSkillId = "";
 let skillSearchQuery = "";
@@ -3362,6 +3363,29 @@ function getCurrentPaperLedgerSummaryRow() {
   const email = getCurrentLedgerEmail();
   if (!email || !paperLedgerSummaryRows.length) return null;
   return paperLedgerSummaryRows.find((row) => normalizeEmail(row?.email || row?.user?.email) === email) || null;
+}
+
+async function loadPaperLedgerSummary(manual = false) {
+  if (!hasHistoryBackend() || paperLedgerSummaryInFlight) return false;
+  paperLedgerSummaryInFlight = true;
+  try {
+    const refreshParam = manual ? "&refresh=1" : "";
+    const response = await fetchWithTimeout(
+      `${getLeaderBoardUrl()}?period=all${refreshParam}&ts=${Date.now()}`,
+      { cache: "no-store" },
+      CLOUD_SOURCE_FETCH_TIMEOUT_MS
+    );
+    if (!response.ok) throw new Error("paper ledger summary unavailable");
+    const payload = await response.json();
+    paperLedgerSummaryRows = Array.isArray(payload.rows) ? payload.rows : [];
+    paperLedgerSummaryLoadedAt = paperLedgerSummaryRows.length ? Date.now() : 0;
+    return Boolean(paperLedgerSummaryRows.length);
+  } catch (error) {
+    if (!paperLedgerSummaryLoadedAt) paperLedgerSummaryRows = [];
+    return false;
+  } finally {
+    paperLedgerSummaryInFlight = false;
+  }
 }
 
 function shouldUsePaperLedgerSummaryTotals() {
@@ -13000,6 +13024,7 @@ async function loadSharedTransactionHistory(manual = false) {
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
     paperLedgerSummaryRows = summaryRows;
     paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
+    if (!summaryRows.length) await loadPaperLedgerSummary(manual);
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     transactionHistoryLoadedFromBackend = true;
@@ -14365,15 +14390,17 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   }
 
   const paperSummaryRow = getCurrentPaperLedgerSummaryRow();
-  const usePaperSummaryTotals = shouldUsePaperLedgerSummaryTotals() && paperSummaryRow;
+  const paperSummaryTotalsRequired = shouldUsePaperLedgerSummaryTotals();
+  const usePaperSummaryTotals = paperSummaryTotalsRequired && paperSummaryRow;
+  const paperSummaryMissing = paperSummaryTotalsRequired && !paperSummaryRow;
   const paperSummaryClosedPnl = Number(paperSummaryRow?.closedPnl);
   const paperSummaryRawRows = Number(paperSummaryRow?.rawRowCount);
   const allTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
     ? paperSummaryClosedPnl
-    : getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries);
+    : (paperSummaryMissing ? 0 : getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries));
   const filteredTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
     ? paperSummaryClosedPnl
-    : getProfitTotal(rowsToRender);
+    : (paperSummaryMissing ? 0 : getProfitTotal(rowsToRender));
   const serverTotalRows = usePaperSummaryTotals && Number.isFinite(paperSummaryRawRows)
     ? paperSummaryRawRows
     : displaySourceEntries.length;
@@ -14381,11 +14408,18 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     ? `${rowsToRender.length} display rows / ${serverTotalRows} Cloudflare audit rows`
     : `${rowsToRender.length} row${rowsToRender.length === 1 ? "" : "s"}`;
 
-  renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
-  renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
+  if (paperSummaryMissing) {
+    historyTotalAllEl.innerHTML = `<span class="stat-label">All P/L</span><strong>Waiting for Cloudflare summary</strong><small>Server is the source of truth.</small>`;
+    historyTotalFilteredEl.innerHTML = `<span class="stat-label">Filtered P/L</span><strong>Waiting for Cloudflare summary</strong><small>Server is the source of truth.</small>`;
+  } else {
+    renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
+    renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
+  }
   historyTotalCountEl.textContent = displayCountText;
   if (sharedHistoryStatusEl && displaySourceEntries.length) {
-    sharedHistoryStatusEl.textContent = usePaperSummaryTotals
+    sharedHistoryStatusEl.textContent = paperSummaryMissing
+      ? "Waiting for Cloudflare summary; local P/L totals are disabled"
+      : usePaperSummaryTotals
       ? getPaperLedgerSummaryLabel(paperSummaryRow, rowsToRender.length)
       : `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
   }
