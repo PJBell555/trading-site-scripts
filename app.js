@@ -1089,8 +1089,11 @@ function showUserManagement(resetSearch = false) {
   userSearchQuery = userSearchInputEl.value.trim();
   renderUserManagement();
 
-  // Pull shared settings without blocking paint (keeps Users consistent across devices).
-  loadSharedSettings().then(() => {
+  // Pull shared settings and Cloudflare P/L summary without blocking first paint.
+  Promise.all([
+    loadSharedSettings(),
+    loadPaperLedgerSummary()
+  ]).then(() => {
     userSearchQuery = userSearchInputEl.value.trim();
     renderUserManagement();
   });
@@ -3363,6 +3366,30 @@ function getCurrentPaperLedgerSummaryRow() {
   const email = getCurrentLedgerEmail();
   if (!email || !paperLedgerSummaryRows.length) return null;
   return paperLedgerSummaryRows.find((row) => normalizeEmail(row?.email || row?.user?.email) === email) || null;
+}
+
+function getPaperLedgerSummaryRowForUser(user) {
+  const email = normalizeEmail(user?.email);
+  if (!email) return null;
+  const allTimeRows = paperLedgerSummaryRows.length
+    ? paperLedgerSummaryRows
+    : (leaderBoardSummaryPeriod === "all" ? leaderBoardSummaryRows : []);
+  return allTimeRows.find((row) => normalizeEmail(row?.email || row?.user?.email) === email) || null;
+}
+
+function getPaperLedgerSummaryMetricsForUser(user) {
+  const row = getPaperLedgerSummaryRowForUser(user);
+  if (!row) return null;
+  return {
+    closedPnl: Number(row.closedPnl) || 0,
+    openPnl: Number(row.openPnl) || 0,
+    totalPnl: Number(row.totalPnl) || 0,
+    tradeCount: Number(row.tradeCount) || 0,
+    closedCount: Number(row.closedCount) || 0,
+    activeOpenCount: Number(row.activeOpenCount) || 0,
+    rawRowCount: Number(row.rawRowCount) || 0,
+    lastTradeTime: row.lastTradeTime ? getTransactionDate(row.lastTradeTime) : null
+  };
 }
 
 async function loadPaperLedgerSummary(manual = false) {
@@ -7752,11 +7779,14 @@ function renderUserManagement() {
     const actions = document.createElement("div");
     const action = document.createElement("button");
     const accountGroupNote = getUserAccountGroupNote(user);
-    const closedPnl = getUserCurrentPnl(user);
-    const openPnl = getUserOpenPnl(user);
-    const totalPnl = closedPnl + openPnl;
-    const lastTradeTime = getUserLastTradeTime(user);
-    const tradeCount = getUserTradeCount(user);
+    const cloudMetrics = getPaperLedgerSummaryMetricsForUser(user);
+    const cloudSummaryRequired = CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED && hasHistoryBackend();
+    const closedPnl = cloudMetrics ? cloudMetrics.closedPnl : getUserCurrentPnl(user);
+    const openPnl = cloudMetrics ? cloudMetrics.openPnl : getUserOpenPnl(user);
+    const totalPnl = cloudMetrics ? cloudMetrics.totalPnl : closedPnl + openPnl;
+    const lastTradeTime = cloudMetrics ? cloudMetrics.lastTradeTime : getUserLastTradeTime(user);
+    const tradeCount = cloudMetrics ? cloudMetrics.tradeCount : getUserTradeCount(user);
+    const waitingForCloudSummary = cloudSummaryRequired && !cloudMetrics;
 
     row.className = "user-summary-row";
     if (accountGroupNote) row.dataset.accountGroup = "true";
@@ -7815,15 +7845,15 @@ function renderUserManagement() {
       { value: String(Number(user.sessions) || 0) },
       { value: formatMoney(user.paperBaseEquity ?? PAPER_START_EQUITY) },
       {
-        value: formatSignedMoney(closedPnl),
+        value: waitingForCloudSummary ? "Waiting for Cloudflare" : formatSignedMoney(closedPnl),
         className: closedPnl >= 0 ? "gain" : "loss"
       },
       {
-        value: formatSignedMoney(openPnl),
+        value: waitingForCloudSummary ? "Waiting for Cloudflare" : formatSignedMoney(openPnl),
         className: openPnl >= 0 ? "gain" : "loss"
       },
       {
-        value: formatSignedMoney(totalPnl),
+        value: waitingForCloudSummary ? "Waiting for Cloudflare" : formatSignedMoney(totalPnl),
         className: totalPnl >= 0 ? "gain" : "loss"
       },
       { value: lastTradeTime ? `${formatRelativeDate(lastTradeTime)} / ${tradeCount} trade${tradeCount === 1 ? "" : "s"}` : "No trades" },
