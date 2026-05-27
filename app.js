@@ -14008,7 +14008,7 @@ function getLatestUnclosedOpeningTrade(commodity) {
 
   return Array.from(active.values())
     .reverse()
-    .find((entry) => entry.commodity === commodity) || null;
+    .find((entry) => entry.commodity === commodity && !isStaleUnclosedOpeningTrade(entry)) || null;
 }
 
 function getClosedFromPrice(entry) {
