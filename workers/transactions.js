@@ -17,6 +17,7 @@ const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
 const PAPER_SCHEDULER_LOCK_KEY = "paper-trading-scheduler";
 const PAPER_SCHEDULER_LOCK_TTL_MS = 4 * 60 * 1000;
+const COINBASE_FETCH_TIMEOUT_MS = 7000;
 const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
 const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -3079,15 +3080,24 @@ function getServerCommodityConfigForContract(user = {}, commodity = "oil", contr
 
 async function fetchCoinbaseProductPrice(productId) {
   if (!productId) return null;
-  const response = await fetch(`${COINBASE_PRODUCTS_BASE_URL}/${encodeURIComponent(productId)}`, {
-    headers: { "Accept": "application/json" }
-  });
-  if (!response.ok) return null;
-  const data = await response.json().catch(() => null);
-  const price = Number(data?.price || data?.mid_market_price || data?.approximate_quote_24h);
-  return Number.isFinite(price) && price > 0
-    ? { price, source: "Coinbase product API", time: new Date().toISOString() }
-    : null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), COINBASE_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${COINBASE_PRODUCTS_BASE_URL}/${encodeURIComponent(productId)}`, {
+      headers: { "Accept": "application/json" },
+      signal: controller.signal
+    });
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => null);
+    const price = Number(data?.price || data?.mid_market_price || data?.approximate_quote_24h);
+    return Number.isFinite(price) && price > 0
+      ? { price, source: "Coinbase product API", time: new Date().toISOString() }
+      : null;
+  } catch (_error) {
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function getCoinbaseTickerPrice(data) {
@@ -3139,19 +3149,32 @@ function getCoinbaseMinimumTradeValue(data, livePrice) {
   return livePrice;
 }
 
-async function fetchJson(url) {
-  const response = await fetch(url, {
-    headers: {
-      "Accept": "application/json",
-      "Cache-Control": "no-cache"
+async function fetchJson(url, timeoutMs = COINBASE_FETCH_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "Cache-Control": "no-cache"
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`${response.status} ${response.statusText}`);
     }
-  });
 
-  if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    return response.json();
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`Timed out fetching Coinbase data after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return response.json();
 }
 
 async function fetchCoinbasePriceSnapshot(config) {

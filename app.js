@@ -387,7 +387,8 @@ const BACKEND_SETTINGS_SYNC_MS = 120000;
 const BACKEND_ADVISORY_SYNC_MS = 300000;
 const BACKEND_FAILURE_BACKOFF_MS = 300000;
 const BACKEND_REQUEST_TIMEOUT_MS = 10000;
-const CLOUD_SOURCE_FETCH_TIMEOUT_MS = 30000;
+const CLOUD_SOURCE_FETCH_TIMEOUT_MS = 12000;
+const CLOUD_SUMMARY_FETCH_TIMEOUT_MS = 8000;
 const ADVISORY_SUMMARY_TIMEOUT_MS = 5000;
 const BACKEND_HISTORY_SAVE_DEBOUNCE_MS = 120000;
 const BACKEND_HISTORY_MIN_WRITE_INTERVAL_MS = 300000;
@@ -3400,7 +3401,7 @@ async function loadPaperLedgerSummary(manual = false) {
     const response = await fetchWithTimeout(
       `${getLeaderBoardUrl()}?period=all${refreshParam}&ts=${Date.now()}`,
       { cache: "no-store" },
-      CLOUD_SOURCE_FETCH_TIMEOUT_MS
+      CLOUD_SUMMARY_FETCH_TIMEOUT_MS
     );
     if (!response.ok) throw new Error("paper ledger summary unavailable");
     const payload = await response.json();
@@ -13122,7 +13123,7 @@ async function loadLeaderBoardSummary(manual = false) {
   try {
     const refreshParam = manual ? "&refresh=1" : "";
     const url = `${getLeaderBoardUrl()}?period=${encodeURIComponent(leaderboardPeriodMode)}${refreshParam}&ts=${Date.now()}`;
-    const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    const response = await fetchWithTimeout(url, { cache: "no-store" }, CLOUD_SUMMARY_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("leaderboard unavailable");
     const payload = await response.json();
     leaderBoardSummaryRows = Array.isArray(payload.rows) ? payload.rows : [];
@@ -13135,16 +13136,6 @@ async function loadLeaderBoardSummary(manual = false) {
     renderLeaderBoard();
     return true;
   } catch (error) {
-    const recoveredFromLedger = await loadSharedTransactionHistory(true);
-    if (recoveredFromLedger && hasFreshCloudTradingState()) {
-      leaderBoardSummaryRows = [];
-      leaderBoardSummaryLoadedAt = 0;
-      leaderBoardSummaryPeriod = "";
-      leaderBoardSummaryError = "";
-      leaderBoardSummaryFromDisplayCache = false;
-      renderLeaderBoard();
-      return true;
-    }
     if (!leaderBoardSummaryLoadedAt || leaderBoardSummaryPeriod !== leaderboardPeriodMode) {
       loadLeaderBoardDisplayCache(leaderboardPeriodMode);
     }
