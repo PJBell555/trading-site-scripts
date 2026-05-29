@@ -13,6 +13,12 @@ ALLOWED_ORIGIN = "https://pjbell555.github.io"
 OPENROUTER_SITE_URL = "https://pjbell555.github.io/trading-site-scripts/"
 OPENROUTER_APP_NAME = "ComHedge 2"
 PAPER_TRADER_EMAILS = "peter@pjbell.com,aretwo3000@gmail.com,ai4ses@gmail.com"
+OPENAI_REALTIME_MODEL = "gpt-realtime"
+OPENAI_TRANSCRIBE_MODEL = "gpt-4o-mini-transcribe"
+OPENAI_REALTIME_VAD = "semantic_vad"
+OPENAI_REALTIME_VAD_EAGERNESS = "medium"
+ELEVENLABS_MODEL_ID = "eleven_flash_v2_5"
+ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128"
 # Safety guard: D1 is the runtime store. If a deployment ever loses the DB
 # binding and falls back to GitHub storage, this prevents generated data commits.
 PAUSE_GIT_WRITES = "true"

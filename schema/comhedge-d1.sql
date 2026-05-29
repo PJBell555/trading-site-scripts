@@ -269,3 +269,24 @@ CREATE TABLE IF NOT EXISTS user_strategy_records (
 
 CREATE INDEX IF NOT EXISTS idx_user_strategy_records_updated
   ON user_strategy_records (updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS ski_voice_leads (
+  lead_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'human_review_needed',
+  customer_name TEXT,
+  customer_email TEXT,
+  departure_city TEXT,
+  travel_window TEXT,
+  source TEXT,
+  notes TEXT,
+  transcript_json TEXT NOT NULL DEFAULT '[]',
+  payload_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_created
+  ON ski_voice_leads (created_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_email
+  ON ski_voice_leads (customer_email, created_at DESC);

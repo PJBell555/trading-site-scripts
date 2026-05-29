@@ -22,6 +22,16 @@ const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
 const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
+const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime";
+const DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_flash_v2_5";
+const DEFAULT_ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128";
+const SKI_CONCIERGE_INSTRUCTIONS = [
+  "You are a warm, efficient ski holiday specialist for US customers booking British-style catered chalet and flexible ski vacations in Europe.",
+  "Your job is to qualify the trip, explain European ski logistics in American terms, recommend suitable SkiWeekends and Flexiski-style options at a high level, and prepare a human specialist to verify availability and pricing.",
+  "Ask concise questions. Focus on departure city, dates, flexibility, group size, adults and children, ski ability mix, budget per person, rooming, dietary needs, childcare, resort vibe, and chalet preference.",
+  "Never claim live availability, final price, booking confirmation, or final package inclusions. Say a UK ski specialist will verify live availability, pricing, transfers, payment rules, and cancellation terms.",
+  "Keep spoken responses short enough for a phone-like sales conversation. Prefer one question at a time unless summarizing."
+].join("\n");
 const DEFAULT_MARKET_CALENDAR = {
   overnightRiskMode: "flatten-before-close",
   marketTimeZone: "America/New_York",
@@ -2154,6 +2164,241 @@ async function saveRuntimeDocumentD1(env, documentKey, payload) {
   `).bind(documentKey, JSON.stringify(payload), new Date().toISOString()).run();
 
   return { stored: "d1", key: documentKey };
+}
+
+function skiJson(value, fallback = "") {
+  return String(value ?? fallback).trim();
+}
+
+function getOpenAiApiKey(env) {
+  return env.OPENAI_API_KEY || env.OPENAI_API_TOKEN || "";
+}
+
+function getElevenLabsApiKey(env) {
+  return env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_TOKEN || "";
+}
+
+async function ensureSkiLeadSchemaD1(env) {
+  if (!hasRuntimeStore(env)) return false;
+  await safeD1Run(env, `
+    CREATE TABLE IF NOT EXISTS ski_voice_leads (
+      lead_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'human_review_needed',
+      customer_name TEXT,
+      customer_email TEXT,
+      departure_city TEXT,
+      travel_window TEXT,
+      source TEXT,
+      notes TEXT,
+      transcript_json TEXT NOT NULL DEFAULT '[]',
+      payload_json TEXT NOT NULL DEFAULT '{}'
+    )
+  `);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_created ON ski_voice_leads (created_at DESC)`);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_email ON ski_voice_leads (customer_email, created_at DESC)`);
+  return true;
+}
+
+async function handleSkiRealtimeClientSecret(env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const apiKey = getOpenAiApiKey(env);
+  if (!apiKey) {
+    return jsonResponse({
+      error: "OPENAI_API_KEY is not configured for the ski voice agent."
+    }, 503, origin);
+  }
+
+  await request.json().catch(() => ({}));
+  const session = {
+    type: "realtime",
+    model: env.OPENAI_REALTIME_MODEL || DEFAULT_OPENAI_REALTIME_MODEL,
+    instructions: SKI_CONCIERGE_INSTRUCTIONS,
+    output_modalities: ["text"],
+    max_output_tokens: 700,
+    audio: {
+      input: {
+        noise_reduction: { type: "near_field" },
+        transcription: { model: env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe" },
+        turn_detection: {
+          type: env.OPENAI_REALTIME_VAD || "semantic_vad",
+          eagerness: env.OPENAI_REALTIME_VAD_EAGERNESS || "medium",
+          create_response: true,
+          interrupt_response: true
+        }
+      }
+    }
+  };
+
+  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      expires_after: { anchor: "created_at", seconds: 600 },
+      session
+    })
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    return jsonResponse({
+      error: "OpenAI Realtime client secret request failed.",
+      detail: text.slice(0, 1000)
+    }, response.status, origin);
+  }
+
+  return new Response(text, {
+    status: 200,
+    headers: corsHeaders(origin)
+  });
+}
+
+async function handleSkiVoiceSpeak(env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const apiKey = getElevenLabsApiKey(env);
+  const voiceId = env.ELEVENLABS_VOICE_ID || "";
+  if (!apiKey || !voiceId) {
+    return jsonResponse({
+      error: "ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are required for ski voice output."
+    }, 503, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const text = skiJson(body.text).slice(0, 4000);
+  if (!text) {
+    return jsonResponse({ error: "Text is required." }, 400, origin);
+  }
+
+  const modelId = env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_TTS_MODEL;
+  const outputFormat = env.ELEVENLABS_OUTPUT_FORMAT || DEFAULT_ELEVENLABS_OUTPUT_FORMAT;
+  const url = `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}/stream?output_format=${encodeURIComponent(outputFormat)}&optimize_streaming_latency=3`;
+  const response = await fetch(url, {
+    method: "POST",
+    headers: {
+      "xi-api-key": apiKey,
+      "Content-Type": "application/json",
+      "Accept": "audio/mpeg"
+    },
+    body: JSON.stringify({
+      text,
+      model_id: modelId,
+      voice_settings: {
+        stability: Number(env.ELEVENLABS_STABILITY || 0.55),
+        similarity_boost: Number(env.ELEVENLABS_SIMILARITY_BOOST || 0.82),
+        style: Number(env.ELEVENLABS_STYLE || 0.18),
+        use_speaker_boost: true
+      }
+    })
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    return jsonResponse({
+      error: "ElevenLabs speech request failed.",
+      detail: detail.slice(0, 1000)
+    }, response.status, origin);
+  }
+
+  return new Response(response.body, {
+    status: 200,
+    headers: {
+      "Access-Control-Allow-Origin": origin,
+      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
+      "Content-Type": outputFormat.startsWith("mp3") ? "audio/mpeg" : "application/octet-stream",
+      "Cache-Control": "no-store"
+    }
+  });
+}
+
+async function handleSkiLeads(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({ error: "Ski leads require the Cloudflare D1 runtime store." }, 503, origin);
+  }
+
+  await ensureSkiLeadSchemaD1(env);
+
+  if (request.method === "GET") {
+    const url = new URL(request.url);
+    const limit = clamp(Number(url.searchParams.get("limit") || 50), 1, 200);
+    const result = await env.DB.prepare(`
+      SELECT lead_id, created_at, updated_at, status, customer_name, customer_email,
+             departure_city, travel_window, source, notes, transcript_json, payload_json
+      FROM ski_voice_leads
+      ORDER BY created_at DESC
+      LIMIT ?
+    `).bind(limit).all();
+    return jsonResponse({
+      generatedAt: new Date().toISOString(),
+      leads: (result.results || []).map((row) => ({
+        leadId: row.lead_id,
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        status: row.status,
+        customerName: row.customer_name,
+        customerEmail: row.customer_email,
+        departureCity: row.departure_city,
+        travelWindow: row.travel_window,
+        source: row.source,
+        notes: row.notes,
+        transcript: JSON.parse(row.transcript_json || "[]"),
+        payload: JSON.parse(row.payload_json || "{}")
+      }))
+    }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const now = new Date().toISOString();
+  const leadId = `ski-lead-${Date.now()}-${crypto.randomUUID().slice(0, 8)}`;
+  const transcript = Array.isArray(body.transcript) ? body.transcript.slice(-80) : [];
+  const payload = {
+    groupSize: body.groupSize || null,
+    budgetPerPersonUsd: body.budgetPerPersonUsd || null,
+    resortPreferences: body.resortPreferences || [],
+    accommodationPreference: body.accommodationPreference || null,
+    source: body.source || "ski-voice-agent-web"
+  };
+
+  await safeD1Run(env, `
+    INSERT INTO ski_voice_leads (
+      lead_id, created_at, updated_at, status, customer_name, customer_email,
+      departure_city, travel_window, source, notes, transcript_json, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `, [
+    leadId,
+    now,
+    now,
+    "human_review_needed",
+    skiJson(body.name).slice(0, 160),
+    normalizeEmail(body.email || "").slice(0, 200),
+    skiJson(body.departureCity).slice(0, 160),
+    skiJson(body.travelWindow).slice(0, 220),
+    skiJson(body.source, "ski-voice-agent-web").slice(0, 120),
+    skiJson(body.notes).slice(0, 12000),
+    JSON.stringify(transcript),
+    JSON.stringify(payload)
+  ]);
+
+  return jsonResponse({
+    ok: true,
+    leadId,
+    status: "human_review_needed",
+    savedAt: now
+  }, 200, origin);
 }
 
 function toFiniteNumber(value, fallback = 0) {
@@ -7348,6 +7593,18 @@ export default {
           metadata: body.metadata
         });
         return jsonResponse(result, result.stored ? 200 : 202, origin);
+      }
+
+      if (url.pathname === "/ski/realtime/client-secret") {
+        return handleSkiRealtimeClientSecret(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/voice/speak") {
+        return handleSkiVoiceSpeak(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/leads") {
+        return handleSkiLeads(env, request, origin);
       }
 
       if (url.pathname === "/models/openrouter/opinion") {
