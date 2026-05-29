@@ -120,13 +120,20 @@
 
     .brand-mark {
       align-items: center;
-      border: 2px solid rgba(255, 255, 255, 0.9);
+      background: #111827;
+      border: 1px solid rgba(255, 255, 255, 0.28);
+      border-radius: 8px;
       display: inline-flex;
-      font-size: 0.78rem;
-      font-weight: 900;
       height: 38px;
       justify-content: center;
+      overflow: hidden;
       width: 38px;
+    }
+
+    .brand-mark img {
+      display: block;
+      height: 100%;
+      width: 100%;
     }
 
     .brand strong,
@@ -300,13 +307,20 @@
 
     .phone-mark {
       align-items: center;
-      border: 1px solid rgba(255, 255, 255, 0.82);
+      background: #111827;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      border-radius: 6px;
       display: inline-flex;
-      font-size: 0.62rem;
-      font-weight: 900;
       height: 28px;
       justify-content: center;
+      overflow: hidden;
       width: 28px;
+    }
+
+    .phone-mark img {
+      display: block;
+      height: 100%;
+      width: 100%;
     }
 
     .phone-brand strong,
@@ -813,7 +827,9 @@
 <body>
   <header class="topbar">
     <a class="brand" href="#home" aria-label="Ski in Europe home">
-      <span class="brand-mark" aria-hidden="true">AI</span>
+      <span class="brand-mark" aria-hidden="true">
+        <img src="./favicon.svg" alt="">
+      </span>
       <span>
         <strong>Ski in Europe</strong>
         <span>British chalet holidays reimagined by AI</span>
@@ -850,7 +866,9 @@
             <div class="phone-screen">
               <div class="phone-top">
                 <div class="phone-brand">
-                  <span class="phone-mark" aria-hidden="true">AI</span>
+                  <span class="phone-mark" aria-hidden="true">
+                    <img src="./favicon.svg" alt="">
+                  </span>
                   <span>
                     <strong>Ski in Europe</strong>
                     <span>British Chalet holidays reimagine by AI</span>
