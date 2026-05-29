@@ -642,7 +642,7 @@ const DEFAULT_SERVER_PAPER_TRADING = {
   riskPct: PAPER_DEFAULT_RISK_PCT,
   maxOpenTrades: 1,
   entryThreshold: PAPER_MIN_CONVICTION,
-  overnightRiskMode: "accept",
+  overnightRiskMode: "flatten-before-close",
   marketTimeZone: "America/New_York",
   weeklyOpenDay: 0,
   weeklyOpenTime: "18:00",

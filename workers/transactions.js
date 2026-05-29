@@ -23,7 +23,7 @@ const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
 const DEFAULT_MARKET_CALENDAR = {
-  overnightRiskMode: "accept",
+  overnightRiskMode: "flatten-before-close",
   marketTimeZone: "America/New_York",
   weeklyOpenDay: 0,
   weeklyOpenTime: "18:00",
@@ -2686,8 +2686,9 @@ function normalizeMarketTime(value, fallback) {
 }
 
 function normalizeMarketCalendarSettings(explicit = {}) {
+  const overnightRiskMode = explicit.overnightRiskMode ?? DEFAULT_MARKET_CALENDAR.overnightRiskMode;
   return {
-    overnightRiskMode: explicit.overnightRiskMode === "flatten-before-close" ? "flatten-before-close" : "accept",
+    overnightRiskMode: overnightRiskMode === "flatten-before-close" ? "flatten-before-close" : "accept",
     marketTimeZone: String(explicit.marketTimeZone || DEFAULT_MARKET_CALENDAR.marketTimeZone).trim(),
     weeklyOpenDay: clamp(Math.round(Number(explicit.weeklyOpenDay ?? DEFAULT_MARKET_CALENDAR.weeklyOpenDay)), 0, 6),
     weeklyOpenTime: normalizeMarketTime(explicit.weeklyOpenTime, DEFAULT_MARKET_CALENDAR.weeklyOpenTime),
@@ -4913,6 +4914,55 @@ function shouldHoldServerDirectionalLong(openTrade, price, strategy, directional
   return price > hardStop;
 }
 
+function getServerPreCloseHoldDecision(openTrade, signal, schedulerSettings, directionalContext) {
+  const side = openTrade?.side === "short" ? "short" : openTrade?.side === "long" ? "long" : null;
+  if (!side) return { hold: false, reason: "No open side to evaluate." };
+
+  const conviction = signal?.side === side ? Number(signal.conviction) || 0 : 0;
+  const holdThreshold = Math.max(85, Math.min(95, (Number(schedulerSettings.entryThreshold) || PAPER_SCHEDULER_DEFAULT_THRESHOLD) + 25));
+  const sameSideAdvisory = conviction >= holdThreshold;
+  const edge = side === "short"
+    ? Number(directionalContext?.downEdge) || 0
+    : Number(directionalContext?.upEdge) || 0;
+  const continuationConfirmed = side === "short"
+    ? Boolean(directionalContext?.shortContinuationConfirmed)
+    : Boolean(directionalContext?.longContinuationConfirmed);
+  const trendConfirmed = side === "short"
+    ? Boolean(directionalContext?.isBearishTrend)
+    : Boolean(directionalContext?.isBullishTrend);
+  const vwapDistance = Number(directionalContext?.vwapDistance) || 0;
+  const ret60 = Number(directionalContext?.ret60) || 0;
+  const priceTrend = directionalContext?.priceTrend || {};
+  const priceTrendConfirms = side === "short"
+    ? Boolean(priceTrend.bearishTrend && Number(priceTrend.downEdge) >= 75 && Number(priceTrend.ret60) < 0)
+    : Boolean(priceTrend.bullishTrend && Number(priceTrend.upEdge) >= 75 && Number(priceTrend.ret60) > 0);
+  const microConfirms = side === "short"
+    ? Boolean(continuationConfirmed && edge >= 78 && vwapDistance < 0 && ret60 < 0)
+    : Boolean(continuationConfirmed && edge >= 78 && vwapDistance > 0 && ret60 > 0);
+  const hold = Boolean(
+    (sameSideAdvisory && continuationConfirmed && (trendConfirmed || priceTrendConfirms))
+    || (microConfirms && priceTrendConfirms)
+  );
+  const minutesText = Number.isFinite(Number(schedulerSettings.closeBeforeMinutes))
+    ? `${Math.round(Number(schedulerSettings.closeBeforeMinutes))} minute pre-close window`
+    : "pre-close window";
+  const reason = hold
+    ? `Holding ${side} through ${minutesText}: conviction ${conviction}/${holdThreshold}, ${side === "short" ? "down" : "up"} edge ${edge}%, 60m ${ret60.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps.`
+    : `Weekend/closed-period risk rule: flatten ${side}; hold requires ${holdThreshold}+ same-side conviction plus confirmed continuation. Current conviction ${conviction}, ${side === "short" ? "down" : "up"} edge ${edge}%, 60m ${ret60.toFixed(2)} bps.`;
+
+  return {
+    hold,
+    reason,
+    holdThreshold,
+    conviction,
+    edge,
+    continuationConfirmed,
+    trendConfirmed,
+    priceTrendConfirms,
+    microConfirms
+  };
+}
+
 function applyServerProfitLockStop(openTrade, price, strategy, directionalContext) {
   if (!strategy.profitLockTrailingStop) return null;
   const currentPrice = Number(price);
@@ -5502,26 +5552,36 @@ function getUserMarketScheduleStatus(settings, value = new Date()) {
     && minutes < dailyReopenMinute;
   const isOpen = insideWeeklySession && !dailyMaintenanceClosed;
 
-  const closeCandidates = [getMinutesUntilWeekMinute(currentWeekMinute, weeklyCloseMinute)]
-    .filter((delta) => delta > 0);
+  const closeCandidates = [];
+  const weeklyCloseDelta = getMinutesUntilWeekMinute(currentWeekMinute, weeklyCloseMinute);
+  if (weeklyCloseDelta > 0) closeCandidates.push({ delta: weeklyCloseDelta, type: "weekly" });
   for (let offset = 0; offset < 7; offset += 1) {
     const candidateDay = (day + offset) % 7;
     if (candidateDay < 1 || candidateDay > 4) continue;
     const candidateWeekMinute = (candidateDay * 24 * 60) + dailyCloseMinute;
     const delta = getMinutesUntilWeekMinute(currentWeekMinute, candidateWeekMinute);
-    if (delta > 0) closeCandidates.push(delta);
+    if (delta > 0) closeCandidates.push({ delta, type: "daily" });
   }
 
-  const minutesUntilClose = isOpen && closeCandidates.length ? Math.min(...closeCandidates) : null;
-  const flattenWindow = isOpen
+  const nearestClose = isOpen && closeCandidates.length
+    ? closeCandidates.reduce((best, candidate) => (candidate.delta < best.delta ? candidate : best), closeCandidates[0])
+    : null;
+  const minutesUntilClose = nearestClose ? nearestClose.delta : null;
+  const configuredFlattenWindow = isOpen
     && schedule.overnightRiskMode === "flatten-before-close"
     && Number.isFinite(minutesUntilClose)
     && minutesUntilClose <= schedule.closeBeforeMinutes;
+  const weeklyCloseFlattenWindow = isOpen
+    && nearestClose?.type === "weekly"
+    && Number.isFinite(minutesUntilClose)
+    && minutesUntilClose <= schedule.closeBeforeMinutes;
+  const flattenWindow = configuredFlattenWindow || weeklyCloseFlattenWindow;
 
   return {
     isOpen,
     flattenWindow,
     minutesUntilClose,
+    closeType: nearestClose?.type || null,
     shortLabel: isOpen ? "Market open" : "Market closed",
     detail: isOpen
       ? `${Math.round(minutesUntilClose || 0)} minute(s) until configured close.`
@@ -5935,8 +5995,20 @@ async function runPaperTradingScheduler(env, options = {}) {
             closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
             closeReason = openTradeRoll.detail;
           } else if (marketSchedule.flattenWindow) {
-            closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
-            closeReason = `User setting flattened ${Math.round(marketSchedule.minutesUntilClose || 0)} minute(s) before configured market close.`;
+            const holdDecision = getServerPreCloseHoldDecision(openTrade, signal, schedulerSettings, directionalContext);
+            if (holdDecision.hold) {
+              lastDecision = `${commodity}: holding ${openTrade.side} through configured close`;
+              setDecisionAudit("pre-close-hold", lastDecision, {
+                priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
+                price: { commodity, value: openTradePrice.price, source: openTradePrice.source },
+                signal: { label: signal.label, side: signal.side, conviction: signal.conviction },
+                holdDecision,
+                action: "hold"
+              });
+            } else {
+              closeAction = openTrade.side === "short" ? "COVER PRE-CLOSE" : "SELL PRE-CLOSE";
+              closeReason = holdDecision.reason;
+            }
           } else if (marketSchedule.isOpen) {
             const currentExitAction = getServerExitTrigger(openTrade, openTradePrice.price);
             if (currentExitAction) {
