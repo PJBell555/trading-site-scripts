@@ -6960,6 +6960,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     const url = new URL(request.url);
     const payload = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
     const includeSummary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
+    const includePrices = includeSummary || url.searchParams.get("prices") === "1" || url.searchParams.get("prices") === "true";
     const compact = url.searchParams.get("compact") === "1" || url.searchParams.get("compact") === "true";
     const requestedEmail = normalizeEmail(url.searchParams.get("email"));
     const requestedCommodity = normalizeServerCommodityId(url.searchParams.get("commodity"));
@@ -6967,16 +6968,19 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     const rowLimit = Number.isFinite(requestedLimit)
       ? Math.max(0, Math.min(500, Math.trunc(requestedLimit)))
       : 200;
+    if (normalizedMode === PAPER_TRADE_MODE && includePrices) {
+      const priceSnapshots = await loadStoredPriceSnapshots(env);
+      payload.prices = Object.fromEntries(Object.entries(priceSnapshots || {}).map(([commodity, snapshot]) => [
+        commodity,
+        toLitePriceSnapshot(snapshot)
+      ]));
+    }
     if (normalizedMode === PAPER_TRADE_MODE && includeSummary) {
       const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
         env,
         await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
       ));
       const priceSnapshots = await loadStoredPriceSnapshots(env);
-      payload.prices = Object.fromEntries(Object.entries(priceSnapshots || {}).map(([commodity, snapshot]) => [
-        commodity,
-        toLitePriceSnapshot(snapshot)
-      ]));
       payload.summary = buildServerLeaderboardSummary(
         settings,
         payload.transactions || [],

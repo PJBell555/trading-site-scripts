@@ -13351,11 +13351,11 @@ async function loadSharedTransactionHistory(manual = false) {
   backendSyncInFlight = true;
 
   try {
-    sharedHistoryStatusEl.textContent = "Loading Cloudflare ledger summary";
+    sharedHistoryStatusEl.textContent = "Loading Cloudflare ledger";
     const ledgerParams = new URLSearchParams({
-      summary: "1",
       compact: "1",
-      limit: "200",
+      limit: "80",
+      prices: "1",
       ts: String(Date.now())
     });
     const ledgerEmail = getCurrentLedgerEmail();
@@ -13366,16 +13366,23 @@ async function loadSharedTransactionHistory(manual = false) {
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     const summaryRows = Array.isArray(data?.summary?.rows) ? data.summary.rows : [];
+    applyCloudflarePriceSnapshots(data?.prices || {}, "Cloudflare paper ledger");
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
     paperLedgerSummaryRows = summaryRows;
     paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
-    if (!summaryRows.length) await loadPaperLedgerSummary(manual);
+    if (!summaryRows.length) {
+      loadPaperLedgerSummary(manual).then((loaded) => {
+        if (!loaded) return;
+        calculateSignal();
+        renderLeaderBoard();
+      });
+    }
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     transactionHistoryLoadedFromBackend = true;
     const totalRows = Number(data?.totalTransactions);
     sharedHistoryStatusEl.textContent = data?.compact && Number.isFinite(totalRows)
-      ? `Cloudflare summary loaded ${totalRows} server rows; showing ${entries.length} recent row${entries.length === 1 ? "" : "s"}`
+      ? `Cloudflare ledger loaded ${totalRows} server rows; showing ${entries.length} recent row${entries.length === 1 ? "" : "s"}`
       : `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
