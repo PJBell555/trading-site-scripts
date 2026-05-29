@@ -4617,6 +4617,17 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
   const volatility = Number(directionalContext?.volatility) || 0;
   const noChaseMoveBps = Number(strategy.noChaseMoveBps) || 0;
   const pullbackMinRetraceBps = Number(strategy.pullbackMinRetraceBps) || 0;
+  const priceTrend = directionalContext?.priceTrend || {};
+  const d1SelloffCapture = Boolean(
+    strategy.oilSelloffCaptureMode
+    && activeSignal.label === "D1 Trend Short"
+    && side === "short"
+    && priceTrend.ready
+    && priceTrend.bearishTrend
+    && Number(priceTrend.downEdge) >= 70
+    && Number(priceTrend.vwapDistance) < 0
+    && Number(priceTrend.ret60) < 0
+  );
 
   if (markovMethod?.enabled && markovMethod.counterState && !breakoutSignal) {
     if (side === "long" && markovMethod.state === "bear" && !directionalContext?.longReversalConfirmed) {
@@ -4628,7 +4639,7 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
   }
 
   if (strategy.trendDayBias) {
-    if (side === "short" && directionalContext?.isBullishTrend && !(ret30 < 0 && vwapDistance < 0)) {
+    if (side === "short" && directionalContext?.isBullishTrend && !d1SelloffCapture && !(ret30 < 0 && vwapDistance < 0)) {
       return { ok: false, reason: `trend-day bias blocks short while tape is bullish; need breakdown below VWAP and negative 30s momentum.` };
     }
     if (side === "long" && directionalContext?.isBearishTrend && !directionalContext?.longReversalConfirmed) {
@@ -5953,16 +5964,26 @@ async function runPaperTradingScheduler(env, options = {}) {
     }
 
     await upsertUnifiedTransactionRows(env, transactions, PAPER_TRADE_MODE);
-    await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
-      ...settings,
-      users,
-      generatedAt: new Date().toISOString(),
-      source: "cloudflare-d1-shared-settings"
-    });
-    await upsertUserStrategyRecordsD1(env, {
-      ...settings,
-      users
-    });
+    try {
+      await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
+        ...settings,
+        users,
+        generatedAt: new Date().toISOString(),
+        source: "cloudflare-d1-shared-settings"
+      });
+    } catch (error) {
+      run.settingsSaveError = error.message;
+      console.error("paper scheduler settings save failed", error);
+    }
+    try {
+      await upsertUserStrategyRecordsD1(env, {
+        ...settings,
+        users
+      });
+    } catch (error) {
+      run.strategyRecordSaveError = error.message;
+      console.error("paper scheduler strategy record save failed", error);
+    }
     if (options.skipCacheRefresh) {
       run.cacheRefreshSkipped = true;
     } else {
