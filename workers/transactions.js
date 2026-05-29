@@ -3761,8 +3761,7 @@ function getServerLeaderboardRows(settings = {}, transactions = [], priceSnapsho
     return {
       user: {
         name: user.name || email,
-        email,
-        avatarDataUrl: user.avatarDataUrl || ""
+        email
       },
       name: user.name || email,
       email,
