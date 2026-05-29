@@ -1,0 +1,493 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AI-Native Ski Voice Agent Strategy</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #1f2933;
+      --muted: #5d6978;
+      --line: #d9e2ec;
+      --paper: #ffffff;
+      --page: #f5f7fa;
+      --navy: #163b5c;
+      --blue: #2f80b7;
+      --blue-soft: #dceefb;
+      --green-soft: #e4f2df;
+      --amber-soft: #fff3d6;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--ink);
+      font-family: "Aptos", "Segoe UI", Arial, sans-serif;
+      line-height: 1.55;
+    }
+
+    .document-shell {
+      max-width: 1040px;
+      margin: 0 auto;
+      padding: 32px 20px 56px;
+    }
+
+    .document {
+      background: var(--paper);
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 48px rgba(22, 59, 92, 0.08);
+      padding: 46px 54px 54px;
+    }
+
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      color: var(--muted);
+      font-size: 0.9rem;
+      margin-bottom: 26px;
+    }
+
+    h1,
+    h2,
+    h3 {
+      color: var(--navy);
+      line-height: 1.16;
+      margin: 0;
+    }
+
+    h1 {
+      font-size: clamp(2rem, 4vw, 3rem);
+      max-width: 860px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      border-top: 1px solid var(--line);
+      font-size: 1.45rem;
+      margin-top: 34px;
+      padding-top: 24px;
+    }
+
+    h3 {
+      font-size: 1.05rem;
+      margin-top: 22px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 1.15rem;
+      max-width: 820px;
+      margin: 14px 0 26px;
+    }
+
+    .actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 24px 0 8px;
+    }
+
+    .button {
+      appearance: none;
+      border: 1px solid var(--navy);
+      border-radius: 6px;
+      background: var(--navy);
+      color: #fff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 0 14px;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 0.93rem;
+    }
+
+    .button.secondary {
+      background: #fff;
+      color: var(--navy);
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin: 28px 0 4px;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: #fbfdff;
+    }
+
+    .summary-card strong {
+      color: var(--navy);
+      display: block;
+      font-size: 0.95rem;
+      margin-bottom: 5px;
+    }
+
+    .summary-card span {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .callout {
+      border-left: 5px solid var(--blue);
+      background: var(--blue-soft);
+      margin: 24px 0;
+      padding: 16px 18px;
+    }
+
+    .callout.green {
+      border-left-color: #3b7a39;
+      background: var(--green-soft);
+    }
+
+    .callout.amber {
+      border-left-color: #a36d00;
+      background: var(--amber-soft);
+    }
+
+    .callout strong {
+      display: block;
+      color: var(--navy);
+      margin-bottom: 5px;
+    }
+
+    .architecture {
+      background: #f8fbfd;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      color: #12324d;
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 0.92rem;
+      overflow-x: auto;
+      padding: 18px;
+      white-space: pre;
+    }
+
+    ul,
+    ol {
+      padding-left: 1.35rem;
+    }
+
+    li {
+      margin: 0.4rem 0;
+    }
+
+    table {
+      border-collapse: collapse;
+      margin: 18px 0 24px;
+      width: 100%;
+    }
+
+    th,
+    td {
+      border: 1px solid var(--line);
+      padding: 10px 11px;
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      background: var(--blue-soft);
+      color: var(--navy);
+      font-size: 0.92rem;
+    }
+
+    td {
+      font-size: 0.93rem;
+    }
+
+    .source-list a {
+      color: #075c99;
+      overflow-wrap: anywhere;
+    }
+
+    .footer-note {
+      color: var(--muted);
+      font-size: 0.88rem;
+      margin-top: 30px;
+    }
+
+    @media (max-width: 780px) {
+      .document-shell {
+        padding: 0;
+      }
+
+      .document {
+        border: 0;
+        box-shadow: none;
+        padding: 28px 20px 40px;
+      }
+
+      .topline,
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .topline {
+        display: block;
+      }
+
+      table {
+        display: block;
+        overflow-x: auto;
+      }
+    }
+
+    @media print {
+      body {
+        background: #fff;
+      }
+
+      .document-shell {
+        max-width: none;
+        padding: 0;
+      }
+
+      .document {
+        border: 0;
+        box-shadow: none;
+        padding: 0;
+      }
+
+      .actions {
+        display: none;
+      }
+
+      h2 {
+        break-after: avoid;
+      }
+
+      table,
+      .callout,
+      .summary-card {
+        break-inside: avoid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="document-shell">
+    <article class="document">
+      <div class="topline">
+        <span>ComHedge planning memo</span>
+        <span>Prepared May 29, 2026</span>
+      </div>
+
+      <h1>AI-Native Ski Voice Agent Strategy</h1>
+      <p class="subtitle">A browser-based voice concierge for US customers booking British chalet-style ski vacations in Europe, powered by SkiWeekends and Flexiski inventory with a UK human specialist in the loop.</p>
+
+      <div class="actions" aria-label="Document actions">
+        <button class="button" type="button" onclick="window.print()">Save as PDF</button>
+        <a class="button secondary" href="../index.html">Back to ComHedge</a>
+      </div>
+
+      <section class="summary-grid" aria-label="Executive summary">
+        <div class="summary-card">
+          <strong>Product</strong>
+          <span>Voice-first AI travel agent for Americans booking European chalet ski holidays.</span>
+        </div>
+        <div class="summary-card">
+          <strong>Stack</strong>
+          <span>Cloudflare hosting, OpenAI Realtime reasoning, ElevenLabs warm voice, human quote verification.</span>
+        </div>
+        <div class="summary-card">
+          <strong>Guardrail</strong>
+          <span>The AI recommends and prepares. Humans confirm availability, price, terms, and final booking.</span>
+        </div>
+      </section>
+
+      <div class="callout green">
+        <strong>Executive view</strong>
+        Build a browser-based voice concierge hosted on Cloudflare. Use OpenAI Realtime for reasoning, turn detection, conversation state, and tool calls; use ElevenLabs for the warm spoken voice; keep a human ski specialist in England as the final availability and quote verifier.
+      </div>
+
+      <h2>1. Product Concept</h2>
+      <p>The product is a voice-first AI travel agent for US customers who want British chalet-style ski vacations in European ski destinations. It should feel like speaking to a calm, knowledgeable ski specialist rather than searching a generic travel marketplace.</p>
+      <ul>
+        <li>Target customers: US families, couples, and friend groups planning European ski trips.</li>
+        <li>Inventory partners: SkiWeekends.com and Flexiski.com.</li>
+        <li>Core promise: make European chalet ski holidays easy for Americans to understand, compare, and move toward booking.</li>
+        <li>Commercial control: the AI prepares options and a lead brief; a human specialist verifies live availability, pricing, inclusions, and booking terms.</li>
+      </ul>
+
+      <h2>2. Recommended Architecture</h2>
+      <p>Use a web-first stack, avoiding Twilio and PSTN call costs.</p>
+      <pre class="architecture">Customer browser
+  -> microphone via WebRTC / Web Audio
+  -> Cloudflare Worker session endpoint
+  -> Durable Object per active conversation
+  -> OpenAI Realtime with output_modalities: ["text"]
+  -> ElevenLabs streaming TTS
+  -> browser audio playback
+  -> D1 lead brief for human review in England</pre>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Layer</th>
+            <th>Recommended Component</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Frontend</td><td>Cloudflare static assets / Pages-style app</td><td>Voice UI, transcript, shortlist display, text fallback, customer CTA.</td></tr>
+          <tr><td>Realtime session</td><td>Cloudflare Durable Object per conversation</td><td>Stateful WebSocket bridge, barge-in, playback queue, transcript timing, event correlation.</td></tr>
+          <tr><td>Reasoning</td><td>OpenAI Realtime, GPT-Realtime-2 or gpt-realtime</td><td>Audio understanding, semantic VAD, conversation state, tool calling, streamed text output.</td></tr>
+          <tr><td>Voice</td><td>ElevenLabs Flash / Turbo TTS</td><td>Warm branded speech, streamed back to the browser.</td></tr>
+          <tr><td>Data</td><td>Cloudflare D1</td><td>Leads, trip briefs, quote status, human review queue.</td></tr>
+          <tr><td>Files</td><td>Cloudflare R2</td><td>Optional audio recordings, transcripts, generated quote PDFs.</td></tr>
+          <tr><td>Async work</td><td>Cloudflare Queues</td><td>Human handoff emails, CRM sync, follow-up jobs.</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>Key technical choice</strong>
+        Set OpenAI Realtime responses to <code>output_modalities: ["text"]</code>. This keeps OpenAI as the reasoning and turn-taking engine while routing spoken output through ElevenLabs.
+      </div>
+
+      <h2>3. Conversation Flow</h2>
+      <ol>
+        <li>Customer clicks Talk to Ski Concierge on the website.</li>
+        <li>Browser requests microphone permission and starts a voice session.</li>
+        <li>The agent asks concise qualifying questions: dates, group size, airports, budget, ski level, rooming, dietary needs, childcare, resort vibe, and flexibility.</li>
+        <li>The agent searches normalized SkiWeekends and Flexiski inventory through backend tools.</li>
+        <li>The page updates visually with matched resorts, chalet options, estimated budget fit, missing details, and next steps.</li>
+        <li>When qualified, the agent creates a structured lead brief for the UK human team.</li>
+        <li>The human specialist verifies availability, pricing, transfer options, payment rules, cancellation terms, and sends the final quote or booking link.</li>
+      </ol>
+
+      <h2>4. Human-in-the-Loop Guardrail</h2>
+      <p>The AI should never claim a final booking, guaranteed price, or confirmed availability. The customer-facing language should be confident but careful.</p>
+      <div class="callout amber">
+        <strong>Suggested agent language</strong>
+        I found a few strong matches for your group. I will prepare these for a ski specialist to verify live availability and package details before you book.
+      </div>
+
+      <h2>5. Tools the Agent Needs</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Tool</th>
+            <th>Purpose</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>capture_lead</code></td><td>Save contact details and consent.</td></tr>
+          <tr><td><code>search_skiweekends_inventory</code></td><td>Find candidate partner offers.</td></tr>
+          <tr><td><code>search_flexiski_inventory</code></td><td>Find candidate partner offers.</td></tr>
+          <tr><td><code>rank_chalet_options</code></td><td>Compare fit by budget, group profile, resort vibe, snow reliability, and logistics.</td></tr>
+          <tr><td><code>create_human_review_brief</code></td><td>Generate a structured handoff for the UK specialist.</td></tr>
+          <tr><td><code>send_summary_email</code></td><td>Send the customer a non-binding recap.</td></tr>
+          <tr><td><code>schedule_callback</code></td><td>Book a specialist follow-up.</td></tr>
+          <tr><td><code>escalate_to_human</code></td><td>Hand off when confidence is low or the customer is ready to book.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>6. Reliability Requirements</h2>
+      <ul>
+        <li>Barge-in: when the customer starts speaking, cancel the current OpenAI response and clear queued ElevenLabs audio.</li>
+        <li>Silence nudges: after the agent finishes speaking, prompt gently after a delay, then offer a callback if the customer remains quiet.</li>
+        <li>No-goodbye guard: never close a session without a spoken closing message.</li>
+        <li>Grace window: let a late interruption cancel the close if the customer says something like, wait, one more question.</li>
+        <li>Aligned logs: use one session ID across browser events, OpenAI events, ElevenLabs chunks, tool calls, and database writes.</li>
+        <li>Cost controls: rate limits, session timeouts, concise prompts, and budget alerts from day one.</li>
+        <li>Fallback text chat: some users will be in public, at work, or unwilling to grant microphone access.</li>
+      </ul>
+
+      <h2>7. Current Cost Model</h2>
+      <p>Pricing changes often, so these numbers should be treated as current planning estimates rather than long-term guarantees.</p>
+      <table>
+        <thead>
+          <tr>
+            <th>Provider</th>
+            <th>Cost Driver</th>
+            <th>Current Public Pricing</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>OpenAI GPT-Realtime-2</td><td>Audio input</td><td>$32.00 / 1M tokens</td></tr>
+          <tr><td>OpenAI GPT-Realtime-2</td><td>Text output</td><td>$24.00 / 1M tokens</td></tr>
+          <tr><td>OpenAI GPT-Realtime-2</td><td>Audio output</td><td>$64.00 / 1M tokens, mostly avoided with text-only output</td></tr>
+          <tr><td>OpenAI GPT-Realtime-Whisper</td><td>Streaming speech-to-text</td><td>$0.017 / minute if used separately</td></tr>
+          <tr><td>ElevenLabs Flash / Turbo</td><td>Text-to-speech</td><td>$0.05 / 1,000 characters</td></tr>
+          <tr><td>ElevenLabs Multilingual v2/v3</td><td>Text-to-speech</td><td>$0.10 / 1,000 characters</td></tr>
+          <tr><td>ElevenLabs Speech Engine</td><td>Full agent pipeline option</td><td>$0.08 / minute</td></tr>
+          <tr><td>Cloudflare</td><td>Workers, Durable Objects, D1, R2, Queues</td><td>Usually low at MVP volumes; monitor reads, writes, duration, and storage.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>8. Per-Conversation Operating Estimate</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Scenario</th>
+            <th>Expected Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>5-7 minute normal web voice session</td><td>$0.20-$0.60 per completed conversation</td></tr>
+          <tr><td>10-12 minute qualified planning session</td><td>$0.60-$1.50 per conversation</td></tr>
+          <tr><td>1,000 sessions/month, average 6 minutes</td><td>$350-$1,050/month including OpenAI, ElevenLabs, Cloudflare, and light misc services</td></tr>
+          <tr><td>10,000 sessions/month</td><td>$3,000-$10,000/month depending on length, speech volume, and voice model choice</td></tr>
+        </tbody>
+      </table>
+
+      <h2>9. Build Budget</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Stage</th>
+            <th>Scope</th>
+            <th>Rough Build Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>Clickable demo</td><td>Voice UI, OpenAI Realtime, ElevenLabs voice, basic lead capture.</td><td>$10k-$25k equivalent effort</td></tr>
+          <tr><td>Usable MVP</td><td>Cloudflare hosting, Durable Object bridge, D1 lead database, partner inventory adapters, review queue, transcripts, admin dashboard.</td><td>$40k-$90k equivalent effort</td></tr>
+          <tr><td>Production sales system</td><td>Monitoring, cost controls, fallbacks, QA tooling, analytics, CRM/email integrations, privacy, fraud/rate limiting, polished human workflow.</td><td>$100k-$250k+</td></tr>
+        </tbody>
+      </table>
+
+      <h2>10. MVP Build Order</h2>
+      <ol>
+        <li>Create the web voice UI and text fallback.</li>
+        <li>Add the Cloudflare Worker endpoint to create and secure realtime sessions.</li>
+        <li>Add one Durable Object per active conversation.</li>
+        <li>Configure OpenAI Realtime with <code>output_modalities: ["text"]</code>.</li>
+        <li>Stream ElevenLabs Flash / Turbo voice back to the browser.</li>
+        <li>Implement the lead brief and D1 human review queue.</li>
+        <li>Add SkiWeekends and Flexiski inventory adapters.</li>
+        <li>Add admin review dashboard for the England-based human specialists.</li>
+        <li>Add logging, budget caps, session limits, and QA tools before production traffic.</li>
+      </ol>
+
+      <h2>11. Source Links</h2>
+      <ul class="source-list">
+        <li><a href="https://openai.com/api/pricing/">OpenAI API pricing</a></li>
+        <li><a href="https://platform.openai.com/docs/guides/realtime-function-calling">OpenAI Realtime API text-only output</a></li>
+        <li><a href="https://platform.openai.com/docs/api-reference/realtime?api-mode=chat">OpenAI Realtime API reference</a></li>
+        <li><a href="https://openai.com/index/advancing-voice-intelligence-with-new-models-in-the-api/">OpenAI voice model announcement</a></li>
+        <li><a href="https://elevenlabs.io/pricing/api">ElevenLabs API pricing</a></li>
+        <li><a href="https://developers.cloudflare.com/workers/runtime-apis/websockets/">Cloudflare Workers WebSockets</a></li>
+        <li><a href="https://developers.cloudflare.com/durable-objects/best-practices/websockets/">Cloudflare Durable Objects WebSockets</a></li>
+        <li><a href="https://developers.cloudflare.com/workers/static-assets/">Cloudflare Workers static assets</a></li>
+      </ul>
+
+      <p class="footer-note">This memo is a planning artifact. Re-check provider pricing and model names before production procurement or customer-facing cost commitments.</p>
+    </article>
+  </main>
+</body>
+</html>

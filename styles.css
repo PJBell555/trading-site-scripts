@@ -4866,6 +4866,10 @@ ol {
   width: 100%;
 }
 
+.menu-button.menu-link {
+  text-decoration: none;
+}
+
 .menu-button::before {
   background: rgba(148, 163, 184, 0.32);
   content: "";
