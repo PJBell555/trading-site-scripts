@@ -411,7 +411,7 @@ const MARTINGALE_MAX_STEP = 4;
 const KARPATHY_SAMPLE_SIZE = 12;
 const COINBASE_WS_URL = "wss://advanced-trade-ws.coinbase.com";
 const COINBASE_WS_STALE_MS = 180000;
-const PAPER_EXIT_PRICE_STALE_MS = 180000;
+const PAPER_EXIT_PRICE_STALE_MS = 7 * 60 * 1000;
 const DEFAULT_HISTORY_API_URL = "https://trading-site-scripts.peter-bell54.workers.dev";
 const UNAVAILABLE_TEXT = "Not available";
 const PRICE_TICK_WINDOW_MS = 10 * 60 * 1000;
@@ -7511,7 +7511,7 @@ function buildQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
 
   if (openTrade) {
     row.className = "transaction-row open-trade-row";
-    const livePrice = getUsableMarketPrice(commodity);
+    const livePrice = getDisplayMarketPrice(commodity);
     appendStateCell(row, "O", "Open");
     [
       formatTradeTime(openTrade.openedAt || openTrade.time),
@@ -7639,6 +7639,10 @@ function buildUnrealizedPnlCell(openTrade, livePrice) {
   cell.append(document.createTextNode(formatSignedMoney(unrealizedPnl)));
   if (unrealizedPnl > 0) cell.classList.add("gain");
   else if (unrealizedPnl < 0) cell.classList.add("loss");
+  const commodity = normalizeCommodityId(openTrade.commodity || getCommodityFromContract(openTrade.contract) || "oil");
+  cell.title = isUsableMarketPrice(commodity)
+    ? "Open P/L estimated from the current Coinbase price."
+    : getDisplayMarketPriceTitle(commodity);
 
   if (tradeKey != null) lastUnrealizedPnlByTradeId.set(tradeKey, unrealizedPnl);
   return cell;
@@ -7649,13 +7653,13 @@ function buildOpenTradeLivePriceCell(entry = {}, livePrice = null) {
   const commodity = normalizeCommodityId(entry.commodity || getCommodityFromContract(entry.contract) || "oil");
   const price = Number.isFinite(Number(livePrice)) && Number(livePrice) > 0
     ? Number(livePrice)
-    : Number(getUsableMarketPrice(commodity));
+    : Number(getDisplayMarketPrice(commodity));
   if (!Number.isFinite(price) || price <= 0) {
     cell.textContent = UNAVAILABLE_TEXT;
     return cell;
   }
   cell.className = "current-mark-price";
-  cell.title = "Current Coinbase price used to estimate this open trade P/L.";
+  cell.title = getDisplayMarketPriceTitle(commodity);
   cell.textContent = formatPrice(price);
   return cell;
 }
