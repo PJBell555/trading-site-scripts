@@ -426,6 +426,7 @@ function getOpenRouterModel(modelId = "") {
     "gpt-5-4": "openrouter/auto",
     perplexity: "perplexity/sonar",
     gemini: "google/gemini-2.5-flash",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
     claude: "anthropic/claude-3.5-haiku",
     grok: "x-ai/grok-3-mini"
   };
@@ -485,6 +486,7 @@ const SERVER_SECOND_OPINION_MODELS = {
   haiku: { name: "Haiku 4.5", tilt: 0 },
   gpt5mini: { name: "GPT-5-mini", tilt: 0 },
   "gemini-flash": { name: "Gemini 2.5 Flash", tilt: 1 },
+  "deepseek-v4-pro": { name: "DeepSeek V4 Pro", tilt: 2 },
   "gpt-5-5": { name: "ChatGPT 5.5", tilt: 0 },
   "gpt-5-4": { name: "ChatGPT 5.4", tilt: -2 },
   perplexity: { name: "Perplexity", tilt: -4 },
@@ -497,6 +499,7 @@ const SERVER_MODEL_ROUTES = {
   "haiku-4.5": "anthropic/claude-haiku-4.5",
   "gpt-5-mini": "openai/gpt-5-mini",
   "gemini-flash": "google/gemini-2.5-flash",
+  "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
   "gpt-5-5": "openai/gpt-5.5",
   "gpt-5-4": "openai/gpt-5.4",
   perplexity: "perplexity/sonar",
@@ -523,6 +526,7 @@ const APPROVED_ADVISORY_MODELS = new Set([
   "openai/gpt-5-mini",
   "openai/gpt-4o-mini",
   "openai/gpt-4.1-mini",
+  "deepseek/deepseek-v4-pro",
   "perplexity/sonar",
   "x-ai/grok-3-mini",
   "x-ai/grok-4",

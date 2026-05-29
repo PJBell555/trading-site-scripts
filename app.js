@@ -321,6 +321,7 @@ const advisoryModels = [
   { id: "haiku-4.5", name: "Haiku 4.5", provider: "Anthropic", badge: "C", tilt: 0, style: "fast LLM via OpenRouter", openrouterId: "anthropic/claude-haiku-4.5" },
   { id: "gpt-5-mini", name: "GPT-5-mini", provider: "OpenAI", badge: "O", tilt: 0, style: "reasoning model (critic / second opinion)", openrouterId: "openai/gpt-5-mini" },
   { id: "gemini-flash", name: "Gemini 2.5 Flash", provider: "Google", badge: "G", tilt: 1, style: "fast LLM via OpenRouter", openrouterId: "google/gemini-2.5-flash" },
+  { id: "deepseek-v4-pro", name: "DeepSeek V4 Pro", provider: "DeepSeek", badge: "D", tilt: 2, style: "low-cost long-context LLM via OpenRouter", openrouterId: "deepseek/deepseek-v4-pro" },
   { id: "gpt-5-5", name: "ChatGPT 5.5", provider: "OpenAI", badge: "O", tilt: 0, style: "OpenAI flagship (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.5" },
   { id: "gpt-5-4", name: "ChatGPT 5.4", provider: "OpenAI", badge: "O", tilt: -2, style: "cost-aware OpenAI (live LLM via OpenRouter)", openrouterId: "openai/gpt-5.4" },
   { id: "perplexity", name: "Perplexity", provider: "Perplexity", badge: "P", tilt: -4, style: "search-augmented LLM (live LLM via OpenRouter)", openrouterId: "perplexity/sonar" },
