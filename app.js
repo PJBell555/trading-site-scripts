@@ -998,9 +998,17 @@ function scheduleAdvisoryHeavyDataLoad() {
   advisoryHeavyDataTimer = window.setTimeout(() => {
     advisoryHeavyDataTimer = null;
     if (activeSection !== "advisories" || document.hidden) return;
-    loadSharedAdvisoryHistory().catch(() => {});
-    loadSharedMicroPredictions().catch(() => {});
-  }, 1200);
+    const loadHeavyAdvisoryData = () => {
+      if (activeSection !== "advisories" || document.hidden) return;
+      loadSharedAdvisoryHistory().catch(() => {});
+      loadSharedMicroPredictions().catch(() => {});
+    };
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(loadHeavyAdvisoryData, { timeout: 6000 });
+    } else {
+      window.setTimeout(loadHeavyAdvisoryData, 2500);
+    }
+  }, 3500);
 }
 
 function queuePaperSweep(options = {}) {
@@ -13045,8 +13053,16 @@ async function loadSharedTransactionHistory(manual = false) {
   backendSyncInFlight = true;
 
   try {
-    sharedHistoryStatusEl.textContent = "Syncing backend";
-    const response = await fetchWithTimeout(`${getMasterHistoryUrl()}?ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    sharedHistoryStatusEl.textContent = "Loading Cloudflare ledger summary";
+    const ledgerParams = new URLSearchParams({
+      summary: "1",
+      compact: "1",
+      limit: "200",
+      ts: String(Date.now())
+    });
+    const ledgerEmail = getCurrentLedgerEmail();
+    if (ledgerEmail) ledgerParams.set("email", ledgerEmail);
+    const response = await fetchWithTimeout(`${getMasterHistoryUrl()}?${ledgerParams.toString()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("master history unavailable");
 
     const data = await response.json();
@@ -13059,7 +13075,10 @@ async function loadSharedTransactionHistory(manual = false) {
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     transactionHistoryLoadedFromBackend = true;
-    sharedHistoryStatusEl.textContent = `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
+    const totalRows = Number(data?.totalTransactions);
+    sharedHistoryStatusEl.textContent = data?.compact && Number.isFinite(totalRows)
+      ? `Cloudflare summary loaded ${totalRows} server rows; showing ${entries.length} recent row${entries.length === 1 ? "" : "s"}`
+      : `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
     renderLeaderBoard();

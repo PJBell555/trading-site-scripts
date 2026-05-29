@@ -1486,7 +1486,7 @@ async function getFirstStoredExitTick(env, openTrade, config, openedAt) {
   const commodity = normalizeServerCommodityId(openTrade.commodity || config.id || inferServerCommodityFromContract(openTrade.contract));
   const productKeys = Array.from(new Set(getServerConfigProductKeys(config)));
   const productClause = productKeys.length
-    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    ? `AND (lower(COALESCE(product_id, '')) IN (${productKeys.map(() => "?").join(", ")}) OR lower(COALESCE(ticker, '')) IN (${productKeys.map(() => "?").join(", ")}))`
     : "";
   const targetPrice = Number(openTrade.targetPrice);
   const stopPrice = Number(openTrade.originalStopPrice ?? openTrade.stopPrice);
@@ -1507,6 +1507,7 @@ async function getFirstStoredExitTick(env, openTrade, config, openedAt) {
   `).bind(
     commodity,
     openedAt.toISOString(),
+    ...productKeys,
     ...productKeys,
     targetPrice,
     stopPrice
@@ -3149,6 +3150,14 @@ function getCoinbaseMinimumTradeValue(data, livePrice) {
   return livePrice;
 }
 
+function estimateMinimumTradeValue(config = {}, livePrice) {
+  const price = Number(livePrice);
+  if (!Number.isFinite(price) || price <= 0) return null;
+  const contractMultiplier = Number(config.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
+  const marginRate = Number(config.marginRateLong) > 0 ? Number(config.marginRateLong) : 1;
+  return price * contractMultiplier * marginRate;
+}
+
 async function fetchJson(url, timeoutMs = COINBASE_FETCH_TIMEOUT_MS) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
@@ -3189,13 +3198,7 @@ async function fetchCoinbasePriceSnapshot(config) {
       throw new Error("No usable ticker price in Coinbase response");
     }
 
-    let minimumTradeValue = priceData.price;
-    try {
-      const productData = await fetchJson(`${COINBASE_PRODUCTS_BASE_URL}/${encodeURIComponent(productId)}?ts=${Date.now()}`);
-      minimumTradeValue = getCoinbaseMinimumTradeValue(productData, priceData.price);
-    } catch (_error) {
-      minimumTradeValue = priceData.price;
-    }
+    const minimumTradeValue = estimateMinimumTradeValue(config, priceData.price) ?? priceData.price;
 
     return {
       id: config.id,
@@ -3380,27 +3383,32 @@ async function loadStoredPriceSnapshots(env) {
 
 async function getPriceSnapshots(env, forceRefresh = false) {
   const stored = await loadStoredPriceSnapshots(env);
-  const entries = await Promise.all(Object.values(SERVER_COMMODITIES).map(async (commodity) => {
+  const entries = [];
+  for (const commodity of Object.values(SERVER_COMMODITIES)) {
     const activeCommodity = getServerActiveCommodityContract(commodity);
     const existing = stored[commodity.id];
     const existingMatchesActiveContract = existing
       && [existing.productId, existing.ticker].some((item) => (
         String(item || "").toLowerCase() === String(activeCommodity.productId || activeCommodity.ticker || "").toLowerCase()
       ));
-    if (!forceRefresh && existingMatchesActiveContract && existing?.ok && isFreshPriceSnapshot(existing)) return existing;
+    if (!forceRefresh && existingMatchesActiveContract && existing?.ok && isFreshPriceSnapshot(existing)) {
+      entries.push(existing);
+      continue;
+    }
 
     const snapshot = await fetchCoinbasePriceSnapshot(activeCommodity);
     if (snapshot.ok || !existing) {
       await savePriceSnapshot(env, snapshot);
-      return snapshot;
+      entries.push(snapshot);
+      continue;
     }
 
-    return {
+    entries.push({
       ...existing,
       stale: true,
       refreshError: snapshot.error || "Refresh failed"
-    };
-  }));
+    });
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -3495,7 +3503,7 @@ async function getPriceHistory(env, commodity = "oil", period = "day") {
     .map((item) => String(item || "").trim().toLowerCase())
     .filter(Boolean);
   const productClause = productKeys.length
-    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    ? `AND (lower(COALESCE(product_id, '')) IN (${productKeys.map(() => "?").join(", ")}) OR lower(COALESCE(ticker, '')) IN (${productKeys.map(() => "?").join(", ")}))`
     : "";
 
   await ensurePriceTicksTable(env);
@@ -3510,6 +3518,7 @@ async function getPriceHistory(env, commodity = "oil", period = "day") {
   `).bind(
     normalizedCommodity,
     new Date(cutoff || 0).toISOString(),
+    ...productKeys,
     ...productKeys
   ).all();
 
@@ -3865,6 +3874,28 @@ async function handleAdvisorySummaryRoute(env, request, origin, ctx = null) {
 
 async function getServerMarketPrice(env, user, commodity, advisory = null, overrideConfig = null) {
   const config = overrideConfig || getServerCommodityConfig(user, commodity);
+  try {
+    const stored = await loadStoredPriceSnapshots(env);
+    const snapshot = stored[commodity];
+    const snapshotPrice = Number(snapshot?.price);
+    const configProductKeys = getServerConfigProductKeys(config);
+    const snapshotKeys = [snapshot?.productId, snapshot?.ticker]
+      .map((item) => String(item || "").trim().toLowerCase())
+      .filter(Boolean);
+    const snapshotMatchesContract = !snapshot
+      || !configProductKeys.length
+      || snapshotKeys.some((key) => configProductKeys.includes(key));
+    if (snapshot?.ok && snapshotMatchesContract && Number.isFinite(snapshotPrice) && snapshotPrice > 0 && isFreshPriceSnapshot(snapshot)) {
+      return {
+        price: snapshotPrice,
+        source: "Cloudflare price snapshot",
+        time: snapshot.fetchedAt || new Date().toISOString()
+      };
+    }
+  } catch (_error) {
+    // If the snapshot table is unavailable, continue to live, advisory, and micro fallbacks.
+  }
+
   let live = null;
   try {
     const snapshot = await fetchCoinbasePriceSnapshot(config);
@@ -3882,24 +3913,6 @@ async function getServerMarketPrice(env, user, commodity, advisory = null, overr
     live = null;
   }
   if (live) return live;
-
-  try {
-    const stored = await loadStoredPriceSnapshots(env);
-    const snapshot = stored[commodity];
-    const snapshotPrice = Number(snapshot?.price);
-    const snapshotMatchesContract = !snapshot
-      || !config.productId
-      || [snapshot.productId, snapshot.ticker].some((item) => String(item || "").toLowerCase() === String(config.productId || config.ticker || "").toLowerCase());
-    if (snapshot?.ok && snapshotMatchesContract && Number.isFinite(snapshotPrice) && snapshotPrice > 0 && isFreshPriceSnapshot(snapshot)) {
-      return {
-        price: snapshotPrice,
-        source: "Cloudflare price snapshot",
-        time: snapshot.fetchedAt || new Date().toISOString()
-      };
-    }
-  } catch (_error) {
-    // If the snapshot table is unavailable, continue to advisory and micro fallbacks.
-  }
 
   const advisoryPrice = Number(advisory?.price);
   const advisoryTime = getTransactionDate(advisory?.time);
@@ -4080,6 +4093,118 @@ async function getLatestServerMicroPrediction(env, commodity, config = null) {
   };
 }
 
+function getServerBpsMove(fromPrice, toPrice) {
+  const from = Number(fromPrice);
+  const to = Number(toPrice);
+  return Number.isFinite(from) && from > 0 && Number.isFinite(to) && to > 0
+    ? ((to - from) / from) * 10000
+    : 0;
+}
+
+function findServerSampleAtOrBefore(samples, cutoffTime) {
+  let selected = samples[0] || null;
+  for (const sample of samples) {
+    const time = getTransactionDate(sample.time).getTime();
+    if (Number.isFinite(time) && time <= cutoffTime) selected = sample;
+  }
+  return selected;
+}
+
+async function getServerPriceTrendContext(env, commodity, config = null) {
+  const productKeys = getServerConfigProductKeys(config || {});
+  const sinceIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+  const placeholders = productKeys.map(() => "?").join(", ");
+  const productMatchClause = productKeys.length
+    ? `AND (lower(COALESCE(product_id, '')) IN (${placeholders}) OR lower(COALESCE(ticker, '')) IN (${placeholders}))`
+    : "";
+  await ensurePriceTicksTable(env);
+  const result = await env.DB.prepare(`
+    SELECT tick_time, price
+    FROM price_ticks
+    WHERE commodity = ?
+      ${productMatchClause}
+      AND tick_time >= ?
+    ORDER BY tick_time ASC
+    LIMIT 900
+  `).bind(
+    ...(productKeys.length
+      ? [commodity, ...productKeys, ...productKeys, sinceIso]
+      : [commodity, sinceIso])
+  ).all();
+  const samples = getResults(result)
+    .map((row) => ({ time: row.tick_time, price: Number(row.price) }))
+    .filter((sample) => Number.isFinite(sample.price) && sample.price > 0);
+  const latestProductTime = getTransactionDate(samples[samples.length - 1]?.time).getTime();
+  const productFresh = Number.isFinite(latestProductTime) && Date.now() - latestProductTime <= PAPER_SCHEDULER_PRICE_STALE_MS;
+  if ((samples.length < 4 || !productFresh) && productKeys.length) {
+    const fallback = await env.DB.prepare(`
+      SELECT tick_time, price
+      FROM price_ticks
+      WHERE commodity = ?
+        AND tick_time >= ?
+      ORDER BY tick_time ASC
+      LIMIT 900
+    `).bind(commodity, sinceIso).all();
+    const fallbackSamples = getResults(fallback)
+      .map((row) => ({ time: row.tick_time, price: Number(row.price) }))
+      .filter((sample) => Number.isFinite(sample.price) && sample.price > 0);
+    if (fallbackSamples.length >= 4) samples.splice(0, samples.length, ...fallbackSamples);
+  }
+  if (samples.length < 4) return null;
+
+  const latest = samples[samples.length - 1];
+  const latestTime = getTransactionDate(latest.time).getTime();
+  const latestFresh = Number.isFinite(latestTime) && Date.now() - latestTime <= PAPER_SCHEDULER_PRICE_STALE_MS;
+  if (!latestFresh) return null;
+
+  const oldest = samples[0];
+  const hourSample = findServerSampleAtOrBefore(samples, latestTime - 60 * 60 * 1000) || oldest;
+  const threeHourSample = findServerSampleAtOrBefore(samples, latestTime - 3 * 60 * 60 * 1000) || oldest;
+  const prices = samples.map((sample) => sample.price);
+  const high = Math.max(...prices);
+  const low = Math.min(...prices);
+  const average = prices.reduce((total, price) => total + price, 0) / prices.length;
+  const moveBps = getServerBpsMove(oldest.price, latest.price);
+  const ret60 = getServerBpsMove(hourSample.price, latest.price);
+  const ret180 = getServerBpsMove(threeHourSample.price, latest.price);
+  const drawdownBps = getServerBpsMove(high, latest.price);
+  const rallyBps = getServerBpsMove(low, latest.price);
+  const vwapDistance = getServerBpsMove(average, latest.price);
+  const volatility = Math.max(
+    ...samples.slice(1).map((sample, index) => Math.abs(getServerBpsMove(samples[index].price, sample.price))),
+    Math.abs(moveBps) / Math.max(1, samples.length)
+  );
+  const bearishTrend = Boolean(
+    latest.price < average
+    && (moveBps <= -20 || ret60 <= -10 || ret180 <= -15 || drawdownBps <= -35)
+  );
+  const bullishTrend = Boolean(
+    latest.price > average
+    && (moveBps >= 20 || ret60 >= 10 || ret180 >= 15 || rallyBps >= 35)
+  );
+  const downEdge = bearishTrend ? clamp(Math.round(55 + Math.min(20, Math.abs(Math.min(moveBps, ret60, ret180, drawdownBps)) / 8)), 55, 75) : 50;
+  const upEdge = bullishTrend ? clamp(Math.round(55 + Math.min(20, Math.max(moveBps, ret60, ret180, rallyBps) / 8)), 55, 75) : 50;
+
+  return {
+    ready: true,
+    side: bearishTrend && !bullishTrend ? "short" : bullishTrend && !bearishTrend ? "long" : null,
+    bearishTrend,
+    bullishTrend,
+    latestPrice: latest.price,
+    sampleCount: samples.length,
+    moveBps,
+    ret60,
+    ret180,
+    drawdownBps,
+    rallyBps,
+    vwapDistance,
+    volatility,
+    downEdge,
+    upEdge,
+    latestTime: latest.time
+  };
+}
+
 async function getServerAdvisoryBreakoutContext(env, commodity, strategy, config = null) {
   if (!strategy.breakoutParticipation) return null;
   await ensureLearningContractColumnsD1(env);
@@ -4214,16 +4339,22 @@ function getServerBreakoutParticipationSignal(signal, micro, strategy, advisoryB
   return null;
 }
 
-function getServerDirectionalContext(micro, advisoryBreakout = null) {
-  const upEdge = Math.round((Number.isFinite(Number(micro?.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
-  const downEdge = Math.round((Number.isFinite(Number(micro?.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+function getServerDirectionalContext(micro, advisoryBreakout = null, priceTrend = null) {
+  const microUpEdge = Math.round((Number.isFinite(Number(micro?.probabilityUp)) ? Number(micro.probabilityUp) : 0.5) * 100);
+  const microDownEdge = Math.round((Number.isFinite(Number(micro?.probabilityDown)) ? Number(micro.probabilityDown) : 0.5) * 100);
+  const upEdge = Math.max(microUpEdge, Number(priceTrend?.upEdge) || 0);
+  const downEdge = Math.max(microDownEdge, Number(priceTrend?.downEdge) || 0);
   const ret10 = Number(micro?.ret10) || 0;
   const ret30 = Number(micro?.ret30) || 0;
-  const ret60 = Number(micro?.ret60) || 0;
-  const ret180 = Number(micro?.ret180) || 0;
-  const vwapDistance = Number(micro?.vwapDistance) || 0;
-  const volatility = Number(micro?.volatility) || 0;
-  const recentMove = Number(advisoryBreakout?.moveBps) || 0;
+  const microRet60 = Number(micro?.ret60) || 0;
+  const trendRet60 = Number(priceTrend?.ret60) || 0;
+  const microRet180 = Number(micro?.ret180) || 0;
+  const trendRet180 = Number(priceTrend?.ret180) || 0;
+  const ret60 = Math.abs(trendRet60) > Math.abs(microRet60) ? trendRet60 : microRet60;
+  const ret180 = Math.abs(trendRet180) > Math.abs(microRet180) ? trendRet180 : microRet180;
+  const vwapDistance = Number.isFinite(Number(micro?.vwapDistance)) ? Number(micro.vwapDistance) : Number(priceTrend?.vwapDistance) || 0;
+  const volatility = Math.max(Number(micro?.volatility) || 0, Number(priceTrend?.volatility) || 0);
+  const recentMove = Number(advisoryBreakout?.moveBps) || Number(priceTrend?.moveBps) || 0;
   const shortShare = Number(advisoryBreakout?.shortShare) || 0;
   const longShare = Number(advisoryBreakout?.longShare) || 0;
   const bearishTape = Boolean(
@@ -4238,8 +4369,10 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
   );
   const bearishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove <= -8 && shortShare >= Math.max(35, longShare));
   const bullishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove >= 8 && longShare >= Math.max(35, shortShare));
-  const isBearishTrend = bearishTape || bearishAdvisoryTape;
-  const isBullishTrend = bullishTape || bullishAdvisoryTape;
+  const bearishPriceTape = Boolean(priceTrend?.ready && priceTrend.bearishTrend && !priceTrend.bullishTrend);
+  const bullishPriceTape = Boolean(priceTrend?.ready && priceTrend.bullishTrend && !priceTrend.bearishTrend);
+  const isBearishTrend = bearishTape || bearishAdvisoryTape || bearishPriceTape;
+  const isBullishTrend = bullishTape || bullishAdvisoryTape || bullishPriceTape;
   const longReversalConfirmed = Boolean(
     !isBearishTrend
     || (
@@ -4255,6 +4388,7 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
     isBearishTrend
     && (
       (micro?.ready && downEdge >= 55 && (ret60 <= -2 || ret30 < 0 || vwapDistance < 0))
+      || (bearishPriceTape && downEdge >= 55 && (ret60 <= -5 || ret180 <= -8 || Number(priceTrend?.drawdownBps) <= -25))
       || bearishAdvisoryTape
     )
   );
@@ -4262,6 +4396,7 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
     isBullishTrend
     && (
       (micro?.ready && upEdge >= 55 && (ret60 >= 2 || ret30 > 0 || vwapDistance > 0))
+      || (bullishPriceTape && upEdge >= 55 && (ret60 >= 5 || ret180 >= 8 || Number(priceTrend?.rallyBps) >= 25))
       || bullishAdvisoryTape
     )
   );
@@ -4282,7 +4417,8 @@ function getServerDirectionalContext(micro, advisoryBreakout = null) {
     volatility,
     recentMove,
     longShare,
-    shortShare
+    shortShare,
+    priceTrend
   };
 }
 
@@ -4491,13 +4627,124 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
   return { ok: true, reason: "entry quality accepted" };
 }
 
+function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
+  if (!strategy.trendCaptureMode || !priceTrend?.ready) return null;
+
+  const advisorySide = signal?.side || null;
+  const advisoryConviction = Number(signal?.conviction) || 0;
+  const minEdge = Math.max(
+    55,
+    Math.min(
+      Number(strategy.breakoutMinEdgePercent) || 55,
+      Number(strategy.trendingMinEdgePercent) || 58
+    )
+  );
+  const moveBps = Number(priceTrend.moveBps) || 0;
+  const ret60 = Number(priceTrend.ret60) || 0;
+  const ret180 = Number(priceTrend.ret180) || 0;
+  const drawdownBps = Number(priceTrend.drawdownBps) || 0;
+  const rallyBps = Number(priceTrend.rallyBps) || 0;
+  const vwapDistance = Number(priceTrend.vwapDistance) || 0;
+  const downEdge = Number(priceTrend.downEdge) || 50;
+  const upEdge = Number(priceTrend.upEdge) || 50;
+  const bearishStrength = Math.max(0, -moveBps, -ret60, -ret180, -drawdownBps, -vwapDistance);
+  const bullishStrength = Math.max(0, moveBps, ret60, ret180, rallyBps, vwapDistance);
+
+  const bearishOverride = Boolean(
+    priceTrend.bearishTrend
+    && downEdge >= minEdge
+    && bearishStrength >= 30
+    && bearishStrength >= bullishStrength + 6
+    && !(advisorySide === "long" && advisoryConviction >= 70)
+  );
+  if (bearishOverride) {
+    return {
+      side: "short",
+      label: "D1 Trend Short",
+      conviction: Math.max(advisoryConviction, downEdge, minEdge),
+      detail: `D1 trend override: stored Coinbase price history is bearish; day move ${moveBps.toFixed(2)} bps, 60m ${ret60.toFixed(2)} bps, 180m ${ret180.toFixed(2)} bps, drawdown ${drawdownBps.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps, down edge ${downEdge}%.`
+    };
+  }
+
+  const bullishOverride = Boolean(
+    priceTrend.bullishTrend
+    && upEdge >= minEdge
+    && bullishStrength >= 30
+    && bullishStrength >= bearishStrength + 6
+    && !(advisorySide === "short" && advisoryConviction >= 70)
+  );
+  if (bullishOverride) {
+    return {
+      side: "long",
+      label: "D1 Trend Long",
+      conviction: Math.max(advisoryConviction, upEdge, minEdge),
+      detail: `D1 trend override: stored Coinbase price history is bullish; day move ${moveBps.toFixed(2)} bps, 60m ${ret60.toFixed(2)} bps, 180m ${ret180.toFixed(2)} bps, rally ${rallyBps.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps, up edge ${upEdge}%.`
+    };
+  }
+
+  return null;
+}
+
 function getServerTrendCaptureSignal(signal, micro, strategy, directionalContext, advisoryBreakout = null) {
   if (!strategy.trendCaptureMode || !directionalContext) return null;
   const advisorySide = signal?.side || null;
   const advisoryConviction = Number(signal?.conviction) || 0;
+  const priceTrend = directionalContext.priceTrend || {};
   const minEdge = Math.max(55, Math.min(Number(strategy.breakoutMinEdgePercent) || 55, Number(strategy.trendingMinEdgePercent) || 58));
   const minVolatility = Math.max(0.5, Number(strategy.breakoutMinVolatilityBps) || 0.8);
   const minMove = Math.max(4, Number(strategy.breakoutMinMoveBps) || 3);
+  const priceMoveBps = Number(priceTrend.moveBps) || 0;
+  const priceRet60 = Number(priceTrend.ret60) || 0;
+  const priceRet180 = Number(priceTrend.ret180) || 0;
+  const priceDrawdownBps = Number(priceTrend.drawdownBps) || 0;
+  const priceRallyBps = Number(priceTrend.rallyBps) || 0;
+  const priceVwapDistance = Number(priceTrend.vwapDistance) || 0;
+  const bearishPriceStrength = Math.max(
+    0,
+    -priceMoveBps,
+    -priceRet60,
+    -priceRet180,
+    -priceDrawdownBps,
+    -priceVwapDistance
+  );
+  const bullishPriceStrength = Math.max(
+    0,
+    priceMoveBps,
+    priceRet60,
+    priceRet180,
+    priceRallyBps,
+    priceVwapDistance
+  );
+  const decisiveBearishPriceTrend = Boolean(
+    priceTrend.ready
+    && priceTrend.bearishTrend
+    && bearishPriceStrength >= 35
+    && bearishPriceStrength >= bullishPriceStrength + 8
+    && directionalContext.downEdge >= Math.min(minEdge, 55)
+  );
+  const decisiveBullishPriceTrend = Boolean(
+    priceTrend.ready
+    && priceTrend.bullishTrend
+    && bullishPriceStrength >= 35
+    && bullishPriceStrength >= bearishPriceStrength + 8
+    && directionalContext.upEdge >= Math.min(minEdge, 55)
+  );
+  if (decisiveBearishPriceTrend && !(advisorySide === "long" && advisoryConviction >= 70)) {
+    return {
+      side: "short",
+      label: "Trend Capture Short",
+      conviction: Math.max(advisoryConviction, directionalContext.downEdge, minEdge),
+      detail: `Trend capture: D1 price history shows a decisive bearish day, down edge ${directionalContext.downEdge}%, day move ${priceMoveBps.toFixed(2)} bps, 60m move ${priceRet60.toFixed(2)} bps, drawdown ${priceDrawdownBps.toFixed(2)} bps, VWAP ${priceVwapDistance.toFixed(2)} bps.`
+    };
+  }
+  if (decisiveBullishPriceTrend && !(advisorySide === "short" && advisoryConviction >= 70)) {
+    return {
+      side: "long",
+      label: "Trend Capture Long",
+      conviction: Math.max(advisoryConviction, directionalContext.upEdge, minEdge),
+      detail: `Trend capture: D1 price history shows a decisive bullish day, up edge ${directionalContext.upEdge}%, day move ${priceMoveBps.toFixed(2)} bps, 60m move ${priceRet60.toFixed(2)} bps, rally ${priceRallyBps.toFixed(2)} bps, VWAP ${priceVwapDistance.toFixed(2)} bps.`
+    };
+  }
   const longMoveConfirmed = directionalContext.ret60 >= minMove
     || directionalContext.ret180 >= minMove
     || directionalContext.recentMove >= minMove
@@ -4506,34 +4753,58 @@ function getServerTrendCaptureSignal(signal, micro, strategy, directionalContext
     || directionalContext.ret180 <= -minMove
     || directionalContext.recentMove <= -minMove
     || directionalContext.shortShare >= 55;
+  const priceTrendLongConfirmed = Boolean(
+    priceTrend.ready
+    && (priceTrend.side === "long" || decisiveBullishPriceTrend)
+    && directionalContext.upEdge >= minEdge
+    && (
+      priceRallyBps >= 35
+      || priceMoveBps >= 20
+      || priceRet60 >= 8
+      || priceRet180 >= 12
+      || decisiveBullishPriceTrend
+    )
+  );
+  const priceTrendShortConfirmed = Boolean(
+    priceTrend.ready
+    && (priceTrend.side === "short" || decisiveBearishPriceTrend)
+    && directionalContext.downEdge >= minEdge
+    && (
+      priceDrawdownBps <= -35
+      || priceMoveBps <= -20
+      || priceRet60 <= -8
+      || priceRet180 <= -12
+      || decisiveBearishPriceTrend
+    )
+  );
 
   if (
-    directionalContext.longContinuationConfirmed
+    (directionalContext.longContinuationConfirmed || priceTrendLongConfirmed)
     && directionalContext.upEdge >= minEdge
-    && directionalContext.volatility >= minVolatility
-    && longMoveConfirmed
+    && (directionalContext.volatility >= minVolatility || priceTrendLongConfirmed)
+    && (longMoveConfirmed || priceTrendLongConfirmed)
     && !(advisorySide === "short" && advisoryConviction >= 65)
   ) {
     return {
       side: "long",
       label: "Trend Capture Long",
-      conviction: Math.max(advisoryConviction, minEdge),
-      detail: `Trend capture: bullish day tape, up edge ${directionalContext.upEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
+      conviction: Math.max(advisoryConviction, directionalContext.upEdge, minEdge),
+      detail: `Trend capture: bullish day tape, up edge ${directionalContext.upEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, day move ${priceMoveBps.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
     };
   }
 
   if (
-    directionalContext.shortContinuationConfirmed
+    (directionalContext.shortContinuationConfirmed || priceTrendShortConfirmed)
     && directionalContext.downEdge >= minEdge
-    && directionalContext.volatility >= minVolatility
-    && shortMoveConfirmed
+    && (directionalContext.volatility >= minVolatility || priceTrendShortConfirmed)
+    && (shortMoveConfirmed || priceTrendShortConfirmed)
     && !(advisorySide === "long" && advisoryConviction >= 65)
   ) {
     return {
       side: "short",
       label: "Trend Capture Short",
-      conviction: Math.max(advisoryConviction, minEdge),
-      detail: `Trend capture: bearish day tape, down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
+      conviction: Math.max(advisoryConviction, directionalContext.downEdge, minEdge),
+      detail: `Trend capture: bearish day tape, down edge ${directionalContext.downEdge}%, 60s move ${directionalContext.ret60.toFixed(2)} bps, 180s move ${directionalContext.ret180.toFixed(2)} bps, day move ${priceMoveBps.toFixed(2)} bps, drawdown ${priceDrawdownBps.toFixed(2)} bps, VWAP ${directionalContext.vwapDistance.toFixed(2)} bps, volatility ${directionalContext.volatility.toFixed(2)} bps.`
     };
   }
 
@@ -4743,7 +5014,7 @@ async function getServerExitTriggerFromTicks(env, trade, config, fallbackPrice) 
   const commodity = normalizeServerCommodityId(trade.commodity || config.id || inferServerCommodityFromContract(trade.contract));
   const productKeys = Array.from(new Set(getServerConfigProductKeys(config)));
   const productClause = productKeys.length
-    ? `AND lower(COALESCE(product_id, ticker, '')) IN (${productKeys.map(() => "?").join(", ")})`
+    ? `AND (lower(COALESCE(product_id, '')) IN (${productKeys.map(() => "?").join(", ")}) OR lower(COALESCE(ticker, '')) IN (${productKeys.map(() => "?").join(", ")}))`
     : "";
   await ensurePriceTicksTable(env);
   const result = await env.DB.prepare(`
@@ -4757,6 +5028,7 @@ async function getServerExitTriggerFromTicks(env, trade, config, fallbackPrice) 
   `).bind(
     commodity,
     openedAt.toISOString(),
+    ...productKeys,
     ...productKeys
   ).all();
 
@@ -5151,6 +5423,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           gate,
           reason,
           markov: extra.markov || lastDecisionAudit.markov || null,
+          priceTrend: extra.priceTrend || lastDecisionAudit.priceTrend || null,
           price: extra.price || lastDecisionAudit.price || null,
           signal: extra.signal || lastDecisionAudit.signal || null,
           action: extra.action || "wait",
@@ -5233,7 +5506,14 @@ async function runPaperTradingScheduler(env, options = {}) {
           || strategySettings.missedOpportunityReentry)
           ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true }, config)
           : null;
-        const directionalContext = getServerDirectionalContext(micro, advisoryBreakout);
+        const priceTrend = (strategySettings.trendCaptureMode
+          || strategySettings.trendDayDirectionalHold
+          || strategySettings.blockLongsInFallingTrend
+          || strategySettings.missedOpportunityLearner
+          || strategySettings.missedOpportunityReentry)
+          ? await getServerPriceTrendContext(env, commodity, config)
+          : null;
+        const directionalContext = getServerDirectionalContext(micro, advisoryBreakout, priceTrend);
         const commodityOpenTrades = openTrades.filter((trade) => (
           normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)) === commodity
         ));
@@ -5244,7 +5524,7 @@ async function runPaperTradingScheduler(env, options = {}) {
             : await getServerMarketPrice(env, user, commodity, advisory, openTradeConfig);
           if (!openTradePrice) {
             lastDecision = `${commodity}: skipped close, no fresh price for ${openTrade.contract || openTradeConfig.ticker}`;
-            setDecisionAudit("price", lastDecision, { price: { commodity, value: price.price, source: price.source }, action: "skip" });
+          setDecisionAudit("price", lastDecision, { price: { commodity, value: price.price, source: price.source }, action: "skip" });
             continue;
           }
           const openTradeRoll = getServerContractRollStatus(openTradeConfig);
@@ -5344,28 +5624,28 @@ async function runPaperTradingScheduler(env, options = {}) {
 
         if (!marketSchedule.isOpen) {
           lastDecision = `${commodity}: market closed by user calendar`;
-          setDecisionAudit("market", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("market", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (marketSchedule.flattenWindow) {
           lastDecision = `${commodity}: pre-close flatten window, no new trades`;
-          setDecisionAudit("market", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("market", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (!contractRoll.shouldOpen) {
           lastDecision = `${commodity}: ${contractRoll.detail}`;
-          setDecisionAudit("contract-roll", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("contract-roll", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           run.skippedTrades += 1;
           continue;
         }
 
         if (activeOpenCount >= schedulerSettings.maxOpenTrades) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: max open trades reached`;
-          setDecisionAudit("max-open", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("max-open", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           continue;
         }
 
@@ -5375,19 +5655,20 @@ async function runPaperTradingScheduler(env, options = {}) {
         ));
         if (hasCommodityOpen) {
           lastDecision = `${commodity}: existing commodity trade already open`;
-          setDecisionAudit("open-trade", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("open-trade", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           continue;
         }
         if (exclusiveMartingale && latestEnabledOpenTrades.length > 0) {
           if (lastDecision === "No eligible commodities evaluated") lastDecision = `${commodity}: martingale sequence already has an open trade`;
-          setDecisionAudit("open-trade", lastDecision, { price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
+          setDecisionAudit("open-trade", lastDecision, { priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal, action: "skip" });
           continue;
         }
 
         const secondOpinionConsensus = getServerSecondOpinionConsensus(signal, schedulerSettings);
         const breakoutSignal = getServerBreakoutParticipationSignal(signal, micro, strategySettings, advisoryBreakout);
         const reentrySignal = getServerPostStopReentrySignal(transactions, email, commodity, signal, strategySettings, directionalContext);
-        const trendCaptureSignal = getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
+        const priceTrendSignal = getServerPriceTrendOverrideSignal(signal, strategySettings, directionalContext?.priceTrend);
+        const trendCaptureSignal = priceTrendSignal || getServerTrendCaptureSignal(signal, micro, strategySettings, directionalContext, advisoryBreakout);
         const markovMethod = getServerMarkovMethodAssessment(signal, micro, strategySettings, directionalContext);
         const markovSignal = getServerMarkovDirectionalSignal(signal, markovMethod, strategySettings, directionalContext);
         const missedOpportunityReentrySignal = getServerMissedOpportunityReentrySignal(signal, markovMethod, strategySettings, directionalContext, advisoryBreakout);
@@ -5402,13 +5683,13 @@ async function runPaperTradingScheduler(env, options = {}) {
             reason: markovMethod.reason
           }
           : { enabled: false, reason: "Markov Hedge Fund Method is off for this account." };
-        const directionalOverrideSignal = breakoutSignal || reentrySignal || trendCaptureSignal || missedOpportunityReentrySignal || markovSignal;
-        const activeSignal = reentrySignal
-          ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
-          : breakoutSignal
-            ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
-            : trendCaptureSignal
-              ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
+        const directionalOverrideSignal = trendCaptureSignal || breakoutSignal || reentrySignal || missedOpportunityReentrySignal || markovSignal;
+        const activeSignal = trendCaptureSignal
+          ? { ...signal, side: trendCaptureSignal.side, label: trendCaptureSignal.label, conviction: trendCaptureSignal.conviction }
+          : reentrySignal
+            ? { ...signal, side: reentrySignal.side, label: reentrySignal.label, conviction: reentrySignal.conviction }
+            : breakoutSignal
+              ? { ...signal, side: breakoutSignal.side, label: breakoutSignal.label, conviction: breakoutSignal.conviction }
               : missedOpportunityReentrySignal
                 ? { ...signal, side: missedOpportunityReentrySignal.side, label: missedOpportunityReentrySignal.label, conviction: missedOpportunityReentrySignal.conviction }
                 : markovSignal
@@ -5423,10 +5704,14 @@ async function runPaperTradingScheduler(env, options = {}) {
           1,
           100
         );
+        const trendNote = directionalContext.priceTrend?.ready
+          ? `, price trend ${directionalContext.priceTrend.side || "mixed"} day ${Number(directionalContext.priceTrend.moveBps || 0).toFixed(1)} bps, 60m ${Number(directionalContext.priceTrend.ret60 || 0).toFixed(1)} bps, drawdown ${Number(directionalContext.priceTrend.drawdownBps || 0).toFixed(1)} bps`
+          : "";
         if ((!signal.side || signal.conviction < effectiveThreshold) && !directionalOverrideSignal) {
-          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${markovMethod.enabled ? `, Markov ${markovMethod.state}${markovMethod.expectedSide ? ` favors ${markovMethod.expectedSide}` : ""}${markovSignal ? ", override ready" : ", override not confirmed"}` : ""}`;
+          lastDecision = `${commodity}: no open, ${signal.label} ${signal.conviction}/${effectiveThreshold}${secondOpinionConsensus.thresholdBoost ? `, ${secondOpinionConsensus.label}` : ""}${trendNote}${markovMethod.enabled ? `, Markov ${markovMethod.state}${markovMethod.expectedSide ? ` favors ${markovMethod.expectedSide}` : ""}${markovSignal ? ", override ready" : ", override not confirmed"}` : ""}`;
           setDecisionAudit("threshold", lastDecision, {
             markov: markovAudit,
+            priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
             price: { commodity, value: price.price, source: price.source },
             signal: { label: signal.label, side: signal.side, conviction: signal.conviction, effectiveThreshold },
             missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
@@ -5440,6 +5725,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           lastDecision = `${commodity}: ${secondOpinionConsensus.label} - ${secondOpinionConsensus.detail}`;
           setDecisionAudit("second-opinion", lastDecision, {
             markov: markovAudit,
+            priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
             price: { commodity, value: price.price, source: price.source },
             signal: { label: signal.label, side: signal.side, conviction: signal.conviction, effectiveThreshold },
             missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
@@ -5453,6 +5739,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           lastDecision = `${commodity}: falling trend blocks long without reversal confirmation`;
           setDecisionAudit("trend-bias", lastDecision, {
             markov: markovAudit,
+            priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
             price: { commodity, value: price.price, source: price.source },
             signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
             missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
@@ -5466,6 +5753,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           lastDecision = `${commodity}: ${entryQuality.reason}`;
           setDecisionAudit("entry-quality", lastDecision, {
             markov: markovAudit,
+            priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
             price: { commodity, value: price.price, source: price.source },
             signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
             missedOpportunity: advisoryBreakout?.ready ? { moveBps: advisoryBreakout.moveBps, side: (Number(advisoryBreakout.moveBps) || 0) > 0 ? "long" : "short" } : null
@@ -5479,13 +5767,13 @@ async function runPaperTradingScheduler(env, options = {}) {
           : 1;
         if (!directionalOverrideSignal && regime.enabled && step > regime.maxMartingaleStep) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
-          setDecisionAudit("regime-step-cap", lastDecision, { markov: markovAudit, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
+          setDecisionAudit("regime-step-cap", lastDecision, { markov: markovAudit, priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
           run.skippedTrades += 1;
           continue;
         }
         if (!directionalOverrideSignal && regime.enabled && !regime.confirmationOk) {
           lastDecision = `${commodity}: ${regime.regime} regime waiting for confirmation`;
-          setDecisionAudit("regime-confirmation", lastDecision, { markov: markovAudit, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
+          setDecisionAudit("regime-confirmation", lastDecision, { markov: markovAudit, priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
           run.skippedTrades += 1;
           continue;
         }
@@ -5532,12 +5820,12 @@ async function runPaperTradingScheduler(env, options = {}) {
           capital: terms.capital,
           pnl: 0,
           openedAt: new Date().toISOString(),
-          note: reentrySignal
+          note: trendCaptureSignal
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            : reentrySignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : breakoutSignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
-            : trendCaptureSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
             : missedOpportunityReentrySignal
             ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${missedOpportunityReentrySignal.detail}`
             : markovSignal
@@ -5567,12 +5855,12 @@ async function runPaperTradingScheduler(env, options = {}) {
         run.openedTrades += 1;
         activeOpenCount += 1;
         const markovDecisionText = markovMethod.enabled ? `; Markov ${markovMethod.state}` : "";
-        lastDecision = reentrySignal
+        lastDecision = trendCaptureSignal
+          ? `${commodity}: opened ${activeSignal.side} ${priceTrendSignal ? "D1 trend override" : "trend capture"} at ${price.price}`
+          : reentrySignal
           ? `${commodity}: opened ${activeSignal.side} post-stop re-entry at ${price.price}`
           : breakoutSignal
           ? `${commodity}: opened ${activeSignal.side} breakout at ${price.price}`
-          : trendCaptureSignal
-          ? `${commodity}: opened ${activeSignal.side} trend capture at ${price.price}`
           : missedOpportunityReentrySignal
           ? `${commodity}: opened ${activeSignal.side} missed-opportunity re-entry at ${price.price}`
           : markovSignal
@@ -5581,6 +5869,7 @@ async function runPaperTradingScheduler(env, options = {}) {
         lastDecision = `${lastDecision}${markovDecisionText}`;
         setDecisionAudit("opened", lastDecision, {
           markov: markovAudit,
+          priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
           price: { commodity, value: price.price, source: price.source },
           signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
           action: "opened"
@@ -6261,6 +6550,13 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     const url = new URL(request.url);
     const payload = await loadUnifiedTransactionPayloadD1(env, normalizedMode, source);
     const includeSummary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
+    const compact = url.searchParams.get("compact") === "1" || url.searchParams.get("compact") === "true";
+    const requestedEmail = normalizeEmail(url.searchParams.get("email"));
+    const requestedCommodity = normalizeCommodityId(url.searchParams.get("commodity"));
+    const requestedLimit = Number(url.searchParams.get("limit"));
+    const rowLimit = Number.isFinite(requestedLimit)
+      ? Math.max(0, Math.min(500, Math.trunc(requestedLimit)))
+      : 200;
     if (normalizedMode === PAPER_TRADE_MODE && includeSummary) {
       const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
         env,
@@ -6274,6 +6570,22 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
         "all",
         "cloudflare-d1-paper-ledger-summary"
       );
+    }
+    if (compact) {
+      const filteredTransactions = (payload.transactions || []).filter((entry) => {
+        const emailMatch = !requestedEmail || normalizeEmail(entry?.userEmail || entry?.user?.email) === requestedEmail;
+        const commodity = normalizeCommodityId(entry?.commodity || inferServerCommodityFromContract(entry?.contract));
+        const commodityMatch = !requestedCommodity || requestedCommodity === "all" || commodity === requestedCommodity;
+        return emailMatch && commodityMatch;
+      });
+      payload.compact = true;
+      payload.filter = {
+        email: requestedEmail || "",
+        commodity: requestedCommodity || "all",
+        limit: rowLimit
+      };
+      payload.totalTransactions = filteredTransactions.length;
+      payload.transactions = rowLimit > 0 ? filteredTransactions.slice(0, rowLimit) : [];
     }
     return jsonResponse(payload, 200, origin);
   }
