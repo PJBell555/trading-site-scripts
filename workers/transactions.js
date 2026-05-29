@@ -3614,6 +3614,21 @@ const LEADERBOARD_SUMMARY_CACHE_PREFIX = "leaderboard-summary";
 const LEADERBOARD_SUMMARY_MAX_AGE_MS = 10 * 60 * 1000;
 const ADVISORY_SUMMARY_CACHE_KEY = "advisory-summary";
 const ADVISORY_SUMMARY_MAX_AGE_MS = 2 * 60 * 1000;
+const ADVISORY_EVALUATION_WINDOW_MS = 10 * 60 * 1000;
+const ADVISORY_PERIOD_MS = {
+  hour: 60 * 60 * 1000,
+  day: 24 * 60 * 60 * 1000,
+  week: 7 * 24 * 60 * 60 * 1000,
+  month: 31 * 24 * 60 * 60 * 1000,
+  year: 366 * 24 * 60 * 60 * 1000
+};
+const ADVISORY_SCORE_BANDS = [
+  { label: "Below 50", min: 0, max: 49 },
+  { label: "50-54", min: 50, max: 54 },
+  { label: "55-60", min: 55, max: 60 },
+  { label: "61-70", min: 61, max: 70 },
+  { label: "71+", min: 71, max: 100 }
+];
 
 function normalizeLeaderboardPeriod(period = "all") {
   const normalized = String(period || "all").toLowerCase();
@@ -3622,6 +3637,29 @@ function normalizeLeaderboardPeriod(period = "all") {
 
 function getLeaderboardSummaryCacheKey(period = "all") {
   return `${LEADERBOARD_SUMMARY_CACHE_PREFIX}:${normalizeLeaderboardPeriod(period)}`;
+}
+
+function normalizeAdvisoryPeriod(period = "hour") {
+  const normalized = String(period || "hour").toLowerCase();
+  return Object.prototype.hasOwnProperty.call(ADVISORY_PERIOD_MS, normalized) ? normalized : "hour";
+}
+
+function getAdvisoryPeriodCutoff(period = "hour") {
+  const ms = ADVISORY_PERIOD_MS[normalizeAdvisoryPeriod(period)] || ADVISORY_PERIOD_MS.hour;
+  return Date.now() - ms;
+}
+
+function normalizeAdvisoryThreshold(value) {
+  const threshold = Math.round(Number(value));
+  return clamp(Number.isFinite(threshold) ? threshold : 60, 0, 100);
+}
+
+function getAdvisorySummaryCacheKey(options = {}) {
+  if (!options || !options.includeMetrics) return ADVISORY_SUMMARY_CACHE_KEY;
+  const commodity = normalizeServerCommodityId(options.commodity || "oil");
+  const period = normalizeAdvisoryPeriod(options.period);
+  const threshold = normalizeAdvisoryThreshold(options.threshold);
+  return `${ADVISORY_SUMMARY_CACHE_KEY}:${commodity}:${period}:${threshold}`;
 }
 
 function getServerDisplayPnl(entry = {}) {
@@ -3826,7 +3864,307 @@ async function handleLeaderBoardRoute(env, request, origin, ctx = null) {
   }
 }
 
-async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summary") {
+function getServerAdvisoryLocalConviction(entry = {}) {
+  const value = Number(firstPresent(entry.localConviction, entry.conviction, entry.bounded));
+  return Number.isFinite(value) ? value : 0;
+}
+
+function getServerAdvisoryLLMConviction(entry = {}) {
+  const value = Number(firstPresent(entry.llmConviction, entry.llmScore));
+  return Number.isFinite(value) ? value : null;
+}
+
+function isActionableServerAdvisoryTone(tone) {
+  return tone === "long" || tone === "short";
+}
+
+function getServerAdvisoryCorrectnessThreshold(price) {
+  return Math.max(0.05, Math.abs(Number(price) || 0) * 0.0005);
+}
+
+function getServerAdvisorySamples(rows = [], options = {}) {
+  const commodity = normalizeServerCommodityId(options.commodity || "oil");
+  const cutoff = getAdvisoryPeriodCutoff(options.period);
+  const byKey = new Map();
+
+  rows.forEach((snapshot) => {
+    const sampleCommodity = normalizeServerCommodityId(snapshot.commodity || "oil");
+    const time = getTransactionDate(snapshot.time || snapshot.snapshotTime || snapshot.snapshot_time).getTime();
+    const price = Number(snapshot.price);
+    if (sampleCommodity !== commodity || !Number.isFinite(time) || time < cutoff || !Number.isFinite(price) || price <= 0) return;
+    const productId = snapshot.productId || snapshot.product_id || snapshot.contract || "product";
+    const key = snapshot.snapshotKey || `${sampleCommodity}|${productId}|${Math.floor(time / 120000)}`;
+    if (byKey.has(key)) return;
+    byKey.set(key, {
+      ...snapshot,
+      snapshotKey: key,
+      time: new Date(time).toISOString(),
+      commodity: sampleCommodity,
+      productId,
+      price,
+      tone: snapshot.tone || snapshot.localTone || "wait",
+      localConviction: getServerAdvisoryLocalConviction(snapshot),
+      llmConviction: getServerAdvisoryLLMConviction(snapshot)
+    });
+  });
+
+  return Array.from(byKey.values()).sort((a, b) => getTransactionDate(a.time) - getTransactionDate(b.time));
+}
+
+function evaluateServerAdvisorySamples(samples = [], threshold = 60) {
+  return samples.map((entry, index) => {
+    if (!isActionableServerAdvisoryTone(entry.tone)) return null;
+
+    const entryTime = getTransactionDate(entry.time).getTime();
+    const future = samples.find((candidate, candidateIndex) => (
+      candidateIndex > index
+      && getTransactionDate(candidate.time).getTime() - entryTime >= ADVISORY_EVALUATION_WINDOW_MS
+    )) || samples[index + 1];
+    if (!future) return null;
+
+    const entryProductId = String(entry.productId || entry.contract || "").toLowerCase();
+    const futureProductId = String(future.productId || future.contract || "").toLowerCase();
+    if (entryProductId && futureProductId && entryProductId !== futureProductId) return null;
+
+    const startPrice = Number(entry.price);
+    const endPrice = Number(future.price);
+    if (!Number.isFinite(startPrice) || !Number.isFinite(endPrice) || startPrice === endPrice) return null;
+
+    const move = endPrice - startPrice;
+    const correctnessThreshold = getServerAdvisoryCorrectnessThreshold(startPrice);
+    const correct = entry.tone === "long" ? move > correctnessThreshold : move < -correctnessThreshold;
+
+    return {
+      entry,
+      future,
+      startPrice,
+      endPrice,
+      move,
+      correct,
+      qualified: getServerAdvisoryLocalConviction(entry) >= threshold,
+      metric: "forecast"
+    };
+  }).filter(Boolean);
+}
+
+function summarizeServerEvaluations(evaluations = [], predicate = () => true) {
+  const selected = evaluations.filter(predicate);
+  const correct = selected.filter((item) => item.correct).length;
+  const averageMove = selected.length
+    ? selected.reduce((total, item) => total + (Number(item.move) || 0), 0) / selected.length
+    : 0;
+  return {
+    count: selected.length,
+    correct,
+    accuracy: selected.length ? (correct / selected.length) * 100 : null,
+    averageMove
+  };
+}
+
+function getServerCalibrationBandSummary(evaluations = [], tone, band) {
+  return summarizeServerEvaluations(evaluations, (item) => {
+    const score = getServerAdvisoryLocalConviction(item.entry);
+    return item.entry.tone === tone && Number.isFinite(score) && score >= band.min && score <= band.max;
+  });
+}
+
+function getServerTransactionConviction(entry = {}) {
+  const stored = Number(entry?.conviction);
+  if (Number.isFinite(stored) && stored > 0) return stored;
+  const noteMatch = String(entry?.note || "").match(/opened at\s+(\d+(?:\.\d+)?)\s+conviction/i);
+  if (!noteMatch) return 0;
+  const parsed = Number(noteMatch[1]);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getServerOpeningEntryForClose(closeEntry = {}, transactions = []) {
+  const closeTradeId = getPaperTradeId(closeEntry);
+  if (closeTradeId) {
+    const exact = transactions.find((candidate) => (
+      getPaperTradeId(candidate) === closeTradeId
+      && candidate !== closeEntry
+      && isOpeningTransaction(candidate)
+    ));
+    if (exact) return exact;
+  }
+
+  const closeTime = getServerEntryTime(closeEntry);
+  return transactions
+    .filter((candidate) => (
+      isOpeningTransaction(candidate)
+      && closingEntryMatchesOpenTrade(closeEntry, candidate)
+      && getServerEntryTime(candidate) <= closeTime
+    ))
+    .sort((a, b) => getServerEntryTime(b) - getServerEntryTime(a))[0] || null;
+}
+
+function getServerTradeEvaluationDetail(closeEntry = {}, transactions = []) {
+  const openingEntry = getServerOpeningEntryForClose(closeEntry, transactions);
+  const entryPrice = Number(closeEntry.entryPrice ?? openingEntry?.entryPrice ?? openingEntry?.price);
+  const exitPrice = Number(closeEntry.exitPrice ?? closeEntry.price);
+  const side = closeEntry.side || openingEntry?.side;
+  const contracts = Number(closeEntry.contracts ?? openingEntry?.contracts ?? closeEntry.quantity ?? openingEntry?.quantity ?? 1) || 1;
+  const contractMultiplier = Number(closeEntry.contractMultiplier ?? openingEntry?.contractMultiplier ?? 1) || 1;
+  const openFee = Number(closeEntry.openFee ?? openingEntry?.openFee ?? 0) || 0;
+  const closeFee = Number(closeEntry.closeFee ?? closeEntry.estimatedExitFee ?? 0) || 0;
+  const totalFees = Number(closeEntry.totalEstimatedFees ?? closeEntry.totalFees ?? openFee + closeFee) || 0;
+  const grossPnl = Number(closeEntry.grossPnl);
+  const calculatedGross = Number.isFinite(entryPrice) && Number.isFinite(exitPrice)
+    ? ((side === "short" ? entryPrice - exitPrice : exitPrice - entryPrice) * contractMultiplier * contracts)
+    : NaN;
+  const netPnl = Number(firstPresent(closeEntry.netPnl, closeEntry.pnl));
+  return {
+    openingEntry,
+    entryPrice,
+    exitPrice,
+    side,
+    grossPnl: Number.isFinite(grossPnl) ? grossPnl : calculatedGross,
+    totalFees,
+    netPnl: Number.isFinite(netPnl) ? netPnl : (Number.isFinite(calculatedGross) ? calculatedGross - totalFees : 0)
+  };
+}
+
+function getServerPaperTradeAdvisoryEvaluations(transactions = [], options = {}) {
+  const commodity = normalizeServerCommodityId(options.commodity || "oil");
+  const cutoff = getAdvisoryPeriodCutoff(options.period);
+  const threshold = normalizeAdvisoryThreshold(options.threshold);
+
+  return transactions
+    .filter((entry) => (
+      isClosingTransaction(entry)
+      && normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract)) === commodity
+      && getServerEntryTime(entry) >= cutoff
+    ))
+    .map((entry) => {
+      const detail = getServerTradeEvaluationDetail(entry, transactions);
+      const tone = detail.side === "short" ? "short" : detail.side === "long" ? "long" : "wait";
+      if (!Number.isFinite(detail.entryPrice) || !Number.isFinite(detail.exitPrice) || !isActionableServerAdvisoryTone(tone)) return null;
+      const conviction = getServerTransactionConviction(detail.openingEntry) || getServerTransactionConviction(entry);
+      return {
+        entry: {
+          time: detail.openingEntry?.time || detail.openingEntry?.openedAt || entry.openedAt || entry.time,
+          label: `Paper ${tone}`,
+          tone,
+          conviction,
+          localConviction: conviction,
+          llmConviction: null
+        },
+        future: {
+          time: entry.closedAt || entry.time,
+          price: detail.exitPrice
+        },
+        startPrice: detail.entryPrice,
+        endPrice: detail.exitPrice,
+        move: detail.exitPrice - detail.entryPrice,
+        correct: detail.netPnl > 0,
+        qualified: conviction >= threshold,
+        metric: "trade",
+        source: "paper-trade",
+        pnl: detail.netPnl,
+        grossPnl: detail.grossPnl,
+        totalFees: detail.totalFees
+      };
+    })
+    .filter(Boolean);
+}
+
+function summarizeServerTradeEdge(tradeEvaluations = [], side = null) {
+  const trades = tradeEvaluations.filter((item) => (!side || item.entry.tone === side) && Number.isFinite(Number(item.pnl)));
+  const wins = trades.filter((item) => Number(item.pnl) > 0);
+  const losses = trades.filter((item) => Number(item.pnl) <= 0);
+  const sum = (rows, getter) => rows.reduce((total, row) => total + (Number(getter(row)) || 0), 0);
+  const averageWin = wins.length ? sum(wins, (item) => item.pnl) / wins.length : 0;
+  const averageLoss = losses.length ? Math.abs(sum(losses, (item) => item.pnl) / losses.length) : 0;
+  const totalPnl = sum(trades, (item) => item.pnl);
+  return {
+    side: side || "overall",
+    trades: trades.length,
+    wins: wins.length,
+    losses: losses.length,
+    winRate: trades.length ? (wins.length / trades.length) * 100 : null,
+    averageWin,
+    averageLoss,
+    averageFees: trades.length ? sum(trades, (item) => item.totalFees) / trades.length : 0,
+    grossExpectancy: trades.length ? sum(trades, (item) => item.grossPnl) / trades.length : null,
+    expectancy: trades.length ? ((wins.length / trades.length) * averageWin) - ((losses.length / trades.length) * averageLoss) : null,
+    totalPnl,
+    totalFees: sum(trades, (item) => item.totalFees)
+  };
+}
+
+function serializeServerEvaluationOutcome(item = {}) {
+  return {
+    metric: item.metric || "forecast",
+    time: item.entry?.time || "",
+    label: item.entry?.label || item.entry?.tone || "",
+    tone: item.entry?.tone || "",
+    score: getServerAdvisoryLocalConviction(item.entry),
+    llmScore: getServerAdvisoryLLMConviction(item.entry),
+    qualified: Boolean(item.qualified),
+    startPrice: item.startPrice,
+    endPrice: item.endPrice,
+    move: item.move,
+    correct: Boolean(item.correct),
+    pnl: item.pnl ?? null
+  };
+}
+
+async function buildServerAdvisoryAccuracyMetrics(env, advisoryRows = [], options = {}) {
+  const commodity = normalizeServerCommodityId(options.commodity || "oil");
+  const period = normalizeAdvisoryPeriod(options.period);
+  const threshold = normalizeAdvisoryThreshold(options.threshold);
+  const samples = getServerAdvisorySamples(advisoryRows, { commodity, period });
+  const forecastEvaluations = evaluateServerAdvisorySamples(samples, threshold);
+  const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+  const tradeEvaluations = getServerPaperTradeAdvisoryEvaluations(payload.transactions || [], { commodity, period, threshold });
+  const forecastSummary = summarizeServerEvaluations(forecastEvaluations);
+  const tradeSummary = summarizeServerEvaluations(tradeEvaluations);
+  const qualifiedSummary = summarizeServerEvaluations(forecastEvaluations, (item) => item.qualified);
+  const averageAbsMove = forecastEvaluations.length
+    ? forecastEvaluations.reduce((total, item) => total + Math.abs(Number(item.move) || 0), 0) / forecastEvaluations.length
+    : null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-advisory-accuracy",
+    commodity,
+    period,
+    threshold,
+    sampleCount: samples.length,
+    evaluationWindowMinutes: Math.round(ADVISORY_EVALUATION_WINDOW_MS / 60000),
+    forecastSummary,
+    tradeSummary,
+    qualifiedSummary,
+    averageAbsMove,
+    calibrationBands: ADVISORY_SCORE_BANDS.map((band) => ({
+      band,
+      summary: summarizeServerEvaluations(forecastEvaluations, (item) => {
+        const score = getServerAdvisoryLocalConviction(item.entry);
+        return Number.isFinite(score) && score >= band.min && score <= band.max;
+      }),
+      longSummary: getServerCalibrationBandSummary(forecastEvaluations, "long", band),
+      shortSummary: getServerCalibrationBandSummary(forecastEvaluations, "short", band)
+    })),
+    bars: [
+      { id: "long", metric: "forecast", label: "Forecast long", summary: summarizeServerEvaluations(forecastEvaluations, (item) => item.entry.tone === "long") },
+      { id: "short", metric: "forecast", label: "Forecast short", summary: summarizeServerEvaluations(forecastEvaluations, (item) => item.entry.tone === "short") },
+      { id: "long", metric: "trade", label: "Trade long", summary: summarizeServerEvaluations(tradeEvaluations, (item) => item.entry.tone === "long") },
+      { id: "short", metric: "trade", label: "Trade short", summary: summarizeServerEvaluations(tradeEvaluations, (item) => item.entry.tone === "short") }
+    ],
+    recentOutcomes: [...forecastEvaluations, ...tradeEvaluations]
+      .filter((item) => item && item.entry && Number.isFinite(Number(item.startPrice)) && Number.isFinite(Number(item.endPrice)))
+      .sort((a, b) => getTransactionDate(b.entry.time) - getTransactionDate(a.entry.time))
+      .slice(0, 80)
+      .map(serializeServerEvaluationOutcome),
+    edge: {
+      long: summarizeServerTradeEdge(tradeEvaluations, "long"),
+      short: summarizeServerTradeEdge(tradeEvaluations, "short"),
+      overall: summarizeServerTradeEdge(tradeEvaluations)
+    }
+  };
+}
+
+async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summary", options = {}) {
   await ensureLearningContractColumnsD1(env);
   const rows = await env.DB.prepare(`
     SELECT payload_json
@@ -3835,10 +4173,10 @@ async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summar
     LIMIT 400
   `).all();
   const byCommodity = new Map();
-  getResults(rows)
+  const snapshots = getResults(rows)
     .map((row) => parseStoredJson(row.payload_json))
-    .filter(Boolean)
-    .forEach((snapshot) => {
+    .filter(Boolean);
+  snapshots.forEach((snapshot) => {
       const commodity = normalizeServerCommodityId(snapshot.commodity || "oil");
       if (!commodity || byCommodity.has(commodity)) return;
       const config = getServerCommodityConfig({}, commodity);
@@ -3856,18 +4194,21 @@ async function buildAdvisorySummary(env, source = "cloudflare-d1-advisory-summar
     storage: "d1",
     snapshots: Array.from(byCommodity.values()),
     prices,
-    marketStatus
+    marketStatus,
+    accuracyMetrics: options.includeMetrics
+      ? await buildServerAdvisoryAccuracyMetrics(env, snapshots, options)
+      : null
   };
 }
 
-async function saveAdvisorySummaryCache(env) {
-  const summary = await buildAdvisorySummary(env, "cloudflare-d1-advisory-summary-cache");
-  await saveRuntimeDocumentD1(env, ADVISORY_SUMMARY_CACHE_KEY, summary);
+async function saveAdvisorySummaryCache(env, options = {}) {
+  const summary = await buildAdvisorySummary(env, "cloudflare-d1-advisory-summary-cache", options);
+  await saveRuntimeDocumentD1(env, getAdvisorySummaryCacheKey(options), summary);
   return summary;
 }
 
-async function loadAdvisorySummaryCache(env, { allowStale = true } = {}) {
-  const cached = await getRuntimeDocumentD1(env, ADVISORY_SUMMARY_CACHE_KEY, null);
+async function loadAdvisorySummaryCache(env, { allowStale = true, ...options } = {}) {
+  const cached = await getRuntimeDocumentD1(env, getAdvisorySummaryCacheKey(options), null);
   if (!cached || !Array.isArray(cached.snapshots)) return null;
   const generatedAt = getTransactionDate(cached.generatedAt).getTime();
   const ageMs = Number.isFinite(generatedAt) ? Date.now() - generatedAt : Number.POSITIVE_INFINITY;
@@ -3887,17 +4228,23 @@ async function handleAdvisorySummaryRoute(env, request, origin, ctx = null) {
   }
   const url = new URL(request.url);
   const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
-  const cached = !forceRefresh ? await loadAdvisorySummaryCache(env, { allowStale: true }) : null;
+  const options = {
+    includeMetrics: true,
+    commodity: url.searchParams.get("commodity") || "oil",
+    period: url.searchParams.get("period") || "hour",
+    threshold: url.searchParams.get("threshold") || 60
+  };
+  const cached = !forceRefresh ? await loadAdvisorySummaryCache(env, { allowStale: true, ...options }) : null;
   if (cached && !cached.stale) return jsonResponse(cached, 200, origin);
   if (cached && ctx?.waitUntil) {
-    ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {
+    ctx.waitUntil(saveAdvisorySummaryCache(env, options).catch((error) => {
       console.error("advisory summary cache refresh failed", error);
     }));
     return jsonResponse(cached, 200, origin);
   }
 
   try {
-    const fresh = await saveAdvisorySummaryCache(env);
+    const fresh = await saveAdvisorySummaryCache(env, options);
     return jsonResponse(fresh, 200, origin);
   } catch (error) {
     if (cached) return jsonResponse({ ...cached, error: error.message }, 200, origin);
@@ -6612,7 +6959,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     const includeSummary = url.searchParams.get("summary") === "1" || url.searchParams.get("summary") === "true";
     const compact = url.searchParams.get("compact") === "1" || url.searchParams.get("compact") === "true";
     const requestedEmail = normalizeEmail(url.searchParams.get("email"));
-    const requestedCommodity = normalizeCommodityId(url.searchParams.get("commodity"));
+    const requestedCommodity = normalizeServerCommodityId(url.searchParams.get("commodity"));
     const requestedLimit = Number(url.searchParams.get("limit"));
     const rowLimit = Number.isFinite(requestedLimit)
       ? Math.max(0, Math.min(500, Math.trunc(requestedLimit)))
@@ -6634,7 +6981,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     if (compact) {
       const filteredTransactions = (payload.transactions || []).filter((entry) => {
         const emailMatch = !requestedEmail || normalizeEmail(entry?.userEmail || entry?.user?.email) === requestedEmail;
-        const commodity = normalizeCommodityId(entry?.commodity || inferServerCommodityFromContract(entry?.contract));
+        const commodity = normalizeServerCommodityId(entry?.commodity || inferServerCommodityFromContract(entry?.contract));
         const commodityMatch = !requestedCommodity || requestedCommodity === "all" || commodity === requestedCommodity;
         return emailMatch && commodityMatch;
       });

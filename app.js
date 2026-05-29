@@ -834,6 +834,7 @@ let leaderBoardSummaryPeriod = "";
 let leaderBoardSummaryError = "";
 let leaderBoardSummaryRefreshing = false;
 let leaderBoardSummaryFromDisplayCache = false;
+let advisoryServerMetrics = null;
 let paperLedgerSummaryRows = [];
 let paperLedgerSummaryLoadedAt = 0;
 let paperLedgerSummaryInFlight = false;
@@ -1150,10 +1151,14 @@ function setActiveSection(section) {
   }
   if (section === "skills") renderSkillsWorkspace();
   if (section === "users") showUserManagement(true);
-  if (section === "trading") loadSharedTransactionHistory();
+  if (section === "trading") {
+    nextBackendTransactionSyncAt = 0;
+    loadSharedTransactionHistory(true);
+  }
   if (section === "actual-trades") {
     renderLiveTradeLedger();
-    loadSharedTransactionHistory();
+    nextBackendTransactionSyncAt = 0;
+    loadSharedTransactionHistory(true);
   }
   if (section === "token-costs") renderTokenCosts();
 }
@@ -11245,7 +11250,13 @@ function getAdvisoryHistoryUrl() {
 }
 
 function getAdvisorySummaryUrl() {
-  return `${getAdvisoryHistoryUrl()}?summary=1`;
+  const params = new URLSearchParams({
+    summary: "1",
+    commodity: advisoryCommodityFilter,
+    period: advisoryPeriodFilter,
+    threshold: String(advisoryScoreThreshold)
+  });
+  return `${getAdvisoryHistoryUrl()}?${params.toString()}`;
 }
 
 function applyAdvisorySummaryPrices(prices = {}) {
@@ -11274,6 +11285,7 @@ async function loadSharedAdvisorySummary(manual = false) {
     if (!response.ok) throw new Error("advisory summary unavailable");
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : []);
+    advisoryServerMetrics = data?.accuracyMetrics || null;
     applyAdvisorySummaryPrices(data?.prices || {});
     if (activeSection === "advisories") {
       queueAdvisoryChartRender();
@@ -11958,10 +11970,12 @@ function saveAdvisoryScoreThreshold() {
   saveSharedSettings();
   advisoryScoreThresholdEl.value = String(advisoryScoreThreshold);
   accuracyThresholdDisplayEl.textContent = `${advisoryScoreThreshold}+`;
+  advisoryServerMetrics = null;
   if (lastPrimarySignal && lastTradePlan) {
     calculateSignal();
   }
   renderAdvisoryChart();
+  loadSharedAdvisorySummary();
 }
 
 function getAdvisoryEvaluationWindow() {
@@ -12315,7 +12329,225 @@ function renderEdgeDashboard(tradeEvaluations) {
   }
 }
 
+function advisoryServerMetricsMatch(metrics = advisoryServerMetrics) {
+  return Boolean(
+    metrics
+    && metrics.commodity === advisoryCommodityFilter
+    && metrics.period === advisoryPeriodFilter
+    && Number(metrics.threshold) === Number(advisoryScoreThreshold)
+  );
+}
+
+function parseServerMetricNumber(value) {
+  if (value === null || value === undefined || value === "") return NaN;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : NaN;
+}
+
+function renderServerScoreCalibrationBands(metrics) {
+  if (!accuracyCalibrationGridEl) return;
+  accuracyCalibrationGridEl.innerHTML = "";
+  (Array.isArray(metrics.calibrationBands) ? metrics.calibrationBands : []).forEach(({ band = {}, summary = {}, longSummary = {}, shortSummary = {} }) => {
+    const hasSamples = Number(summary.count) > 0;
+    const hasUsefulSample = Number(summary.count) >= 5;
+    const accuracy = Number.isFinite(Number(summary.accuracy)) ? Math.round(Number(summary.accuracy)) : 0;
+    const card = document.createElement("div");
+    const label = document.createElement("span");
+    const value = document.createElement("strong");
+    const count = document.createElement("p");
+    const sideGrid = document.createElement("div");
+    const track = document.createElement("div");
+    const fill = document.createElement("i");
+    const note = document.createElement("p");
+
+    card.className = "calibration-card";
+    card.dataset.ready = String(hasUsefulSample);
+    card.dataset.empty = String(!hasSamples);
+    label.className = "stat-label";
+    label.textContent = band.label || "Score band";
+    value.textContent = hasSamples ? `${accuracy}%` : "No samples";
+    count.textContent = hasSamples
+      ? `${summary.correct || 0} of ${summary.count || 0} forecasts correct`
+      : "No evaluated forecasts in this score band.";
+    sideGrid.className = "calibration-side-grid";
+    [
+      ["Long", longSummary],
+      ["Short", shortSummary]
+    ].forEach(([sideLabel, sideSummary]) => {
+      const side = document.createElement("span");
+      side.textContent = `${sideLabel}: ${formatCalibrationSummary(sideSummary)}`;
+      side.dataset.ready = String(Number(sideSummary.count) >= ADVISORY_CALIBRATION_MIN_SIDE_SAMPLES);
+      sideGrid.append(side);
+    });
+    track.className = "calibration-track";
+    fill.style.width = hasSamples ? `${Math.max(4, Math.min(100, accuracy))}%` : "0%";
+    track.append(fill);
+    note.textContent = !hasSamples
+      ? "This band has not had enough calls yet."
+      : hasUsefulSample
+        ? "Use the long/short rows to see which side is actually calibrated."
+        : "Small sample: treat this as noise until more calls arrive.";
+    card.append(label, value, count, sideGrid, track, note);
+    accuracyCalibrationGridEl.append(card);
+  });
+}
+
+function renderServerAccuracyBars(metrics) {
+  accuracyBarsEl.innerHTML = "";
+  (Array.isArray(metrics.bars) ? metrics.bars : []).forEach(({ id, metric, label, summary = {} }) => {
+    const row = document.createElement("div");
+    const text = document.createElement("span");
+    const track = document.createElement("div");
+    const fill = document.createElement("i");
+    const value = document.createElement("strong");
+    const accuracy = Number(summary.accuracy);
+    const width = Number.isFinite(accuracy) ? Math.max(4, accuracy) : 0;
+
+    row.className = "accuracy-bar-row";
+    row.dataset.tone = id || "";
+    row.dataset.metric = metric || "";
+    text.textContent = label || "";
+    track.className = "accuracy-bar-track";
+    fill.style.width = `${width}%`;
+    value.textContent = Number(summary.count) ? `${formatPercent(accuracy)} / ${summary.count}` : metric === "trade" ? "No trades" : "No calls";
+    track.append(fill);
+    row.append(text, track, value);
+    accuracyBarsEl.append(row);
+  });
+}
+
+function renderServerAccuracyOutcomes(metrics) {
+  accuracyOutcomesEl.innerHTML = "";
+  const outcomes = Array.isArray(metrics.recentOutcomes) ? metrics.recentOutcomes : [];
+  if (!outcomes.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 7;
+    cell.textContent = "No evaluated forecast or closed trade outcomes in this window. Use Week or Month to include older outcomes.";
+    row.append(cell);
+    accuracyOutcomesEl.append(row);
+    return;
+  }
+
+  outcomes.forEach((item) => {
+    const row = document.createElement("tr");
+    const isTrade = item.metric === "trade";
+    const resultLabel = item.correct ? "Correct" : "Wrong";
+    const resultValue = isTrade && Number.isFinite(Number(item.pnl))
+      ? `${resultLabel} (${formatSignedMoney(Number(item.pnl))})`
+      : resultLabel;
+    row.dataset.result = item.correct ? "correct" : "wrong";
+    row.dataset.metric = item.metric || "forecast";
+    [
+      formatTradeTime(item.time),
+      `${isTrade ? "Trade" : "Forecast"}: ${item.label || item.tone || ""}`,
+      `${formatAdvisoryScoreValue(item.score)}${item.qualified ? " qualified" : ""}`,
+      formatAdvisoryScoreValue(item.llmScore),
+      formatPrice(Number(item.startPrice)),
+      `${formatPrice(Number(item.endPrice))} (${Number(item.move) >= 0 ? "+" : ""}${formatPrice(Number(item.move))})`,
+      resultValue
+    ].forEach((value) => {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    });
+    accuracyOutcomesEl.append(row);
+  });
+}
+
+function renderServerEdgeDashboard(metrics) {
+  const edge = metrics.edge || {};
+  const longSummary = edge.long || summarizeTradeEdge([]);
+  const shortSummary = edge.short || summarizeTradeEdge([]);
+  const overallSummary = edge.overall || summarizeTradeEdge([]);
+  const overallExpectancy = parseServerMetricNumber(overallSummary.expectancy);
+  const isPositive = Number.isFinite(overallExpectancy) && overallExpectancy > 0;
+
+  if (edgeDashboardStatusEl) {
+    edgeDashboardStatusEl.textContent = Number(overallSummary.trades)
+      ? `${overallSummary.trades} closed paper trade${Number(overallSummary.trades) === 1 ? "" : "s"} in this window`
+      : "Waiting for closed trades";
+  }
+  if (edgeLongExpectancyEl) edgeLongExpectancyEl.textContent = formatExpectancy(parseServerMetricNumber(longSummary.expectancy));
+  if (edgeLongDetailEl) edgeLongDetailEl.textContent = getEdgeDetailText(longSummary);
+  if (edgeShortExpectancyEl) edgeShortExpectancyEl.textContent = formatExpectancy(parseServerMetricNumber(shortSummary.expectancy));
+  if (edgeShortDetailEl) edgeShortDetailEl.textContent = getEdgeDetailText(shortSummary);
+  if (edgeOverallExpectancyEl) {
+    edgeOverallExpectancyEl.textContent = formatExpectancy(overallExpectancy);
+    edgeOverallExpectancyEl.dataset.edge = isPositive ? "positive" : "negative";
+  }
+  if (edgeOverallDetailEl) {
+    edgeOverallDetailEl.textContent = Number(overallSummary.trades)
+      ? `${formatSignedMoney(Number(overallSummary.totalPnl) || 0)} net P/L across ${overallSummary.trades} closed trades.`
+      : "Average trade profit appears after paper trades close.";
+  }
+  if (edgeFeeDragEl) edgeFeeDragEl.textContent = Number(overallSummary.trades) ? formatMoney(Number(overallSummary.averageFees) || 0) : "-";
+  if (edgeFeeDetailEl) {
+    edgeFeeDetailEl.textContent = Number(overallSummary.trades)
+      ? `${formatMoney(Number(overallSummary.totalFees) || 0)} total fees recorded or estimated.`
+      : "Fees are included when stored on trade rows.";
+  }
+  if (edgeBreakdownEl) {
+    edgeBreakdownEl.innerHTML = "";
+    const header = document.createElement("div");
+    header.className = "edge-breakdown-row edge-breakdown-head";
+    ["Side", "Trades", "Win rate", "Avg win", "Avg loss", "Avg fees", "Ave Trade Profit"].forEach((value) => {
+      const cell = document.createElement("span");
+      cell.textContent = value;
+      header.append(cell);
+    });
+    edgeBreakdownEl.append(
+      header,
+      renderEdgeBreakdownRow(longSummary, "Long"),
+      renderEdgeBreakdownRow(shortSummary, "Short"),
+      renderEdgeBreakdownRow(overallSummary, "Overall")
+    );
+  }
+}
+
+function renderServerAdvisoryAccuracy(metrics) {
+  const qualifiedSummary = metrics.qualifiedSummary || {};
+  const tradeSummary = metrics.tradeSummary || {};
+  const forecastSummary = metrics.forecastSummary || {};
+  const sampleFloor = 10;
+  const qualifiedCount = Number(qualifiedSummary.count) || 0;
+  const qualifiedAccuracy = parseServerMetricNumber(qualifiedSummary.accuracy);
+  const isReady = qualifiedCount >= sampleFloor && qualifiedAccuracy >= 60;
+
+  accuracyVerdictCardEl.dataset.ready = String(isReady);
+  accuracyThresholdDisplayEl.textContent = `${metrics.threshold}+`;
+  accuracyVerdictEl.textContent = qualifiedCount < sampleFloor
+    ? "Needs more calls"
+    : isReady
+      ? "Passing"
+      : "Below 60%";
+  accuracyVerdictCopyEl.textContent = qualifiedCount < sampleFloor
+    ? `Need ${sampleFloor - qualifiedCount} more forecast calls with score ${metrics.threshold}+.`
+    : isReady
+      ? "Qualified forecasts are above the 60% accuracy target."
+      : "Qualified forecasts are not reliable enough yet.";
+  accuracyHighConvictionEl.textContent = formatPercent(qualifiedAccuracy);
+  accuracyHighConvictionCountEl.textContent = `${qualifiedSummary.correct || 0} of ${qualifiedCount} forecast calls with score ${metrics.threshold}+`;
+  accuracyAllCallsEl.textContent = formatPercent(parseServerMetricNumber(tradeSummary.accuracy));
+  accuracyAllCountEl.textContent = `${tradeSummary.correct || 0} of ${tradeSummary.count || 0} closed trades with positive net P/L`;
+  if (accuracyAverageMoveEl) {
+    accuracyAverageMoveEl.textContent = Number.isFinite(Number(metrics.averageAbsMove)) ? formatPrice(Number(metrics.averageAbsMove)) : "-";
+  }
+  if (accuracyEvaluationWindowEl) {
+    accuracyEvaluationWindowEl.textContent = `${forecastSummary.count || 0} forecast calls judged about ${metrics.evaluationWindowMinutes || 10} min later`;
+  }
+  renderServerScoreCalibrationBands(metrics);
+  renderServerAccuracyBars(metrics);
+  renderServerAccuracyOutcomes(metrics);
+  renderServerEdgeDashboard(metrics);
+}
+
 function renderAdvisoryAccuracy(samples) {
+  if (advisoryServerMetricsMatch()) {
+    renderServerAdvisoryAccuracy(advisoryServerMetrics);
+    return;
+  }
+
   const forecastEvaluations = evaluateAdvisorySamples(samples)
     .filter((item) => isActionableAdvisoryTone(item?.entry?.tone))
     .sort((a, b) => new Date(a.entry.time || 0) - new Date(b.entry.time || 0));
@@ -13151,6 +13383,12 @@ async function loadSharedTransactionHistory(manual = false) {
       sharedHistoryStatusEl.textContent = manual
         ? "Cloudflare ledger sync failed; stale browser ledger disabled"
         : `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+      window.setTimeout(() => {
+        if (activeSection === "trading" || activeSection === "actual-trades") {
+          nextBackendTransactionSyncAt = 0;
+          loadSharedTransactionHistory(true);
+        }
+      }, 15000);
     } else {
       sharedHistoryStatusEl.textContent = manual
         ? "Backend sync failed; using local ledger"
@@ -15312,16 +15550,20 @@ advisoryCommodityFiltersEl.addEventListener("click", (event) => {
   if (!button) return;
 
   advisoryCommodityFilter = button.dataset.advisoryCommodity;
+  advisoryServerMetrics = null;
   renderAdvisoryFilterButtons();
   renderAdvisoryChart();
+  loadSharedAdvisorySummary();
 });
 advisoryPeriodFiltersEl.addEventListener("click", (event) => {
   const button = event.target.closest("[data-advisory-period]");
   if (!button) return;
 
   advisoryPeriodFilter = button.dataset.advisoryPeriod;
+  advisoryServerMetrics = null;
   renderAdvisoryFilterButtons();
   renderAdvisoryChart();
+  loadSharedAdvisorySummary();
 });
 syncAdvisoryHistoryEl.addEventListener("click", () => loadSharedAdvisoryHistory(true));
 advisoryScoreThresholdEl.addEventListener("change", saveAdvisoryScoreThreshold);
