@@ -2754,6 +2754,13 @@ function getUserPaperSchedulerSettings(user = {}, env, modelSettings = normalize
   };
 }
 
+function shouldEvaluatePaperSchedulerUser(user = {}, env) {
+  const email = normalizeEmail(user.email);
+  if (!email) return false;
+  const enabledEmails = getEnabledPaperTraderEmails(env);
+  return !enabledEmails.size || enabledEmails.has(email);
+}
+
 function updateUserPaperSchedulerSettings(user, nextSettings = {}) {
   user.paperTrading = {
     ...(user.paperTrading && typeof user.paperTrading === "object" ? user.paperTrading : {}),
@@ -5409,6 +5416,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     for (const user of users) {
       const email = normalizeEmail(user.email);
       if (!email) continue;
+      if (!shouldEvaluatePaperSchedulerUser(user, env)) continue;
       const schedulerSettings = getUserPaperSchedulerSettings(user, env, modelSettings);
       if (!schedulerSettings.enabled) continue;
       const lastEvaluationAt = schedulerSettings.lastEvaluationAt ? getTransactionDate(schedulerSettings.lastEvaluationAt) : null;
