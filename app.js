@@ -1042,9 +1042,10 @@ function queuePaperSweep(options = {}) {
 
 function paintLivePriceFields(commodity) {
   if (!commodity || commoditySelect?.value !== commodity) return;
-  const price = confirmedLivePrices.has(commodity) ? confirmedLivePrices.get(commodity) : latestPrices.get(commodity);
-  const updatedAt = confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
-  const source = confirmedLivePriceSources.has(commodity) ? confirmedLivePriceSources.get(commodity) : latestPriceSources.get(commodity);
+  const record = getPreferredMarketPriceRecord(commodity) || {};
+  const price = record.price;
+  const updatedAt = record.updatedAt;
+  const source = record.source;
 
   if (priceEl && Number.isFinite(price) && price > 0) {
     priceEl.textContent = formatPrice(price);
@@ -9091,7 +9092,11 @@ async function loadSnapshotPrices() {
   }
 
   snapshotPricesLoadedAt = now;
-  snapshotPricesPromise = fetch(getSnapshotUrl(), { cache: "default" })
+  const snapshotUrl = getSnapshotUrl();
+  const liveSnapshotUrl = snapshotUrl.startsWith("./")
+    ? snapshotUrl
+    : `${snapshotUrl}${snapshotUrl.includes("?") ? "&" : "?"}ts=${now}`;
+  snapshotPricesPromise = fetch(liveSnapshotUrl, { cache: "no-store" })
     .then((response) => {
       if (!response.ok) throw new Error("snapshot unavailable");
       return response.json();
@@ -9284,6 +9289,38 @@ function isStoredPriceForActiveContract(commodity) {
   return storedProductId === activeProductId;
 }
 
+function getPriceRecordTime(value) {
+  const date = value ? getTransactionDate(value) : null;
+  return date && Number.isFinite(date.getTime()) ? date.getTime() : 0;
+}
+
+function getPreferredMarketPriceRecord(commodity) {
+  const latestPrice = latestPrices.get(commodity);
+  const confirmedPrice = confirmedLivePrices.get(commodity);
+  const latestTime = getPriceRecordTime(latestPriceTimes.get(commodity));
+  const confirmedTime = getPriceRecordTime(confirmedLivePriceTimes.get(commodity));
+  const useConfirmed = Number.isFinite(Number(confirmedPrice))
+    && Number(confirmedPrice) > 0
+    && confirmedTime >= latestTime;
+  if (useConfirmed) {
+    return {
+      price: Number(confirmedPrice),
+      updatedAt: confirmedLivePriceTimes.get(commodity),
+      source: confirmedLivePriceSources.get(commodity),
+      productId: confirmedLivePriceProductIds.get(commodity)
+    };
+  }
+  if (Number.isFinite(Number(latestPrice)) && Number(latestPrice) > 0) {
+    return {
+      price: Number(latestPrice),
+      updatedAt: latestPriceTimes.get(commodity),
+      source: latestPriceSources.get(commodity),
+      productId: latestPriceProductIds.get(commodity)
+    };
+  }
+  return null;
+}
+
 function clearCommodityPriceCache(commodity) {
   latestPrices.delete(commodity);
   latestPriceTimes.delete(commodity);
@@ -9322,41 +9359,35 @@ function getEstimatedFees(config, contracts, sides = 2) {
 
 function isUsableMarketPrice(commodity) {
   if (!isStoredPriceForActiveContract(commodity)) return false;
-  const price = confirmedLivePrices.has(commodity)
-    ? confirmedLivePrices.get(commodity)
-    : latestPrices.get(commodity);
-  const source = confirmedLivePriceSources.has(commodity)
-    ? confirmedLivePriceSources.get(commodity)
-    : latestPriceSources.get(commodity);
-  const updatedAt = confirmedLivePriceTimes.has(commodity)
-    ? confirmedLivePriceTimes.get(commodity)
-    : latestPriceTimes.get(commodity);
+  const record = getPreferredMarketPriceRecord(commodity);
+  const price = record?.price;
+  const source = record?.source;
+  const updatedAt = record?.updatedAt;
   const updatedDate = updatedAt ? getTransactionDate(updatedAt) : null;
   const ageMs = updatedDate && Number.isFinite(updatedDate.getTime()) ? Date.now() - updatedDate.getTime() : Infinity;
   const liveSource = source === "Coinbase WebSocket"
     || source === "Coinbase live"
     || source === "Cloudflare snapshot"
-    || source === "Cloudflare advisory summary";
+    || source === "Cloudflare advisory summary"
+    || source === "Cloudflare paper ledger";
   const freshEnough = liveSource && ageMs <= PAPER_EXIT_PRICE_STALE_MS;
   return Number.isFinite(price) && price > 0 && freshEnough;
 }
 
 function getUsableMarketPrice(commodity) {
   if (!isUsableMarketPrice(commodity)) return null;
-  return confirmedLivePrices.has(commodity) ? confirmedLivePrices.get(commodity) : latestPrices.get(commodity);
+  return getPreferredMarketPriceRecord(commodity)?.price ?? null;
 }
 
 function getLastKnownMarketPrice(commodity) {
   if (!isStoredPriceForActiveContract(commodity)) return null;
-  const price = confirmedLivePrices.has(commodity)
-    ? confirmedLivePrices.get(commodity)
-    : latestPrices.get(commodity);
+  const price = getPreferredMarketPriceRecord(commodity)?.price;
   return Number.isFinite(Number(price)) && Number(price) > 0 ? Number(price) : null;
 }
 
 function getLastKnownMarketPriceTime(commodity) {
   if (!isStoredPriceForActiveContract(commodity)) return null;
-  return confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
+  return getPreferredMarketPriceRecord(commodity)?.updatedAt || null;
 }
 
 function getDisplayMarketPrice(commodity) {
@@ -9375,12 +9406,12 @@ function getDisplayMarketPriceTitle(commodity) {
 
 function getUsableMarketPriceTime(commodity) {
   if (!isUsableMarketPrice(commodity)) return null;
-  return confirmedLivePriceTimes.has(commodity) ? confirmedLivePriceTimes.get(commodity) : latestPriceTimes.get(commodity);
+  return getPreferredMarketPriceRecord(commodity)?.updatedAt || null;
 }
 
 function getUsableMarketPriceSource(commodity) {
   if (!isUsableMarketPrice(commodity)) return null;
-  return confirmedLivePriceSources.has(commodity) ? confirmedLivePriceSources.get(commodity) : latestPriceSources.get(commodity);
+  return getPreferredMarketPriceRecord(commodity)?.source || null;
 }
 
 function rememberConfirmedLivePrice(commodity, price, source) {
@@ -11275,6 +11306,10 @@ function applyCloudflarePriceSnapshots(prices = {}, source = "Cloudflare snapsho
     latestPriceSources.set(normalizedCommodity, snapshot.ok ? source : `${source} stale`);
     latestPriceProductIds.set(normalizedCommodity, snapshot.productId || snapshot.ticker || getActivePriceProductId(normalizedCommodity));
     rememberPriceTick(normalizedCommodity, snapshotPrice, snapshotTime);
+    if (normalizedCommodity === commoditySelect.value) {
+      queueLivePricePaint(normalizedCommodity, { immediate: true });
+      queueSignalRecalculation("cloudflare-price-snapshot");
+    }
   });
 }
 
