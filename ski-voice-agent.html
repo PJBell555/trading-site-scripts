@@ -164,7 +164,9 @@
 
     .hero {
       background:
-        linear-gradient(180deg, rgba(7, 30, 52, 0.92), rgba(7, 30, 52, 0.58) 44%, rgba(245, 247, 251, 1) 100%);
+        linear-gradient(90deg, rgba(7, 30, 52, 0.9) 0%, rgba(7, 30, 52, 0.78) 36%, rgba(7, 30, 52, 0.28) 65%, rgba(7, 30, 52, 0.64) 100%),
+        linear-gradient(180deg, rgba(7, 30, 52, 0.42) 0%, rgba(7, 30, 52, 0.1) 64%, rgba(245, 247, 251, 1) 100%),
+        url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
       color: #fff;
       overflow: hidden;
     }
@@ -172,10 +174,12 @@
     .hero-inner {
       display: grid;
       gap: 30px;
-      grid-template-columns: minmax(320px, 0.78fr) minmax(420px, 1.22fr);
+      grid-template-columns: minmax(320px, 0.95fr) minmax(340px, 0.62fr);
+      min-height: 720px;
+      align-items: center;
       margin: 0 auto;
       max-width: 1380px;
-      padding: 46px clamp(18px, 4vw, 48px) 42px;
+      padding: 56px clamp(18px, 4vw, 48px) 72px;
     }
 
     .eyebrow {
@@ -254,16 +258,10 @@
 
     .hero-showcase {
       align-self: center;
-      background:
-        linear-gradient(90deg, rgba(8, 35, 61, 0.2), rgba(8, 35, 61, 0.02)),
-        url("./assets/skiweekends-ai-avoriaz.png") center/cover;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      box-shadow: var(--shadow);
       display: grid;
-      min-height: 650px;
-      overflow: hidden;
-      padding: 34px;
-      place-items: center end;
+      min-height: 660px;
+      padding: 8px;
+      place-items: center;
     }
 
     .phone-frame {
