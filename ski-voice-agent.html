@@ -245,24 +245,6 @@
       margin-top: 28px;
     }
 
-    .trust {
-      align-items: center;
-      color: rgba(255, 255, 255, 0.86);
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-      margin-top: 28px;
-    }
-
-    .stars {
-      background: #00b67a;
-      color: #fff;
-      font-size: 0.82rem;
-      font-weight: 900;
-      letter-spacing: 0.08em;
-      padding: 3px 8px;
-    }
-
     .hero-showcase {
       align-self: center;
       display: grid;
@@ -606,11 +588,32 @@
       padding: 22px;
     }
 
+    .destination {
+      border-radius: 16px;
+      cursor: pointer;
+      min-height: 132px;
+      text-align: left;
+      white-space: normal;
+    }
+
+    .destination:hover {
+      border-color: rgba(91, 183, 236, 0.55);
+      box-shadow: 0 18px 46px rgba(8, 35, 61, 0.11);
+      transform: translateY(-1px);
+    }
+
     .destination strong {
       color: var(--navy);
       display: block;
       font-size: 1.2rem;
       margin-bottom: 4px;
+    }
+
+    .destination span {
+      display: block;
+      font-size: 0.94rem;
+      line-height: 1.45;
+      max-width: 25ch;
     }
 
     .destination span,
@@ -854,11 +857,6 @@
           <div class="hero-actions">
             <a class="button primary" href="#concierge" id="hero-plan-button">Plan My Avoriaz Skiweekend</a>
             <a class="button secondary" href="#chalets">View Chalet Matches</a>
-          </div>
-          <div class="trust" aria-label="Trustpilot summary">
-            <span>Excellent</span>
-            <span class="stars">★★★★★</span>
-            <span>Trustpilot-style preview</span>
           </div>
         </div>
         <section class="hero-showcase" aria-label="Interactive mobile ski concierge preview">
