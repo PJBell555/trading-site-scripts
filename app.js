@@ -554,6 +554,7 @@ const DEFAULT_USER_STRATEGY = {
   breakoutMinEdgePercent: 55,
   breakoutMinVolatilityBps: 0.8,
   breakoutMinMoveBps: 3,
+  oilSelloffCaptureMode: false,
   trendCaptureMode: true,
   markovHedgeFundMethod: false,
   markovRegimeMoveBps: 8,
@@ -590,6 +591,7 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   flatMinEdgePercent: 58,
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
+  oilSelloffCaptureMode: true,
   markovHedgeFundMethod: true,
   missedOpportunityReentry: false,
   noChaseMoveBps: 14,
@@ -612,6 +614,7 @@ const PETER_OIL_TEST_AGENT_STRATEGY = {
   flatMinEdgePercent: 58,
   trendingMinEdgePercent: 60,
   breakoutMinEdgePercent: 57,
+  oilSelloffCaptureMode: true,
   markovHedgeFundMethod: true,
   missedOpportunityReentry: true,
   noChaseMoveBps: 14,
@@ -3565,6 +3568,7 @@ function normalizeUserStrategy(strategy = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(merged.breakoutMinEdgePercent) || DEFAULT_USER_STRATEGY.breakoutMinEdgePercent), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
     breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50),
+    oilSelloffCaptureMode: merged.oilSelloffCaptureMode === true,
     trendCaptureMode: merged.trendCaptureMode !== false,
     markovHedgeFundMethod: merged.markovHedgeFundMethod === true,
     markovRegimeMoveBps: clamp(Number(merged.markovRegimeMoveBps) || DEFAULT_USER_STRATEGY.markovRegimeMoveBps, 1, 100),
@@ -3660,6 +3664,7 @@ const STRATEGY_HISTORY_FIELDS = [
   ["breakoutMinEdgePercent", "Breakout minimum edge"],
   ["breakoutMinVolatilityBps", "Breakout minimum volatility"],
   ["breakoutMinMoveBps", "Breakout minimum move"],
+  ["oilSelloffCaptureMode", "Oil selloff capture"],
   ["markovHedgeFundMethod", "Markov Hedge Fund Method"],
   ["markovRegimeMoveBps", "Markov regime move"],
   ["markovSidewaysThresholdBoost", "Markov sideways threshold boost"],
@@ -3718,6 +3723,7 @@ function getRegimeAwareSeedBefore(strategy = getCurrentUserStrategy()) {
 const STRATEGY_BASELINE_TEXT = "Current profile default: trade only when advisory clears the learned threshold, stop exits immediately, reset after the fourth losing step.";
 const STRATEGY_REGIME_REFINEMENT_TEXT = "Refinement 5/9/2026: Regime-aware Martingale for Oil. Use the 4-step Martingale structure only when oil is trading with clear directional confirmation and real volatility. When the market is flat, mixed, or choppy, reduce Martingale aggressiveness instead of disabling it entirely. Flat / mixed regime: treat 1-minute edge near 50% as a wait condition, not a strong trade. Require sustained trend confirmation, VWAP reclaim, and improving 10s/30s momentum before increasing size. Reduce Martingale step size and/or cap the number of recovery steps. Do not let Martingale amplify weak C-grade setups. Volatile / trending regime: restore fuller Martingale sizing only when price, tape, and momentum are aligned. Allow the recovery sequence to work when there is genuine directional movement. Keep the Karpathy loop active so it can adjust advisory thresholds from closed-trade outcomes. Coach logic: the Karpathy loop should adjust thresholds, not force more trades. Martingale should respond to market regime, not stay fixed. The default in uncertainty should be smaller size, fewer recovery steps, and more confirmation.";
 const STRATEGY_MARKOV_REFINEMENT_TEXT = "Refinement 5/21/2026: Markov Hedge Fund Method for Peter Bell and D2 only. Use a Markov-style state transition overlay to classify oil as bull, bear, or sideways from recent return behavior and transition evidence. Bull state favors long continuation unless breakdown is confirmed. Bear state favors short continuation unless reversal is confirmed. Sideways state raises the entry threshold and reduces size. This is a paper-only test strategy switch, not personalized investment advice.";
+const STRATEGY_OIL_SELLOFF_CAPTURE_REFINEMENT_TEXT = "Refinement 5/28/2026: Oil selloff capture for Peter Bell and D2 only. Server-side Cloudflare switch that lets the paper scheduler use stored Coinbase D1 oil price history to open small short entries during decisive selloffs when the slower advisory score sees the direction but does not clear the normal threshold. The browser only displays and stores the switch; Cloudflare owns the executable logic.";
 
 function ensureStrategySeedHistory(user, strategy = getCurrentUserStrategy()) {
   const existing = normalizeStrategyHistory(user?.strategyHistory);
@@ -3799,6 +3805,53 @@ function seedMarkovStrategyHistoryForTestAgents() {
   return changed;
 }
 
+function seedOilSelloffCaptureForTestAgents() {
+  let changed = false;
+  userRoster.forEach((user) => {
+    if (!OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email))) return;
+    const history = normalizeStrategyHistory(user.strategyHistory);
+    const rawStrategy = user.strategy && typeof user.strategy === "object" && !Array.isArray(user.strategy)
+      ? user.strategy
+      : {};
+    const strategy = normalizeUserStrategy(user.strategy);
+    const oilSelloffCaptureEnabled = typeof rawStrategy.oilSelloffCaptureMode === "boolean"
+      ? rawStrategy.oilSelloffCaptureMode
+      : true;
+    const after = normalizeUserStrategy({
+      ...strategy,
+      oilSelloffCaptureMode: oilSelloffCaptureEnabled
+    });
+    if (strategy.oilSelloffCaptureMode !== oilSelloffCaptureEnabled || typeof rawStrategy.oilSelloffCaptureMode !== "boolean") {
+      user.strategy = after;
+      changed = true;
+    }
+    if (!oilSelloffCaptureEnabled) {
+      user.strategyHistory = history;
+      return;
+    }
+    if (history.some((entry) => entry.id === "strategy-change-0005-oil-selloff-capture")) {
+      user.strategyHistory = history;
+      return;
+    }
+    user.strategyHistory = normalizeStrategyHistory([
+      {
+        id: "strategy-change-0005-oil-selloff-capture",
+        changedAt: "2026-05-28T00:00:00.000Z",
+        changedByName: "Peter Bell",
+        changedByEmail: "peter@pjbell.com",
+        summary: "Refinement 5/28/2026: Oil selloff capture enabled",
+        detail: STRATEGY_OIL_SELLOFF_CAPTURE_REFINEMENT_TEXT,
+        before: normalizeUserStrategy({ ...after, oilSelloffCaptureMode: false }),
+        after
+      },
+      ...history
+    ]);
+    changed = true;
+  });
+  if (changed) saveUserRoster();
+  return changed;
+}
+
 function getStrategyChangeSummary(before, after) {
   const changes = [];
   if (before.name !== after.name) changes.push("name");
@@ -3827,6 +3880,7 @@ function getStrategyChangeSummary(before, after) {
   if (before.breakoutMinEdgePercent !== after.breakoutMinEdgePercent) changes.push("breakout edge minimum");
   if (before.breakoutMinVolatilityBps !== after.breakoutMinVolatilityBps) changes.push("breakout volatility minimum");
   if (before.breakoutMinMoveBps !== after.breakoutMinMoveBps) changes.push("breakout move minimum");
+  if (before.oilSelloffCaptureMode !== after.oilSelloffCaptureMode) changes.push(after.oilSelloffCaptureMode ? "enabled oil selloff capture" : "disabled oil selloff capture");
   if (before.markovHedgeFundMethod !== after.markovHedgeFundMethod) changes.push(after.markovHedgeFundMethod ? "enabled Markov Hedge Fund Method" : "disabled Markov Hedge Fund Method");
   if (before.markovRegimeMoveBps !== after.markovRegimeMoveBps) changes.push("Markov regime move");
   if (before.markovSidewaysThresholdBoost !== after.markovSidewaysThresholdBoost) changes.push("Markov sideways threshold boost");
@@ -6008,6 +6062,7 @@ function saveUserStrategySettings(user, container) {
     breakoutMinEdgePercent: container.querySelector("[data-strategy-field='breakoutMinEdgePercent']")?.value,
     breakoutMinVolatilityBps: container.querySelector("[data-strategy-field='breakoutMinVolatilityBps']")?.value,
     breakoutMinMoveBps: container.querySelector("[data-strategy-field='breakoutMinMoveBps']")?.value,
+    oilSelloffCaptureMode: container.querySelector("[data-strategy-field='oilSelloffCaptureMode']")?.checked,
     trendCaptureMode: container.querySelector("[data-strategy-field='trendCaptureMode']")?.checked,
     noChaseMoveBps: container.querySelector("[data-strategy-field='noChaseMoveBps']")?.value,
     pullbackMinRetraceBps: container.querySelector("[data-strategy-field='pullbackMinRetraceBps']")?.value,
@@ -6192,6 +6247,7 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "breakoutMinEdgePercent", label: "Breakout minimum edge", value: strategy.breakoutMinEdgePercent, type: "number", min: 50, max: 80, step: 1, suffix: "%", help: "Minimum micro predictor probability required before the breakout override can participate. Applies to both long and short breakouts." },
     { key: "breakoutMinVolatilityBps", label: "Breakout minimum volatility", value: strategy.breakoutMinVolatilityBps, type: "number", min: 0, max: 20, step: 0.1, suffix: " bps", help: "Minimum live tick volatility required. This prevents breakout trades in dead or flat tape." },
     { key: "breakoutMinMoveBps", label: "Breakout minimum move", value: strategy.breakoutMinMoveBps, type: "number", min: 0, max: 50, step: 0.1, suffix: " bps", help: "Minimum 60-second directional move. Positive move can trigger long, negative move can trigger short." },
+    { key: "oilSelloffCaptureMode", label: "Oil selloff capture", value: strategy.oilSelloffCaptureMode, type: "checkbox", on: "Cloudflare can short decisive stored-price selloffs", off: "Off", help: "Server-side only. When enabled, the Cloudflare scheduler can convert stored Coinbase D1 oil price-history selloffs into small paper short entries even when the slower advisory score is below the normal entry threshold." },
     { key: "markovHedgeFundMethod", label: "Markov Hedge Fund Method", value: strategy.markovHedgeFundMethod, type: "checkbox", on: "State transition gate active", off: "Off", help: "Classifies oil into bull, bear, or sideways states from recent return behavior and uses the state as a probability gate. Bear state favors shorts, bull state favors longs, and sideways state raises the threshold and reduces size." },
     { key: "markovRegimeMoveBps", label: "Markov regime move", value: strategy.markovRegimeMoveBps, type: "number", min: 1, max: 100, step: 0.1, suffix: " bps", help: "Minimum recent move used to separate bull or bear state from sideways for the live scheduler adaptation." },
     { key: "markovSidewaysThresholdBoost", label: "Markov sideways threshold boost", value: strategy.markovSidewaysThresholdBoost, type: "number", min: 0, max: 30, step: 1, prefix: "+", help: "Extra conviction required when the Markov state is sideways." },
@@ -6479,7 +6535,7 @@ function renderAdvisorDecisionDetail(signal = lastPrimarySignal, tradePlan = las
     },
     {
       title: "Execution quality gates",
-      body: `Markov Hedge Fund Method is ${strategy.markovHedgeFundMethod ? "on" : "off"}${tradePlan.markovMethod?.enabled ? ` with ${tradePlan.markovMethod.state} state` : ""}. Trend capture mode is ${strategy.trendCaptureMode ? "on" : "off"}, trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
+      body: `Markov Hedge Fund Method is ${strategy.markovHedgeFundMethod ? "on" : "off"}${tradePlan.markovMethod?.enabled ? ` with ${tradePlan.markovMethod.state} state` : ""}. Oil selloff capture is ${strategy.oilSelloffCaptureMode ? "on" : "off"}, trend capture mode is ${strategy.trendCaptureMode ? "on" : "off"}, trend-day bias is ${strategy.trendDayBias ? "on" : "off"}, no-chase entries are ${strategy.noChaseEntries ? "on" : "off"}, pullback entry confirmation is ${strategy.pullbackEntryRequired ? "on" : "off"}, profit-lock trailing stops are ${strategy.profitLockTrailingStop ? "on" : "off"}, and missed-opportunity logging is ${strategy.missedOpportunityLearner ? "on" : "off"}. These rules change entry timing and stop management; they do not change the Martingale step calculation.`
     },
     {
       title: "Cloudflare scheduler",
@@ -6934,6 +6990,10 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="trendCaptureMode" type="checkbox"${strategy.trendCaptureMode ? " checked" : ""} title="Lets Cloudflare stay with a confirmed trend day and re-enter after trend-side stopouts without changing the Martingale step rules.">
         Trend capture mode <span class="profile-field-hint" title="Designed for days like a sustained oil run from low to high: use live microstructure and advisory tape to keep trading with the broader move instead of waiting only for the slow advisory threshold.">follows confirmed trend days</span>
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="oilSelloffCaptureMode" type="checkbox"${strategy.oilSelloffCaptureMode ? " checked" : ""} title="Server-side only: lets Cloudflare use stored Coinbase D1 oil price history to open small paper shorts during decisive selloffs.">
+        Oil selloff capture <span class="profile-field-hint" title="The browser only stores this switch. The Cloudflare scheduler makes the actual paper-trade decision from D1 price history, advisory side, and trend context.">Cloudflare short override</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="noChaseEntries" type="checkbox"${strategy.noChaseEntries ? " checked" : ""} title="Blocks entries after a fast move has already run, unless breakout participation explicitly confirms it.">
@@ -15494,7 +15554,8 @@ function initializeApp() {
   const migratedMarkovTestAgents = migrateMarkovMethodForTestAgents();
   const migratedPeterMissedReentry = migratePeterMissedOpportunityReentry();
   const seededMarkovHistory = seedMarkovStrategyHistoryForTestAgents();
-  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || migratedPeterMissedReentry || seededMarkovHistory) saveSharedSettings();
+  const seededOilSelloffCapture = seedOilSelloffCaptureForTestAgents();
+  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || migratedPeterMissedReentry || seededMarkovHistory || seededOilSelloffCapture) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
   const liveContractInput = document.querySelector("#live-trade-contract");
   if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;

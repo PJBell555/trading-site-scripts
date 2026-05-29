@@ -162,6 +162,9 @@ const MARKOV_METHOD_TEST_AGENT_EMAILS = new Set(["peter@pjbell.com", "aretwo3000
 const MARKOV_METHOD_STRATEGY_CHANGE_ID = "strategy-change-0003-markov-hedge-fund-method";
 const MARKOV_METHOD_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Markov Hedge Fund Method enabled";
 const MARKOV_METHOD_STRATEGY_CHANGE_DETAIL = "Markov Hedge Fund Method for Peter Bell and D2 only. Classify oil as bull, bear, or sideways from recent return behavior and transition evidence. Bull state favors long continuation unless breakdown is confirmed. Bear state favors short continuation unless reversal is confirmed. Sideways state raises the entry threshold and reduces size. Paper-only test strategy switch.";
+const OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_ID = "strategy-change-0005-oil-selloff-capture";
+const OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_TEXT = "Refinement 5/28/2026: Oil selloff capture enabled";
+const OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_DETAIL = "Peter Bell and D2 only. Server-side Cloudflare switch that lets the paper scheduler use stored Coinbase D1 oil price history to open small short entries during decisive selloffs when the slower advisory score sees the direction but does not clear the normal threshold. Browser only displays and stores the switch.";
 const PETER_MISSED_REENTRY_EMAIL = "peter@pjbell.com";
 const PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID = "strategy-change-0004-peter-missed-opportunity-reentry";
 const PETER_MISSED_REENTRY_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Peter missed-opportunity re-entry enabled";
@@ -845,6 +848,7 @@ function buildServerOpenRouterAdvisoryBody({ user = {}, commodity = "oil", confi
         advisoryOutcomeLearner: strategySettings.advisoryOutcomeLearner,
         secondOpinionGate: schedulerSettings.secondOpinionGateEnabled,
         trendCaptureMode: strategySettings.trendCaptureMode,
+        oilSelloffCaptureMode: strategySettings.oilSelloffCaptureMode,
         breakoutParticipation: strategySettings.breakoutParticipation,
         pullbackEntryRequired: strategySettings.pullbackEntryRequired,
         profitLockTrailingStop: strategySettings.profitLockTrailingStop
@@ -2562,6 +2566,10 @@ function hasPeterMissedReentryHistoryEntry(history = []) {
   return (Array.isArray(history) ? history : []).some((entry) => entry?.id === PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID);
 }
 
+function hasOilSelloffCaptureHistoryEntry(history = []) {
+  return (Array.isArray(history) ? history : []).some((entry) => entry?.id === OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_ID);
+}
+
 function applyMarkovMethodSeedToRecord(record = {}, email = "") {
   const normalizedEmail = normalizeEmail(email || record.email);
   if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
@@ -2571,14 +2579,19 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
     ? record.strategy
     : {};
   const missedReentryEnabled = normalizedEmail === PETER_MISSED_REENTRY_EMAIL;
+  const oilSelloffCaptureEnabled = typeof strategy.oilSelloffCaptureMode === "boolean"
+    ? strategy.oilSelloffCaptureMode
+    : true;
   const before = {
     ...strategy,
     markovHedgeFundMethod: false,
+    oilSelloffCaptureMode: false,
     missedOpportunityReentry: false
   };
   const after = {
     ...strategy,
     markovHedgeFundMethod: true,
+    oilSelloffCaptureMode: oilSelloffCaptureEnabled,
     markovRegimeMoveBps: Number(strategy.markovRegimeMoveBps) || 8,
     markovSidewaysThresholdBoost: Number(strategy.markovSidewaysThresholdBoost) || 5,
     markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5,
@@ -2605,6 +2618,18 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
       summary: PETER_MISSED_REENTRY_STRATEGY_CHANGE_TEXT,
       detail: PETER_MISSED_REENTRY_STRATEGY_CHANGE_DETAIL,
       before: { ...after, missedOpportunityReentry: false },
+      after
+    }, ...history].slice(0, 50);
+  }
+  if (oilSelloffCaptureEnabled && !hasOilSelloffCaptureHistoryEntry(history)) {
+    history = [{
+      id: OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_ID,
+      changedAt: "2026-05-28T00:00:00.000Z",
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_TEXT,
+      detail: OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_DETAIL,
+      before: { ...after, oilSelloffCaptureMode: false },
       after
     }, ...history].slice(0, 50);
   }
@@ -2812,6 +2837,7 @@ function getServerStrategySettings(user = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(strategy.breakoutMinEdgePercent) || 55), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
     breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
+    oilSelloffCaptureMode: strategy.oilSelloffCaptureMode === true,
     trendCaptureMode: strategy.trendCaptureMode !== false,
     markovHedgeFundMethod: isMarkovMethodTestAgent(user)
       ? true
@@ -4628,7 +4654,7 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
 }
 
 function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
-  if (!strategy.trendCaptureMode || !priceTrend?.ready) return null;
+  if (!strategy.oilSelloffCaptureMode || !priceTrend?.ready) return null;
 
   const advisorySide = signal?.side || null;
   const advisoryConviction = Number(signal?.conviction) || 0;
@@ -4653,7 +4679,7 @@ function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
   const bearishOverride = Boolean(
     priceTrend.bearishTrend
     && downEdge >= minEdge
-    && bearishStrength >= 30
+    && bearishStrength >= 25
     && bearishStrength >= bullishStrength + 6
     && !(advisorySide === "long" && advisoryConviction >= 70)
   );
@@ -4665,6 +4691,8 @@ function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
       detail: `D1 trend override: stored Coinbase price history is bearish; day move ${moveBps.toFixed(2)} bps, 60m ${ret60.toFixed(2)} bps, 180m ${ret180.toFixed(2)} bps, drawdown ${drawdownBps.toFixed(2)} bps, VWAP ${vwapDistance.toFixed(2)} bps, down edge ${downEdge}%.`
     };
   }
+
+  if (!strategy.trendCaptureMode) return null;
 
   const bullishOverride = Boolean(
     priceTrend.bullishTrend
@@ -5482,6 +5510,7 @@ async function runPaperTradingScheduler(env, options = {}) {
         const micro = (strategySettings.regimeAware
           || strategySettings.breakoutParticipation
           || strategySettings.trendCaptureMode
+          || strategySettings.oilSelloffCaptureMode
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.volatilityAwareStops
@@ -5496,6 +5525,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           : null;
         const advisoryBreakout = (strategySettings.breakoutParticipation
           || strategySettings.trendCaptureMode
+          || strategySettings.oilSelloffCaptureMode
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.postStopShortReentry
@@ -5507,6 +5537,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           ? await getServerAdvisoryBreakoutContext(env, commodity, { ...strategySettings, breakoutParticipation: true }, config)
           : null;
         const priceTrend = (strategySettings.trendCaptureMode
+          || strategySettings.oilSelloffCaptureMode
           || strategySettings.trendDayDirectionalHold
           || strategySettings.blockLongsInFallingTrend
           || strategySettings.missedOpportunityLearner
