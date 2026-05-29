@@ -252,17 +252,290 @@
       padding: 3px 8px;
     }
 
-    .hero-graphic {
+    .hero-showcase {
       align-self: center;
+      background:
+        linear-gradient(90deg, rgba(8, 35, 61, 0.2), rgba(8, 35, 61, 0.02)),
+        url("./assets/skiweekends-ai-avoriaz.png") center/cover;
       border: 1px solid rgba(255, 255, 255, 0.18);
       box-shadow: var(--shadow);
+      display: grid;
+      min-height: 650px;
       overflow: hidden;
+      padding: 34px;
+      place-items: center end;
     }
 
-    .hero-graphic img {
+    .phone-frame {
+      background: #071525;
+      border: 2px solid rgba(255, 255, 255, 0.7);
+      border-radius: 42px;
+      box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 5px rgba(255, 255, 255, 0.12);
+      max-width: 310px;
+      padding: 10px;
+      width: min(100%, 310px);
+    }
+
+    .phone-screen {
+      background: linear-gradient(180deg, #08233d 0%, #061827 100%);
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-radius: 32px;
+      color: #fff;
+      min-height: 620px;
+      overflow: hidden;
+      padding: 20px 16px 14px;
+      position: relative;
+    }
+
+    .phone-top {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 28px;
+    }
+
+    .phone-brand {
+      align-items: center;
+      display: flex;
+      gap: 8px;
+    }
+
+    .phone-mark {
+      align-items: center;
+      border: 1px solid rgba(255, 255, 255, 0.82);
+      display: inline-flex;
+      font-size: 0.62rem;
+      font-weight: 900;
+      height: 28px;
+      justify-content: center;
+      width: 28px;
+    }
+
+    .phone-brand strong,
+    .phone-brand span {
       display: block;
-      height: auto;
+    }
+
+    .phone-brand strong {
+      font-size: 1.02rem;
+      line-height: 1.1;
+    }
+
+    .phone-brand span {
+      color: rgba(255, 255, 255, 0.72);
+      font-size: 0.47rem;
+    }
+
+    .phone-menu-button {
+      background: transparent;
+      border: 0;
+      border-radius: 6px;
+      color: #fff;
+      font-size: 1.4rem;
+      min-height: 34px;
+      padding: 0 4px;
+    }
+
+    .phone-menu {
+      background: rgba(255, 255, 255, 0.96);
+      border-radius: 14px;
+      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.22);
+      display: none;
+      padding: 8px;
+      position: absolute;
+      right: 16px;
+      top: 58px;
+      width: 190px;
+      z-index: 3;
+    }
+
+    .phone-menu[data-open="true"] {
+      display: grid;
+      gap: 4px;
+    }
+
+    .phone-menu a,
+    .phone-menu button {
+      background: transparent;
+      border: 0;
+      border-radius: 8px;
+      color: var(--navy);
+      font-size: 0.9rem;
+      font-weight: 800;
+      justify-content: flex-start;
+      min-height: 36px;
+      padding: 8px 10px;
+      text-align: left;
+      text-decoration: none;
+    }
+
+    .phone-greeting {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 1.25rem;
+      line-height: 1.25;
+      margin-bottom: 16px;
+    }
+
+    .phone-helper {
+      color: rgba(255, 255, 255, 0.78);
+      font-size: 0.76rem;
+      margin-bottom: 16px;
+    }
+
+    .phone-chat {
+      display: grid;
+      gap: 14px;
+      padding-bottom: 64px;
+    }
+
+    .phone-bubble {
+      border-radius: 14px;
+      border: 0;
+      color: var(--ink);
+      display: block;
+      font-size: 0.78rem;
+      font-weight: 400;
+      line-height: 1.45;
+      min-height: auto;
+      padding: 12px 13px;
+      text-align: left;
+      white-space: normal;
+    }
+
+    .phone-bubble:hover {
+      transform: none;
+    }
+
+    .phone-bubble.user {
+      background: #f4f1ee;
+      justify-self: end;
+      max-width: 232px;
+    }
+
+    .phone-bubble.agent {
+      background: #f4f1ee;
+      justify-self: start;
+      max-width: 242px;
+    }
+
+    .phone-time {
+      color: var(--muted);
+      display: block;
+      font-size: 0.58rem;
+      margin-top: 3px;
+      text-align: right;
+    }
+
+    .phone-card {
+      background: #fff;
+      border-radius: 12px;
+      color: var(--ink);
+      overflow: hidden;
       width: 100%;
+    }
+
+    .phone-card img {
+      display: block;
+      height: 92px;
+      object-fit: cover;
+      width: 100%;
+    }
+
+    .phone-card-body {
+      padding: 10px;
+    }
+
+    .phone-card-body strong {
+      color: var(--navy);
+      display: block;
+      font-size: 0.78rem;
+      margin-bottom: 2px;
+    }
+
+    .phone-card-body small {
+      color: var(--muted);
+      display: block;
+      font-size: 0.66rem;
+      margin-bottom: 7px;
+    }
+
+    .phone-tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-bottom: 8px;
+    }
+
+    .phone-tags span {
+      background: #edf6fc;
+      color: var(--navy);
+      font-size: 0.58rem;
+      font-weight: 800;
+      padding: 3px 6px;
+    }
+
+    .phone-card-meta {
+      align-items: center;
+      color: var(--muted);
+      display: flex;
+      flex-wrap: wrap;
+      font-size: 0.62rem;
+      gap: 9px;
+      margin-bottom: 10px;
+    }
+
+    .phone-price {
+      align-items: center;
+      display: flex;
+      font-size: 0.68rem;
+      justify-content: space-between;
+    }
+
+    .phone-price strong {
+      display: inline;
+      font-size: 0.75rem;
+    }
+
+    .phone-dots {
+      color: #a8b7c7;
+      letter-spacing: 4px;
+      margin-top: 8px;
+      text-align: center;
+    }
+
+    .phone-input-row {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.12);
+      border-radius: 999px;
+      bottom: 14px;
+      display: grid;
+      gap: 8px;
+      grid-template-columns: 1fr 34px;
+      left: 14px;
+      padding: 8px;
+      position: absolute;
+      right: 14px;
+    }
+
+    .phone-input-row input {
+      background: transparent;
+      border: 0;
+      color: #fff;
+      min-height: 30px;
+      padding: 0 8px;
+    }
+
+    .phone-input-row input::placeholder {
+      color: rgba(255, 255, 255, 0.7);
+    }
+
+    .phone-send {
+      background: #eef4fb;
+      border: 0;
+      color: var(--navy);
+      min-height: 34px;
+      padding: 0;
+      width: 34px;
     }
 
     .feature-band {
@@ -574,9 +847,67 @@
             <span>Trustpilot-style preview</span>
           </div>
         </div>
-        <figure class="hero-graphic" aria-label="Ski in Europe Avoriaz landing page visual">
-          <img src="./assets/skiweekends-ai-avoriaz.png" alt="Ski in Europe Avoriaz chalet landing page and mobile AI concierge preview">
-        </figure>
+        <section class="hero-showcase" aria-label="Interactive mobile ski concierge preview">
+          <div class="phone-frame">
+            <div class="phone-screen">
+              <div class="phone-top">
+                <div class="phone-brand">
+                  <span class="phone-mark" aria-hidden="true">AI</span>
+                  <span>
+                    <strong>Ski in Europe</strong>
+                    <span>British Chalet holidays reimagine by AI</span>
+                  </span>
+                </div>
+                <button class="phone-menu-button" type="button" id="phone-menu-button" aria-label="Open phone menu">☰</button>
+              </div>
+
+              <nav class="phone-menu" id="phone-menu" data-open="false" aria-label="Phone preview menu">
+                <a href="#destinations">Destinations</a>
+                <a href="#chalets">Chalets</a>
+                <a href="#concierge">Ask Concierge</a>
+                <button type="button" id="phone-menu-brief">Add Avoriaz Brief</button>
+              </nav>
+
+              <div class="phone-greeting">Hi Dan 👋<br>Planning a skiweekend<br>in Avoriaz?</div>
+              <p class="phone-helper">I'll plan your perfect trip in seconds.</p>
+
+              <div class="phone-chat" id="phone-chat">
+                <button class="phone-bubble user" type="button" id="phone-sample-prompt">
+                  I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.
+                  <span class="phone-time">10:42</span>
+                </button>
+                <div class="phone-bubble agent">
+                  Perfect! Here's your AI-curated Skiweekend in Avoriaz.
+                  <div class="phone-card">
+                    <img src="./assets/chalet-poudreuse-interior.png" alt="Chalet Poudreuse living room">
+                    <div class="phone-card-body">
+                      <strong>Chalet Poudreuse</strong>
+                      <small>Avoriaz, Portes du Soleil</small>
+                      <div class="phone-tags">
+                        <span>Ski-in / Ski-out</span>
+                      </div>
+                      <div class="phone-card-meta">
+                        <span>♙ 2</span>
+                        <span>☷ 2</span>
+                        <span>☕ Breakfast included</span>
+                      </div>
+                      <div class="phone-price">
+                        <span>From <strong>£399 pp</strong></span>
+                        <span>Fri 6 - Sun 8 Dec</span>
+                      </div>
+                      <div class="phone-dots">● ○ ○ ○</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <form class="phone-input-row" id="phone-form">
+                <input id="phone-input" autocomplete="off" placeholder="Ask anything..." aria-label="Ask the ski concierge">
+                <button class="phone-send" type="submit" aria-label="Send phone message">➤</button>
+              </form>
+            </div>
+          </div>
+        </section>
       </div>
     </section>
 
@@ -752,6 +1083,13 @@
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
+    const phoneMenuButton = document.querySelector("#phone-menu-button");
+    const phoneMenu = document.querySelector("#phone-menu");
+    const phoneMenuBrief = document.querySelector("#phone-menu-brief");
+    const phoneSamplePrompt = document.querySelector("#phone-sample-prompt");
+    const phoneForm = document.querySelector("#phone-form");
+    const phoneInput = document.querySelector("#phone-input");
+    const phoneChat = document.querySelector("#phone-chat");
 
     let peerConnection = null;
     let dataChannel = null;
@@ -783,6 +1121,16 @@
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
     }
 
+    function addPhoneBubble(role, text) {
+      const clean = String(text || "").trim();
+      if (!clean) return;
+      const bubble = document.createElement("div");
+      bubble.className = `phone-bubble ${role === "Customer" ? "user" : "agent"}`;
+      bubble.textContent = clean;
+      phoneChat.append(bubble);
+      phoneChat.scrollTop = phoneChat.scrollHeight;
+    }
+
     function createDemoAnswer(prompt) {
       const lower = prompt.toLowerCase();
       if (lower.includes("avoriaz")) {
@@ -802,7 +1150,10 @@
 
     function applyPrompt(prompt) {
       addMessage("Customer", prompt);
-      addMessage("Concierge", createDemoAnswer(prompt));
+      const answer = createDemoAnswer(prompt);
+      addMessage("Concierge", answer);
+      addPhoneBubble("Customer", prompt);
+      addPhoneBubble("Concierge", answer);
       setStatus("Prompt added to the human review brief.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
       if (dataChannel && dataChannel.readyState === "open") {
@@ -1025,6 +1376,42 @@
       ].filter(Boolean).join("\n\n");
       setStatus("Chalet Poudreuse added as an illustrative candidate.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    phoneMenuButton.addEventListener("click", () => {
+      const next = phoneMenu.dataset.open !== "true";
+      phoneMenu.dataset.open = String(next);
+      phoneMenuButton.setAttribute("aria-expanded", String(next));
+    });
+
+    phoneMenu.querySelectorAll("a").forEach((link) => {
+      link.addEventListener("click", () => {
+        phoneMenu.dataset.open = "false";
+        phoneMenuButton.setAttribute("aria-expanded", "false");
+      });
+    });
+
+    phoneMenuBrief.addEventListener("click", () => {
+      phoneMenu.dataset.open = "false";
+      leadCity.value = leadCity.value || "New York / Boston";
+      leadDates.value = leadDates.value || "Friday to Sunday in Avoriaz";
+      leadNotes.value = [
+        leadNotes.value,
+        "Phone preview action: Dan is interested in an Avoriaz skiweekend for 2 people, Friday to Sunday. Prioritise ski-in / ski-out, short transfer, and human-verified pricing."
+      ].filter(Boolean).join("\n\n");
+      setStatus("Dan's Avoriaz brief added from the phone preview.", "ready");
+      document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+
+    phoneSamplePrompt.addEventListener("click", () => {
+      applyPrompt("I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.");
+    });
+
+    phoneForm.addEventListener("submit", (event) => {
+      event.preventDefault();
+      const text = phoneInput.value.trim() || "I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.";
+      phoneInput.value = "";
+      applyPrompt(text);
     });
 
     startButton.addEventListener("click", startSession);
