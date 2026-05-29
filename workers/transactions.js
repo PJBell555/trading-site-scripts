@@ -6973,6 +6973,10 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
         await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
       ));
       const priceSnapshots = await loadStoredPriceSnapshots(env);
+      payload.prices = Object.fromEntries(Object.entries(priceSnapshots || {}).map(([commodity, snapshot]) => [
+        commodity,
+        toLitePriceSnapshot(snapshot)
+      ]));
       payload.summary = buildServerLeaderboardSummary(
         settings,
         payload.transactions || [],

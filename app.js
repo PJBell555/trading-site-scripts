@@ -11260,7 +11260,7 @@ function getAdvisorySummaryUrl() {
   return `${getAdvisoryHistoryUrl()}?${params.toString()}`;
 }
 
-function applyAdvisorySummaryPrices(prices = {}) {
+function applyCloudflarePriceSnapshots(prices = {}, source = "Cloudflare snapshot") {
   Object.entries(prices || {}).forEach(([commodity, snapshot]) => {
     const normalizedCommodity = normalizeCommodityId(commodity);
     const snapshotPrice = Number(snapshot?.price);
@@ -11272,10 +11272,14 @@ function applyAdvisorySummaryPrices(prices = {}) {
     latestPrices.set(normalizedCommodity, snapshotPrice);
     const snapshotTime = new Date(snapshot.fetchedAt || Date.now());
     latestPriceTimes.set(normalizedCommodity, snapshotTime);
-    latestPriceSources.set(normalizedCommodity, snapshot.ok ? "Cloudflare advisory summary" : "Cloudflare advisory summary stale");
+    latestPriceSources.set(normalizedCommodity, snapshot.ok ? source : `${source} stale`);
     latestPriceProductIds.set(normalizedCommodity, snapshot.productId || snapshot.ticker || getActivePriceProductId(normalizedCommodity));
     rememberPriceTick(normalizedCommodity, snapshotPrice, snapshotTime);
   });
+}
+
+function applyAdvisorySummaryPrices(prices = {}) {
+  applyCloudflarePriceSnapshots(prices, "Cloudflare advisory summary");
 }
 
 async function loadSharedAdvisorySummary(manual = false) {
@@ -13224,6 +13228,7 @@ async function saveSharedTransactionHistory() {
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     const summaryRows = Array.isArray(data?.summary?.rows) ? data.summary.rows : [];
+    applyCloudflarePriceSnapshots(data?.prices || {}, "Cloudflare paper ledger");
     replaceTransactionHistory(entries, { preserveOpenTrades: false });
     paperLedgerSummaryRows = summaryRows;
     paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
