@@ -157,17 +157,75 @@
       flex: none;
       font-size: 1rem;
       font-weight: 900;
-      margin-right: auto;
     }
 
     .customer-pill[data-visible="true"] {
       display: inline-flex;
     }
 
+    .header-trip-strip {
+      align-items: stretch;
+      border: 2px solid #f4b000;
+      border-radius: 8px;
+      display: grid;
+      flex: 1 1 520px;
+      grid-template-columns: 1.1fr 1fr 1fr;
+      max-width: 720px;
+      min-width: 360px;
+      overflow: hidden;
+    }
+
+    .trip-strip-cell {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.97);
+      color: var(--ink);
+      display: flex;
+      gap: 10px;
+      min-height: 42px;
+      padding: 8px 12px;
+    }
+
+    .trip-strip-cell + .trip-strip-cell {
+      border-left: 2px solid #f4b000;
+    }
+
+    .trip-strip-icon {
+      color: #5a6470;
+      flex: none;
+      height: 22px;
+      width: 22px;
+    }
+
+    .trip-strip-copy {
+      min-width: 0;
+    }
+
+    .trip-strip-copy small,
+    .trip-strip-copy strong {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .trip-strip-copy small {
+      color: var(--muted);
+      font-size: 0.62rem;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .trip-strip-copy strong {
+      color: var(--ink);
+      font-size: 0.86rem;
+      line-height: 1.15;
+    }
+
     .nav {
       align-items: center;
       display: flex;
       gap: clamp(12px, 3vw, 34px);
+      margin-left: auto;
     }
 
     .nav a {
@@ -707,6 +765,10 @@
         display: none;
       }
 
+      .header-trip-strip {
+        max-width: none;
+      }
+
       .hero-inner,
       .voice-layout,
       .trip-workspace-inner,
@@ -739,6 +801,18 @@
       .topbar {
         align-items: flex-start;
         flex-direction: column;
+      }
+
+      .header-trip-strip {
+        flex: none;
+        grid-template-columns: 1fr;
+        min-width: 0;
+        width: 100%;
+      }
+
+      .trip-strip-cell + .trip-strip-cell {
+        border-left: 0;
+        border-top: 2px solid #f4b000;
       }
 
       .feature-grid,
@@ -776,6 +850,39 @@
       </span>
     </a>
     <strong class="customer-pill" id="banner-customer-name" data-visible="false"></strong>
+    <div class="header-trip-strip" aria-label="Current trip summary">
+      <div class="trip-strip-cell">
+        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 20V9a3 3 0 0 1 3-3h10a3 3 0 0 1 3 3v11" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M7 13h10" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="trip-strip-copy">
+          <small id="banner-trip-name">Trip</small>
+          <strong id="banner-destination">Where are you going?</strong>
+        </span>
+      </div>
+      <div class="trip-strip-cell">
+        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 5h14a2 2 0 0 1 2 2v12H3V7a2 2 0 0 1 2-2Z" stroke="currentColor" stroke-width="2"/>
+          <path d="M8 3v4M16 3v4M3 10h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="trip-strip-copy">
+          <small>Dates</small>
+          <strong id="banner-dates">Check-in date - Check-out date</strong>
+        </span>
+      </div>
+      <div class="trip-strip-cell">
+        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="2"/>
+          <path d="M4 21a8 8 0 0 1 16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="trip-strip-copy">
+          <small>Party</small>
+          <strong id="banner-party">Party not set</strong>
+        </span>
+      </div>
+    </div>
     <nav class="nav" aria-label="Landing page navigation">
       <a href="#destinations">Destinations</a>
       <a href="#chalets">Chalets</a>
@@ -1019,6 +1126,10 @@
     const conciergeForm = document.querySelector("#concierge-form");
     const conciergeInput = document.querySelector("#concierge-input");
     const bannerCustomerName = document.querySelector("#banner-customer-name");
+    const bannerTripName = document.querySelector("#banner-trip-name");
+    const bannerDestination = document.querySelector("#banner-destination");
+    const bannerDates = document.querySelector("#banner-dates");
+    const bannerParty = document.querySelector("#banner-party");
 
     const urlParams = new URLSearchParams(window.location.search);
     let cloudTripId = urlParams.get("trip") || "";
@@ -1065,11 +1176,46 @@
       statusEl.dataset.state = state;
     }
 
+    function extractDestination(notes) {
+      const destinationMatches = [
+        ["avoriaz", "Avoriaz"],
+        ["morzine", "Morzine"],
+        ["chamonix", "Chamonix"],
+        ["val d'isere", "Val d'Isere"],
+        ["val d isere", "Val d'Isere"],
+        ["courchevel", "Courchevel"],
+        ["meribel", "Meribel"],
+        ["verbier", "Verbier"]
+      ];
+      const haystack = `${leadDates.value} ${notes}`.toLowerCase();
+      const match = destinationMatches.find(([needle]) => haystack.includes(needle));
+      return match ? match[1] : "";
+    }
+
+    function extractParty(notes) {
+      const lower = notes.toLowerCase();
+      const adults = lower.match(/(\d+)\s*adults?/);
+      const children = lower.match(/(\d+)\s*children?/);
+      const rooms = lower.match(/(\d+)\s*rooms?/);
+      if (adults || children || rooms) {
+        return `${adults?.[1] || 0} adults · ${children?.[1] || 0} children · ${rooms?.[1] || 1} room`;
+      }
+      const people = lower.match(/(\d+)\s*(people|guests|persons?|travellers?|travelers?)/);
+      if (people) return `${people[1]} people`;
+      if (lower.includes("family")) return "Family group";
+      return "Party not set";
+    }
+
     function updateTripSummary() {
       const customerName = leadName.value.trim();
       bannerCustomerName.textContent = customerName;
       bannerCustomerName.dataset.visible = customerName ? "true" : "false";
       const notes = leadNotes.value.toLowerCase();
+      const destination = extractDestination(notes);
+      bannerDestination.textContent = destination || "Where are you going?";
+      bannerTripName.textContent = destination ? `${destination} ski trip` : "Trip";
+      bannerDates.textContent = leadDates.value.trim() || "Check-in date - Check-out date";
+      bannerParty.textContent = extractParty(notes);
       if (notes.includes("village")) {
         chaletStyleSummary.textContent = "Lively village location with restaurants nearby.";
       } else if (notes.includes("ski-in") || notes.includes("ski in")) {
