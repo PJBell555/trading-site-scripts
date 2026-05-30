@@ -269,60 +269,6 @@
       padding: 0 14px;
     }
 
-    .hero-control-panel {
-      background: rgba(255, 255, 255, 0.92);
-      border: 1px solid rgba(255, 255, 255, 0.6);
-      box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
-      color: var(--ink);
-      display: grid;
-      gap: 8px;
-      padding: 12px;
-    }
-
-    .hero-control-panel .section-lede {
-      color: #31465b;
-      font-size: 0.78rem;
-      line-height: 1.35;
-      margin-bottom: 0;
-    }
-
-    .hero-control-panel .prompt-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .concierge-input-row {
-      align-items: center;
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 999px;
-      display: grid;
-      gap: 8px;
-      grid-template-columns: 1fr auto;
-      padding: 8px;
-    }
-
-    .concierge-input-row input {
-      background: transparent;
-      border: 0;
-      color: var(--ink);
-      min-height: 30px;
-      padding: 0 8px;
-    }
-
-    .concierge-input-row input::placeholder {
-      color: var(--muted);
-    }
-
-    .concierge-send {
-      background: #eef4fb;
-      border: 0;
-      color: var(--navy);
-      font-weight: 900;
-      min-height: 34px;
-      min-width: 58px;
-      padding: 0 14px;
-    }
-
     .feature-band {
       background: #fff;
       border-bottom: 1px solid var(--line);
@@ -619,6 +565,17 @@
       padding: 11px 12px;
     }
 
+    .status.is-hidden {
+      height: 1px;
+      left: -9999px;
+      min-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      width: 1px;
+    }
+
     .status[data-state="ready"] {
       border-color: rgba(36, 115, 77, 0.35);
       color: var(--green);
@@ -807,19 +764,9 @@
             <button class="danger" type="button" id="stop-button" disabled>Stop</button>
             <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
           </div>
-          <div class="hero-control-panel">
-            <p class="section-lede">Speak naturally or use a starter prompt. The chat window updates first; the envelope is the human handoff summary.</p>
-            <div class="status" id="status" data-state="idle">Idle. Start a voice session or choose a prompt.</div>
-          </div>
+          <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
-        <div class="hero-control-panel">
-          <p class="section-lede">Ask the concierge by voice or text. The trip cards below update as the plan evolves.</p>
-          <form class="concierge-input-row" id="concierge-form">
-            <input id="concierge-input" autocomplete="off" placeholder="Ask anything..." aria-label="Ask the ski concierge">
-            <button class="concierge-send" type="submit">Send</button>
-          </form>
-          <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
-        </div>
+        <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
       </div>
     </section>
 
@@ -834,7 +781,7 @@
           </div>
           <label>
             Travel window
-            <input id="lead-dates" placeholder="Friday to Sunday in March">
+            <input id="lead-dates" placeholder="Friday to Sunday in March" title="Enter the preferred travel window, such as Friday to Sunday in March.">
           </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Use Example</button>
@@ -850,7 +797,7 @@
           </div>
           <label>
             Departure city
-            <input id="lead-city" placeholder="Boston, New York, Chicago">
+            <input id="lead-city" placeholder="Boston, New York, Chicago" title="Enter the US departure city or airport.">
           </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family Example</button>
@@ -904,16 +851,16 @@
             <div class="lead-grid">
               <label>
                 Customer name
-                <input id="lead-name" autocomplete="name" placeholder="Name">
+                <input id="lead-name" autocomplete="name" placeholder="Name" title="Customer name, once provided.">
               </label>
               <label>
                 Email
-                <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com">
+                <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com" title="Email address for the trip confirmation.">
               </label>
             </div>
             <label>
               Specialist notes
-              <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff."></textarea>
+              <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff." title="Summary sent to the human travel booking specialist."></textarea>
             </label>
             <button class="button dark" type="submit">Send Human Review Brief</button>
           </form>
@@ -1305,7 +1252,7 @@
       leadDates.value = "";
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
-      conciergeInput.value = "";
+      if (conciergeInput) conciergeInput.value = "";
       updateTripSummary();
       clearCloudTripId();
       confirmationUnavailable = false;
@@ -1608,7 +1555,7 @@
 
     document.querySelectorAll(".talk-topic").forEach((button) => {
       button.addEventListener("click", () => {
-        conciergeInput.value = button.dataset.topic || "";
+        if (conciergeInput) conciergeInput.value = button.dataset.topic || "";
         document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
         setStatus("Topic loaded. Start voice or send the text prompt to update this part only.", "ready");
         if (!dataChannel || dataChannel.readyState !== "open") {
@@ -1653,10 +1600,10 @@
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
-    conciergeForm.addEventListener("submit", (event) => {
+    conciergeForm?.addEventListener("submit", (event) => {
       event.preventDefault();
-      const text = conciergeInput.value.trim() || "I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.";
-      conciergeInput.value = "";
+      const text = conciergeInput?.value.trim() || "I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.";
+      if (conciergeInput) conciergeInput.value = "";
       applyPrompt(text);
     });
 
