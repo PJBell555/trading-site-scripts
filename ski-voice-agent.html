@@ -151,6 +151,18 @@
       font-size: 0.78rem;
     }
 
+    .customer-pill {
+      color: #a8dcff;
+      display: none;
+      font-size: 0.88rem;
+      font-weight: 900;
+      margin-left: 10px;
+    }
+
+    .customer-pill[data-visible="true"] {
+      display: inline;
+    }
+
     .nav {
       align-items: center;
       display: flex;
@@ -186,7 +198,7 @@
       align-items: stretch;
       display: grid;
       gap: 14px;
-      grid-template-columns: minmax(240px, 0.72fr) minmax(310px, 0.82fr) minmax(280px, 0.78fr);
+      grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 0.72fr);
       height: 100%;
       min-height: 0;
       margin: 0 auto;
@@ -246,7 +258,7 @@
 
     .hero-actions {
       display: flex;
-      flex-wrap: wrap;
+      flex-wrap: nowrap;
       gap: 8px;
       margin-top: 8px;
     }
@@ -278,296 +290,37 @@
       grid-template-columns: 1fr;
     }
 
-    .hero-showcase {
-      align-self: center;
-      display: grid;
-      min-height: 0;
-      padding: 8px;
-      place-items: center;
-    }
-
-    .phone-frame {
-      background: #071525;
-      border: 2px solid rgba(255, 255, 255, 0.7);
-      border-radius: 42px;
-      box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 5px rgba(255, 255, 255, 0.12);
-      border-radius: 28px;
-      max-width: 100%;
-      padding: 7px;
-      width: min(100%, 360px);
-    }
-
-    .phone-screen {
-      background: linear-gradient(180deg, #08233d 0%, #061827 100%);
-      border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 22px;
-      color: #fff;
-      height: 190px;
-      min-height: 0;
-      overflow: hidden;
-      padding: 12px 12px 10px;
-      position: relative;
-    }
-
-    .phone-top {
+    .concierge-input-row {
       align-items: center;
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 10px;
-    }
-
-    .phone-brand {
-      align-items: center;
-      display: flex;
-      gap: 8px;
-    }
-
-    .phone-mark {
-      align-items: center;
-      background: #111827;
-      border: 1px solid rgba(255, 255, 255, 0.22);
-      border-radius: 6px;
-      display: inline-flex;
-      height: 28px;
-      justify-content: center;
-      overflow: hidden;
-      width: 28px;
-    }
-
-    .phone-mark img {
-      display: block;
-      height: 100%;
-      width: 100%;
-    }
-
-    .phone-brand strong,
-    .phone-brand span {
-      display: block;
-    }
-
-    .phone-brand strong {
-      font-size: 1.02rem;
-      line-height: 1.1;
-    }
-
-    .phone-brand span {
-      color: rgba(255, 255, 255, 0.72);
-      font-size: 0.47rem;
-    }
-
-    .phone-menu-button {
-      background: transparent;
-      border: 0;
-      border-radius: 6px;
-      color: #fff;
-      font-size: 1.4rem;
-      min-height: 34px;
-      padding: 0 4px;
-    }
-
-    .phone-menu {
-      background: rgba(255, 255, 255, 0.96);
-      border-radius: 14px;
-      box-shadow: 0 18px 34px rgba(0, 0, 0, 0.22);
-      display: none;
-      padding: 8px;
-      position: absolute;
-      right: 16px;
-      top: 58px;
-      width: 190px;
-      z-index: 3;
-    }
-
-    .phone-menu[data-open="true"] {
-      display: grid;
-      gap: 4px;
-    }
-
-    .phone-menu a,
-    .phone-menu button {
-      background: transparent;
-      border: 0;
-      border-radius: 8px;
-      color: var(--navy);
-      font-size: 0.9rem;
-      font-weight: 800;
-      justify-content: flex-start;
-      min-height: 36px;
-      padding: 8px 10px;
-      text-align: left;
-      text-decoration: none;
-    }
-
-    .phone-greeting {
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 1rem;
-      line-height: 1.25;
-      margin-bottom: 6px;
-    }
-
-    .phone-helper {
-      color: rgba(255, 255, 255, 0.78);
-      font-size: 0.76rem;
-      margin-bottom: 8px;
-    }
-
-    .phone-chat {
-      display: grid;
-      gap: 8px;
-      max-height: 56px;
-      overflow-y: auto;
-      padding-bottom: 58px;
-    }
-
-    .phone-bubble {
-      border-radius: 14px;
-      border: 0;
-      color: var(--ink);
-      display: block;
-      font-size: 0.78rem;
-      font-weight: 400;
-      line-height: 1.45;
-      min-height: auto;
-      padding: 12px 13px;
-      text-align: left;
-      white-space: normal;
-    }
-
-    .phone-bubble:hover {
-      transform: none;
-    }
-
-    .phone-bubble.user {
-      background: #f4f1ee;
-      justify-self: end;
-      max-width: 232px;
-    }
-
-    .phone-bubble.agent {
-      background: #f4f1ee;
-      justify-self: start;
-      max-width: 242px;
-    }
-
-    .phone-time {
-      color: var(--muted);
-      display: block;
-      font-size: 0.58rem;
-      margin-top: 3px;
-      text-align: right;
-    }
-
-    .phone-card {
       background: #fff;
-      border-radius: 12px;
-      color: var(--ink);
-      overflow: hidden;
-      display: none;
-      width: 100%;
-    }
-
-    .phone-card img {
-      display: block;
-      height: 92px;
-      object-fit: cover;
-      width: 100%;
-    }
-
-    .phone-card-body {
-      padding: 10px;
-    }
-
-    .phone-card-body strong {
-      color: var(--navy);
-      display: block;
-      font-size: 0.78rem;
-      margin-bottom: 2px;
-    }
-
-    .phone-card-body small {
-      color: var(--muted);
-      display: block;
-      font-size: 0.66rem;
-      margin-bottom: 7px;
-    }
-
-    .phone-tags {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 5px;
-      margin-bottom: 8px;
-    }
-
-    .phone-tags span {
-      background: #edf6fc;
-      color: var(--navy);
-      font-size: 0.58rem;
-      font-weight: 800;
-      padding: 3px 6px;
-    }
-
-    .phone-card-meta {
-      align-items: center;
-      color: var(--muted);
-      display: flex;
-      flex-wrap: wrap;
-      font-size: 0.62rem;
-      gap: 9px;
-      margin-bottom: 10px;
-    }
-
-    .phone-price {
-      align-items: center;
-      display: flex;
-      font-size: 0.68rem;
-      justify-content: space-between;
-    }
-
-    .phone-price strong {
-      display: inline;
-      font-size: 0.75rem;
-    }
-
-    .phone-dots {
-      color: #a8b7c7;
-      letter-spacing: 4px;
-      margin-top: 8px;
-      text-align: center;
-    }
-
-    .phone-input-row {
-      align-items: center;
-      background: rgba(255, 255, 255, 0.12);
+      border: 1px solid var(--line);
       border-radius: 999px;
-      bottom: 14px;
       display: grid;
       gap: 8px;
-      grid-template-columns: 1fr 34px;
-      left: 12px;
+      grid-template-columns: 1fr auto;
       padding: 8px;
-      position: absolute;
-      right: 12px;
     }
 
-    .phone-input-row input {
+    .concierge-input-row input {
       background: transparent;
       border: 0;
-      color: #fff;
+      color: var(--ink);
       min-height: 30px;
       padding: 0 8px;
     }
 
-    .phone-input-row input::placeholder {
-      color: rgba(255, 255, 255, 0.7);
+    .concierge-input-row input::placeholder {
+      color: var(--muted);
     }
 
-    .phone-send {
+    .concierge-send {
       background: #eef4fb;
       border: 0;
       color: var(--navy);
+      font-weight: 900;
       min-height: 34px;
-      padding: 0;
-      width: 34px;
+      min-width: 58px;
+      padding: 0 14px;
     }
 
     .feature-band {
@@ -818,21 +571,6 @@
       padding: 6px 10px;
     }
 
-    .summary-list {
-      display: grid;
-      gap: 8px;
-    }
-
-    .summary-list span {
-      background: #edf6fc;
-      color: var(--navy);
-      display: inline-flex;
-      font-weight: 800;
-      justify-content: space-between;
-      min-height: 76px;
-      padding: 10px;
-    }
-
     .controls,
     .prompt-grid,
     .lead-grid {
@@ -1026,6 +764,10 @@
         padding-top: 30px;
       }
 
+      .hero-actions {
+        flex-wrap: wrap;
+      }
+
       .footer-inner {
         flex-direction: column;
       }
@@ -1040,6 +782,7 @@
       </span>
       <span>
         <strong>Ski in Europe</strong>
+        <strong class="customer-pill" id="banner-customer-name" data-visible="false"></strong>
         <span>British chalet holidays reimagined by AI</span>
       </span>
     </a>
@@ -1067,79 +810,15 @@
           <div class="hero-control-panel">
             <p class="section-lede">Speak naturally or use a starter prompt. The chat window updates first; the envelope is the human handoff summary.</p>
             <div class="status" id="status" data-state="idle">Idle. Start a voice session or choose a prompt.</div>
-            <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
           </div>
         </div>
-        <section class="hero-showcase" aria-label="Interactive mobile ski concierge preview">
-          <div class="phone-frame">
-            <div class="phone-screen">
-              <div class="phone-top">
-                <div class="phone-brand">
-                  <span class="phone-mark" aria-hidden="true">
-                    <img src="./favicon.svg" alt="">
-                  </span>
-                  <span>
-                    <strong>Ski in Europe</strong>
-                    <span>British Chalet holidays reimagine by AI</span>
-                  </span>
-                </div>
-                <button class="phone-menu-button" type="button" id="phone-menu-button" aria-label="Open phone menu">☰</button>
-              </div>
-
-              <nav class="phone-menu" id="phone-menu" data-open="false" aria-label="Phone preview menu">
-                <a href="#destinations">Destinations</a>
-                <a href="#chalets">Chalets</a>
-                <a href="#concierge">Ask Concierge</a>
-                <button type="button" id="phone-menu-brief">Add Avoriaz Brief</button>
-              </nav>
-
-              <div class="phone-greeting">Hi<span id="phone-customer-name"></span> 👋</div>
-              <p class="phone-helper">I'll plan your perfect trip in seconds.</p>
-
-              <div class="phone-chat" id="phone-chat">
-                <button class="phone-bubble user" type="button" id="phone-sample-prompt">
-                  I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.
-                  <span class="phone-time">10:42</span>
-                </button>
-                <div class="phone-bubble agent">
-                  Perfect! Here's your AI-curated short ski trip in Avoriaz.
-                  <div class="phone-card">
-                    <img src="./assets/chalet-poudreuse-interior.png" alt="Chalet Poudreuse living room">
-                    <div class="phone-card-body">
-                      <strong>Chalet Poudreuse</strong>
-                      <small>Avoriaz, Portes du Soleil</small>
-                      <div class="phone-tags">
-                        <span>Ski-in / Ski-out</span>
-                      </div>
-                      <div class="phone-card-meta">
-                        <span>♙ 2</span>
-                        <span>☷ 2</span>
-                        <span>☕ Breakfast included</span>
-                      </div>
-                      <div class="phone-price">
-                        <span>From <strong>£399 pp</strong></span>
-                        <span>Fri 6 - Sun 8 Dec</span>
-                      </div>
-                      <div class="phone-dots">● ○ ○ ○</div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              <form class="phone-input-row" id="phone-form">
-                <input id="phone-input" autocomplete="off" placeholder="Ask anything..." aria-label="Ask the ski concierge">
-                <button class="phone-send" type="submit" aria-label="Send phone message">➤</button>
-              </form>
-            </div>
-          </div>
-        </section>
         <div class="hero-control-panel">
-          <p class="section-lede">Scroll the trip workspace below to refine dates, travel, chalet style, and handoff details. This top panel stays ready for voice or text.</p>
-          <div class="summary-list">
-            <span><small>Dates</small><strong id="summary-dates">Not set</strong></span>
-            <span><small>From</small><strong id="summary-city">Not set</strong></span>
-            <span><small>Style</small><strong id="summary-style">Short chalet trip</strong></span>
-          </div>
+          <p class="section-lede">Ask the concierge by voice or text. The trip cards below update as the plan evolves.</p>
+          <form class="concierge-input-row" id="concierge-form">
+            <input id="concierge-input" autocomplete="off" placeholder="Ask anything..." aria-label="Ask the ski concierge">
+            <button class="concierge-send" type="submit">Send</button>
+          </form>
+          <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
         </div>
       </div>
     </section>
@@ -1247,22 +926,18 @@
         <h2>The smarter way to plan short ski trips</h2>
         <div class="feature-grid">
           <article class="feature">
-            <span class="icon" aria-hidden="true">✦</span>
             <h3>AI-powered planning</h3>
             <p>Tell us what you want and the concierge turns it into a clear, review-ready trip brief.</p>
           </article>
           <article class="feature">
-            <span class="icon" aria-hidden="true">⌂</span>
             <h3>Handpicked chalets</h3>
             <p>Specialist chalet inventory gives the human team strong options to verify.</p>
           </article>
           <article class="feature">
-            <span class="icon" aria-hidden="true">☷</span>
             <h3>Everything sorted</h3>
             <p>Transfers, lift passes, rentals, lessons, dietary notes, and rooming needs captured early.</p>
           </article>
           <article class="feature">
-            <span class="icon" aria-hidden="true">⌁</span>
             <h3>Weekend maximised</h3>
             <p>Built for 2-4 night trips where airport choice and transfer time matter.</p>
           </article>
@@ -1348,7 +1023,6 @@
 
   <script>
     const API_BASE = "https://trading-site-scripts.peter-bell54.workers.dev";
-    const INITIAL_PHONE_CHAT_HTML = document.querySelector("#phone-chat").innerHTML;
     const startButton = document.querySelector("#start-button");
     const stopButton = document.querySelector("#stop-button");
     const resetTripButton = document.querySelector("#reset-trip-button");
@@ -1360,19 +1034,12 @@
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
-    const summaryDates = document.querySelector("#summary-dates");
-    const summaryCity = document.querySelector("#summary-city");
-    const summaryStyle = document.querySelector("#summary-style");
     const chaletStyleSummary = document.querySelector("#chalet-style-summary");
     const resortSummary = document.querySelector("#resort-summary");
     const groupSummary = document.querySelector("#group-summary");
-    const phoneMenuButton = document.querySelector("#phone-menu-button");
-    const phoneMenu = document.querySelector("#phone-menu");
-    const phoneMenuBrief = document.querySelector("#phone-menu-brief");
-    const phoneForm = document.querySelector("#phone-form");
-    const phoneInput = document.querySelector("#phone-input");
-    const phoneChat = document.querySelector("#phone-chat");
-    const phoneCustomerName = document.querySelector("#phone-customer-name");
+    const conciergeForm = document.querySelector("#concierge-form");
+    const conciergeInput = document.querySelector("#concierge-input");
+    const bannerCustomerName = document.querySelector("#banner-customer-name");
 
     const urlParams = new URLSearchParams(window.location.search);
     let cloudTripId = urlParams.get("trip") || "";
@@ -1397,18 +1064,15 @@
 
     function updateTripSummary() {
       const customerName = leadName.value.trim();
-      phoneCustomerName.textContent = customerName ? ` ${customerName}` : "";
-      summaryDates.textContent = leadDates.value.trim() || "Not set";
-      summaryCity.textContent = leadCity.value.trim() || "Not set";
+      bannerCustomerName.textContent = customerName;
+      bannerCustomerName.dataset.visible = customerName ? "true" : "false";
       const notes = leadNotes.value.toLowerCase();
       if (notes.includes("village")) {
-        summaryStyle.textContent = "Village chalet";
         chaletStyleSummary.textContent = "Lively village location with restaurants nearby.";
       } else if (notes.includes("ski-in") || notes.includes("ski in")) {
-        summaryStyle.textContent = "Ski-in / ski-out";
         chaletStyleSummary.textContent = "Ski-in / ski-out, short transfer, breakfast included.";
       } else {
-        summaryStyle.textContent = "Short chalet trip";
+        chaletStyleSummary.textContent = "Short chalet trip. Refine this as the conversation develops.";
       }
       if (notes.includes("morzine")) resortSummary.textContent = "Morzine is being considered for easy Geneva access and village feel.";
       if (notes.includes("chamonix")) resortSummary.textContent = "Chamonix is being considered for scenery, dining, and advanced terrain.";
@@ -1417,9 +1081,6 @@
 
     function getTopicState() {
       return {
-        summaryDates: summaryDates.textContent,
-        summaryCity: summaryCity.textContent,
-        summaryStyle: summaryStyle.textContent,
         chaletStyle: chaletStyleSummary.textContent,
         resort: resortSummary.textContent,
         group: groupSummary.textContent
@@ -1501,8 +1162,6 @@
 
     function renderTranscript() {
       transcriptEl.innerHTML = "";
-      phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
-      bindPhoneSamplePrompt();
       transcript.forEach((entry) => {
         const item = document.createElement("div");
         item.className = "message";
@@ -1512,7 +1171,6 @@
         body.textContent = entry.text || "";
         item.append(label, body);
         transcriptEl.append(item);
-        addPhoneBubble(entry.role || "Concierge", entry.text || "");
       });
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
@@ -1604,7 +1262,6 @@
       transcriptEl.append(item);
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
-      addPhoneBubble(role, clean);
       updateTripSummary();
       scheduleCloudTripSave("chat");
     }
@@ -1638,16 +1295,6 @@
       }
     }
 
-    function addPhoneBubble(role, text) {
-      const clean = String(text || "").trim();
-      if (!clean) return;
-      const bubble = document.createElement("div");
-      bubble.className = `phone-bubble ${role === "Customer" ? "user" : "agent"}`;
-      bubble.textContent = clean;
-      phoneChat.append(bubble);
-      phoneChat.scrollTop = phoneChat.scrollHeight;
-    }
-
     function resetTrip({ keepStatus = false } = {}) {
       stopSession({ resetStatus: false });
       transcript = [];
@@ -1658,20 +1305,12 @@
       leadDates.value = "";
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
-      phoneInput.value = "";
-      phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
-      bindPhoneSamplePrompt();
+      conciergeInput.value = "";
       updateTripSummary();
       clearCloudTripId();
       confirmationUnavailable = false;
       saveCloudTripNow("reset");
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
-    }
-
-    function bindPhoneSamplePrompt() {
-      document.querySelector("#phone-sample-prompt")?.addEventListener("click", () => {
-        applyPrompt("I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.");
-      });
     }
 
     function createDemoAnswer(prompt) {
@@ -1969,7 +1608,7 @@
 
     document.querySelectorAll(".talk-topic").forEach((button) => {
       button.addEventListener("click", () => {
-        phoneInput.value = button.dataset.topic || "";
+        conciergeInput.value = button.dataset.topic || "";
         document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
         setStatus("Topic loaded. Start voice or send the text prompt to update this part only.", "ready");
         if (!dataChannel || dataChannel.readyState !== "open") {
@@ -2014,39 +1653,10 @@
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
-    phoneMenuButton.addEventListener("click", () => {
-      const next = phoneMenu.dataset.open !== "true";
-      phoneMenu.dataset.open = String(next);
-      phoneMenuButton.setAttribute("aria-expanded", String(next));
-    });
-
-    phoneMenu.querySelectorAll("a").forEach((link) => {
-      link.addEventListener("click", () => {
-        phoneMenu.dataset.open = "false";
-        phoneMenuButton.setAttribute("aria-expanded", "false");
-      });
-    });
-
-    phoneMenuBrief.addEventListener("click", () => {
-      phoneMenu.dataset.open = "false";
-      leadCity.value = leadCity.value || "New York / Boston";
-      leadDates.value = leadDates.value || "Friday to Sunday in Avoriaz";
-      leadNotes.value = [
-        leadNotes.value,
-        "Phone preview action: Dan is interested in an Avoriaz short ski trip for 2 people, Friday to Sunday. Prioritise ski-in / ski-out, short transfer, and human-verified pricing."
-      ].filter(Boolean).join("\n\n");
-      updateTripSummary();
-      scheduleCloudTripSave("phone-menu");
-      setStatus("Dan's Avoriaz brief added from the phone preview.", "ready");
-      document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
-    });
-
-    bindPhoneSamplePrompt();
-
-    phoneForm.addEventListener("submit", (event) => {
+    conciergeForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      const text = phoneInput.value.trim() || "I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.";
-      phoneInput.value = "";
+      const text = conciergeInput.value.trim() || "I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.";
+      conciergeInput.value = "";
       applyPrompt(text);
     });
 
