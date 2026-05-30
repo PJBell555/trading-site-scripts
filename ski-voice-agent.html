@@ -154,13 +154,18 @@
     .customer-pill {
       color: #a8dcff;
       display: none;
-      flex: none;
-      font-size: 1rem;
+      font-size: 0.72rem;
       font-weight: 900;
+      line-height: 1.1;
+      max-width: 150px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-transform: none;
+      white-space: nowrap;
     }
 
     .customer-pill[data-visible="true"] {
-      display: inline-flex;
+      display: block;
     }
 
     .header-trip-strip {
@@ -169,7 +174,7 @@
       border-radius: 8px;
       display: grid;
       flex: 1 1 520px;
-      grid-template-columns: 1.1fr 1fr 1fr;
+      grid-template-columns: 1.12fr 1fr 0.92fr;
       max-width: 720px;
       min-width: 360px;
       overflow: hidden;
@@ -849,7 +854,6 @@
         <span>British chalet holidays reimagined by AI</span>
       </span>
     </a>
-    <strong class="customer-pill" id="banner-customer-name" data-visible="false"></strong>
     <div class="header-trip-strip" aria-label="Current trip summary">
       <div class="trip-strip-cell">
         <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -858,7 +862,10 @@
           <path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <span class="trip-strip-copy">
-          <small id="banner-trip-name">Trip</small>
+          <small>
+            <span class="customer-pill" id="banner-customer-name" data-visible="false"></span>
+            <span id="banner-trip-name">Trip</span>
+          </small>
           <strong id="banner-destination">Where are you going?</strong>
         </span>
       </div>
