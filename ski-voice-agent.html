@@ -270,6 +270,38 @@
       padding: 0 14px;
     }
 
+    .voice-button {
+      align-items: center;
+      display: inline-flex;
+      gap: 7px;
+    }
+
+    .mic-status {
+      display: inline-flex;
+      height: 15px;
+      position: relative;
+      width: 15px;
+    }
+
+    .mic-status svg {
+      display: block;
+      height: 15px;
+      width: 15px;
+    }
+
+    .mic-status .mic-slash {
+      opacity: 1;
+      transition: opacity 0.18s ease;
+    }
+
+    body[data-voice-live="true"] .mic-status .mic-slash {
+      opacity: 0;
+    }
+
+    body[data-voice-live="true"] .voice-button .mic-status {
+      color: #24734d;
+    }
+
     .feature-band {
       background: #fff;
       border-bottom: 1px solid var(--line);
@@ -750,7 +782,6 @@
       <a href="#workflow">How It Works</a>
       <a href="#about">About Us</a>
     </nav>
-    <a class="button primary" href="#concierge" id="top-plan-button">Plan My Ski Trip</a>
   </header>
 
   <main>
@@ -761,7 +792,7 @@
           <h1>European ski trips, made effortless <em>by AI</em></h1>
           <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget, and it prepares a human travel booking specialist to verify the best-fit chalet options.</p>
           <div class="hero-actions">
-            <button class="primary" type="button" id="start-button">Start Voice Session</button>
+            <button class="primary voice-button" type="button" id="start-button">Click to Talk</button>
             <button class="danger" type="button" id="stop-button" disabled>Stop</button>
             <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
           </div>
@@ -787,7 +818,7 @@
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Use Example</button>
             <button class="button secondary edit-topic" type="button" data-focus="#lead-dates">Edit</button>
-            <button class="button dark talk-topic" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
           </div>
         </article>
 
@@ -803,7 +834,7 @@
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family Example</button>
             <button class="button secondary edit-topic" type="button" data-focus="#lead-city">Edit</button>
-            <button class="button dark talk-topic" type="button" data-topic="I want to update only my departure city and transfer preferences.">Talk Travel</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my departure city and transfer preferences.">Talk Travel</button>
           </div>
         </article>
 
@@ -817,7 +848,7 @@
             <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to ski-in ski-out if possible, with a short transfer and breakfast included.">Ski-in / Ski-out</button>
             <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to a lively village location with restaurants nearby.">Village Location</button>
             <button class="button secondary prompt-chip" type="button" data-prompt="Search for basic Avoriaz ski trip ideas and explain the best candidates.">Search Ideas</button>
-            <button class="button dark talk-topic" type="button" data-topic="I want to update only the chalet type and accommodation style.">Talk Chalets</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the chalet type and accommodation style.">Talk Chalets</button>
           </div>
         </article>
 
@@ -829,7 +860,7 @@
           <p id="resort-summary">Avoriaz is the starter example. The concierge can compare other European resorts as the brief develops.</p>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="Keep Avoriaz as the main resort but compare similar European ski resorts for a short trip.">Compare Resorts</button>
-            <button class="button dark talk-topic" type="button" data-topic="I want to update only the resort choice.">Talk Resort</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the resort choice.">Talk Resort</button>
           </div>
         </article>
 
@@ -841,7 +872,7 @@
           <p id="group-summary">Group size, ages, ski levels, lessons, rooming, and dietary notes will appear in the specialist notes as you talk.</p>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="I want to update the group details: number of people, ages, ski levels, lessons, and rooming needs.">Update Group</button>
-            <button class="button dark talk-topic" type="button" data-topic="I want to update only the group details.">Talk Group</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the group details.">Talk Group</button>
           </div>
         </article>
 
@@ -1004,6 +1035,30 @@
     let ttsAudioElement = null;
     let currentAudioUrl = null;
     let speakingAbort = null;
+
+    function micIconMarkup() {
+      return `
+        <span class="mic-status" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none">
+            <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M5 11a7 7 0 0 0 14 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M12 18v3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path d="M8 21h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            <path class="mic-slash" d="M4 4l16 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
+          </svg>
+        </span>`;
+    }
+
+    function installMicIcons() {
+      document.querySelectorAll(".voice-button").forEach((button) => {
+        if (button.querySelector(".mic-status")) return;
+        button.insertAdjacentHTML("afterbegin", micIconMarkup());
+      });
+    }
+
+    function setVoiceLive(isLive) {
+      document.body.dataset.voiceLive = isLive ? "true" : "false";
+    }
 
     function setStatus(message, state = "idle") {
       statusEl.textContent = message;
@@ -1452,6 +1507,7 @@
         });
         dataChannel = peerConnection.createDataChannel("oai-events");
         dataChannel.addEventListener("open", () => {
+          setVoiceLive(true);
           setStatus("Connected. Ask about a ski trip.", "ready");
           sendEvent({
             type: "conversation.item.create",
@@ -1500,6 +1556,7 @@
         remoteAudioElement.pause();
         remoteAudioElement.srcObject = null;
       }
+      setVoiceLive(false);
       dataChannel = null;
       peerConnection = null;
       mediaStream = null;
@@ -1607,6 +1664,9 @@
       if (conciergeInput) conciergeInput.value = "";
       applyPrompt(text);
     });
+
+    installMicIcons();
+    setVoiceLive(false);
 
     startButton.addEventListener("click", startSession);
     stopButton.addEventListener("click", stopSession);
