@@ -154,13 +154,14 @@
     .customer-pill {
       color: #a8dcff;
       display: none;
-      font-size: 0.88rem;
+      flex: none;
+      font-size: 1rem;
       font-weight: 900;
-      margin-left: 10px;
+      margin-right: auto;
     }
 
     .customer-pill[data-visible="true"] {
-      display: inline;
+      display: inline-flex;
     }
 
     .nav {
@@ -187,7 +188,7 @@
         linear-gradient(180deg, rgba(7, 30, 52, 0.42) 0%, rgba(7, 30, 52, 0.1) 64%, rgba(245, 247, 251, 1) 100%),
         url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
       color: #fff;
-      height: clamp(280px, 34vh, 340px);
+      height: clamp(340px, 38vh, 420px);
       overflow: hidden;
       position: sticky;
       top: 70px;
@@ -739,10 +740,10 @@
       </span>
       <span>
         <strong>Ski in Europe</strong>
-        <strong class="customer-pill" id="banner-customer-name" data-visible="false"></strong>
         <span>British chalet holidays reimagined by AI</span>
       </span>
     </a>
+    <strong class="customer-pill" id="banner-customer-name" data-visible="false"></strong>
     <nav class="nav" aria-label="Landing page navigation">
       <a href="#destinations">Destinations</a>
       <a href="#chalets">Chalets</a>
