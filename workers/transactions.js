@@ -22,7 +22,8 @@ const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
 const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
-const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime";
+const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime-2";
+const DEFAULT_OPENAI_REALTIME_VOICE = "marin";
 const DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_flash_v2_5";
 const DEFAULT_ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128";
 const SKI_CONCIERGE_INSTRUCTIONS = [
@@ -2434,18 +2435,21 @@ async function handleSkiRealtimeClientSecret(env, request, origin) {
     type: "realtime",
     model: env.OPENAI_REALTIME_MODEL || DEFAULT_OPENAI_REALTIME_MODEL,
     instructions: SKI_CONCIERGE_INSTRUCTIONS,
-    output_modalities: ["text"],
+    output_modalities: ["audio"],
     max_output_tokens: 700,
     audio: {
       input: {
         noise_reduction: { type: "near_field" },
-        transcription: { model: env.OPENAI_TRANSCRIBE_MODEL || "gpt-4o-mini-transcribe" },
+        transcription: { model: env.OPENAI_TRANSCRIBE_MODEL || "gpt-realtime-whisper" },
         turn_detection: {
           type: env.OPENAI_REALTIME_VAD || "semantic_vad",
           eagerness: env.OPENAI_REALTIME_VAD_EAGERNESS || "medium",
           create_response: true,
           interrupt_response: true
         }
+      },
+      output: {
+        voice: env.OPENAI_REALTIME_VOICE || DEFAULT_OPENAI_REALTIME_VOICE
       }
     }
   };

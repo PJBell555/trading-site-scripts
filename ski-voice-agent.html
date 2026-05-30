@@ -1020,7 +1020,7 @@
       <h2>Plan the trip with voice or text</h2>
       <div class="voice-layout">
         <section class="voice-panel" aria-label="Voice concierge">
-          <p class="section-lede">Start the session, allow microphone access, and speak naturally. If API keys are not configured, the prompt buttons still create a realistic human-review brief.</p>
+          <p class="section-lede">Start the session, allow microphone access, and speak naturally. The first live version uses OpenAI Realtime voice directly; the prompt buttons still create a realistic human-review brief.</p>
           <div class="controls">
             <button class="primary" type="button" id="start-button">Start Voice Session</button>
             <button class="danger" type="button" id="stop-button" disabled>Stop</button>
@@ -1110,7 +1110,8 @@
     let mediaStream = null;
     let assistantBuffer = "";
     let transcript = [];
-    let audioElement = null;
+    let remoteAudioElement = null;
+    let ttsAudioElement = null;
     let currentAudioUrl = null;
     let speakingAbort = null;
 
@@ -1186,9 +1187,9 @@
     function stopCurrentAudio() {
       if (speakingAbort) speakingAbort.abort();
       speakingAbort = null;
-      if (audioElement) {
-        audioElement.pause();
-        audioElement.removeAttribute("src");
+      if (ttsAudioElement) {
+        ttsAudioElement.pause();
+        ttsAudioElement.removeAttribute("src");
       }
       if (currentAudioUrl) {
         URL.revokeObjectURL(currentAudioUrl);
@@ -1196,26 +1197,13 @@
       }
     }
 
-    async function speak(text) {
-      const clean = String(text || "").trim();
-      if (!clean) return;
-      stopCurrentAudio();
-      speakingAbort = new AbortController();
-      const response = await fetch(`${API_BASE}/ski/voice/speak`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: clean }),
-        signal: speakingAbort.signal
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({}));
-        throw new Error(error.error || "ElevenLabs voice unavailable");
-      }
-      const audioBlob = await response.blob();
-      currentAudioUrl = URL.createObjectURL(audioBlob);
-      audioElement = audioElement || new Audio();
-      audioElement.src = currentAudioUrl;
-      await audioElement.play();
+    function ensureRemoteAudioElement() {
+      if (remoteAudioElement) return remoteAudioElement;
+      remoteAudioElement = new Audio();
+      remoteAudioElement.autoplay = true;
+      remoteAudioElement.playsInline = true;
+      document.body.append(remoteAudioElement);
+      return remoteAudioElement;
     }
 
     function sendEvent(event) {
@@ -1225,16 +1213,15 @@
     }
 
     function extractDelta(event) {
-      if (typeof event.delta === "string") return event.delta;
+      const type = event.type || "";
+      if (/output_text|audio_transcript|transcript/i.test(type) && typeof event.delta === "string") return event.delta;
       if (typeof event.text === "string" && /delta/i.test(event.type || "")) return event.text;
-      if (event.type === "response.output_text.delta" && typeof event.delta === "string") return event.delta;
       return "";
     }
 
     async function handleRealtimeEvent(event) {
       const type = event.type || "";
       if (type === "input_audio_buffer.speech_started") {
-        stopCurrentAudio();
         setStatus("Listening. You can interrupt naturally.", "ready");
       }
 
@@ -1251,14 +1238,12 @@
         assistantBuffer = "";
         if (finalText) {
           addMessage("Concierge", finalText);
-          setStatus("Speaking.", "ready");
-          try {
-            await speak(finalText);
-            setStatus("Ready for your next answer.", "ready");
-          } catch (error) {
-            setStatus(error.message, "error");
-          }
+          setStatus("OpenAI voice is responding.", "ready");
         }
+      }
+
+      if (/response.*done/i.test(type)) {
+        setStatus("Ready for your next answer.", "ready");
       }
 
       if (type === "error") {
@@ -1287,6 +1272,15 @@
 
         peerConnection = new RTCPeerConnection();
         mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream));
+        peerConnection.addEventListener("track", (event) => {
+          const [stream] = event.streams;
+          if (!stream) return;
+          const audio = ensureRemoteAudioElement();
+          audio.srcObject = stream;
+          audio.play().catch(() => {
+            setStatus("Tap Start again if the browser blocks audio playback.", "error");
+          });
+        });
         dataChannel = peerConnection.createDataChannel("oai-events");
         dataChannel.addEventListener("open", () => {
           setStatus("Connected. Ask about a ski trip.", "ready");
@@ -1333,6 +1327,10 @@
       if (dataChannel) dataChannel.close();
       if (peerConnection) peerConnection.close();
       if (mediaStream) mediaStream.getTracks().forEach((track) => track.stop());
+      if (remoteAudioElement) {
+        remoteAudioElement.pause();
+        remoteAudioElement.srcObject = null;
+      }
       dataChannel = null;
       peerConnection = null;
       mediaStream = null;
