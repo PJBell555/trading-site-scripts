@@ -1361,6 +1361,10 @@
     const phoneChat = document.querySelector("#phone-chat");
     const phoneCustomerName = document.querySelector("#phone-customer-name");
 
+    const urlParams = new URLSearchParams(window.location.search);
+    let cloudTripId = urlParams.get("trip") || "";
+    let cloudSaveTimer = null;
+    let isHydratingTrip = false;
     let peerConnection = null;
     let dataChannel = null;
     let mediaStream = null;
@@ -1396,6 +1400,141 @@
       if (notes.includes("family") || notes.includes("group")) groupSummary.textContent = "Group details are being captured in the specialist notes.";
     }
 
+    function getTopicState() {
+      return {
+        summaryDates: summaryDates.textContent,
+        summaryCity: summaryCity.textContent,
+        summaryStyle: summaryStyle.textContent,
+        chaletStyle: chaletStyleSummary.textContent,
+        resort: resortSummary.textContent,
+        group: groupSummary.textContent
+      };
+    }
+
+    function setCloudTripId(tripId) {
+      if (!tripId || tripId === cloudTripId) return;
+      cloudTripId = tripId;
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.set("trip", cloudTripId);
+      window.history.replaceState({}, "", nextUrl);
+    }
+
+    function clearCloudTripId() {
+      cloudTripId = "";
+      const nextUrl = new URL(window.location.href);
+      nextUrl.searchParams.delete("trip");
+      window.history.replaceState({}, "", nextUrl);
+    }
+
+    function getCloudTripPayload(reason = "update") {
+      return {
+        tripId: cloudTripId || undefined,
+        status: "planning",
+        name: leadName.value,
+        email: leadEmail.value,
+        departureCity: leadCity.value,
+        travelWindow: leadDates.value,
+        notes: leadNotes.value,
+        transcript,
+        topicState: getTopicState(),
+        source: "ski-voice-agent-web",
+        reason
+      };
+    }
+
+    async function saveCloudTripNow(reason = "update", { quiet = true } = {}) {
+      if (isHydratingTrip) return null;
+      const hasTripData = leadName.value.trim()
+        || leadEmail.value.trim()
+        || leadCity.value.trim()
+        || leadDates.value.trim()
+        || leadNotes.value.trim()
+        || transcript.length;
+      if (!hasTripData && !cloudTripId) return null;
+
+      try {
+        const response = await fetch(`${API_BASE}/ski/trips`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(getCloudTripPayload(reason))
+        });
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "Trip save failed");
+        }
+        const saved = await response.json();
+        setCloudTripId(saved.trip?.tripId);
+        if (!quiet) setStatus("Trip saved to Cloudflare for shared access.", "ready");
+        return saved.trip || null;
+      } catch (error) {
+        setStatus(`Cloud save issue: ${error.message}`, "error");
+        return null;
+      }
+    }
+
+    function scheduleCloudTripSave(reason = "update") {
+      if (isHydratingTrip) return;
+      if (cloudSaveTimer) clearTimeout(cloudSaveTimer);
+      cloudSaveTimer = setTimeout(() => {
+        cloudSaveTimer = null;
+        saveCloudTripNow(reason);
+      }, 700);
+    }
+
+    function renderTranscript() {
+      transcriptEl.innerHTML = "";
+      phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
+      bindPhoneSamplePrompt();
+      transcript.forEach((entry) => {
+        const item = document.createElement("div");
+        item.className = "message";
+        const label = document.createElement("strong");
+        label.textContent = entry.role || "Note";
+        const body = document.createElement("span");
+        body.textContent = entry.text || "";
+        item.append(label, body);
+        transcriptEl.append(item);
+        addPhoneBubble(entry.role || "Concierge", entry.text || "");
+      });
+      transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    function applyCloudTrip(trip) {
+      if (!trip) return;
+      isHydratingTrip = true;
+      setCloudTripId(trip.tripId);
+      leadName.value = trip.name || "";
+      leadEmail.value = trip.email || "";
+      leadCity.value = trip.departureCity || "";
+      leadDates.value = trip.travelWindow || "";
+      leadNotes.value = trip.notes || "";
+      transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
+      if (trip.topicState?.chaletStyle) chaletStyleSummary.textContent = trip.topicState.chaletStyle;
+      if (trip.topicState?.resort) resortSummary.textContent = trip.topicState.resort;
+      if (trip.topicState?.group) groupSummary.textContent = trip.topicState.group;
+      renderTranscript();
+      updateTripSummary();
+      isHydratingTrip = false;
+    }
+
+    async function loadCloudTripFromUrl() {
+      if (!cloudTripId) return false;
+      try {
+        const response = await fetch(`${API_BASE}/ski/trips?tripId=${encodeURIComponent(cloudTripId)}`);
+        if (!response.ok) {
+          const error = await response.json().catch(() => ({}));
+          throw new Error(error.error || "Trip load failed");
+        }
+        const result = await response.json();
+        applyCloudTrip(result.trip);
+        setStatus("Trip loaded from Cloudflare. You can continue from this device.", "ready");
+        return true;
+      } catch (error) {
+        setStatus(`Could not load cloud trip: ${error.message}`, "error");
+        return false;
+      }
+    }
+
     function addMessage(role, text) {
       const clean = String(text || "").trim();
       if (!clean) return;
@@ -1413,6 +1552,7 @@
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
       addPhoneBubble(role, clean);
       updateTripSummary();
+      scheduleCloudTripSave("chat");
     }
 
     function updateTripFieldsFromText(text) {
@@ -1468,6 +1608,8 @@
       phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
       bindPhoneSamplePrompt();
       updateTripSummary();
+      clearCloudTripId();
+      saveCloudTripNow("reset");
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
     }
 
@@ -1728,6 +1870,7 @@
       event.preventDefault();
       setStatus("Saving human review brief.");
       const payload = {
+        tripId: cloudTripId || undefined,
         name: document.querySelector("#lead-name").value,
         email: document.querySelector("#lead-email").value,
         departureCity: leadCity.value,
@@ -1737,6 +1880,7 @@
         source: "ski-voice-agent-web"
       };
       try {
+        await saveCloudTripNow("human-review-submit");
         const response = await fetch(`${API_BASE}/ski/leads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1779,14 +1923,24 @@
     });
 
     [leadCity, leadDates, leadNotes].forEach((field) => {
-      field.addEventListener("input", updateTripSummary);
+      field.addEventListener("input", () => {
+        updateTripSummary();
+        scheduleCloudTripSave("field-edit");
+      });
     });
-    leadName.addEventListener("input", updateTripSummary);
+    [leadName, leadEmail].forEach((field) => {
+      field.addEventListener("input", () => {
+        updateTripSummary();
+        scheduleCloudTripSave("field-edit");
+      });
+    });
 
     document.querySelectorAll(".destination-button").forEach((button) => {
       button.addEventListener("click", () => {
         const note = button.dataset.note;
         leadNotes.value = [leadNotes.value, note].filter(Boolean).join("\n\n");
+        updateTripSummary();
+        scheduleCloudTripSave("destination");
         setStatus(`${button.dataset.destination} added to the brief.`, "ready");
         document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
       });
@@ -1797,6 +1951,8 @@
         leadNotes.value,
         "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until a human specialist verifies live inventory, dates, price, and inclusions."
       ].filter(Boolean).join("\n\n");
+      updateTripSummary();
+      scheduleCloudTripSave("chalet");
       setStatus("Chalet Poudreuse added as an illustrative candidate.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1822,6 +1978,8 @@
         leadNotes.value,
         "Phone preview action: Dan is interested in an Avoriaz short ski trip for 2 people, Friday to Sunday. Prioritise ski-in / ski-out, short transfer, and human-verified pricing."
       ].filter(Boolean).join("\n\n");
+      updateTripSummary();
+      scheduleCloudTripSave("phone-menu");
       setStatus("Dan's Avoriaz brief added from the phone preview.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
@@ -1838,7 +1996,9 @@
     startButton.addEventListener("click", startSession);
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
-    resetTrip({ keepStatus: true });
+    loadCloudTripFromUrl().then((loaded) => {
+      if (!loaded) resetTrip({ keepStatus: true });
+    });
   </script>
 </body>
 </html>

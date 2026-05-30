@@ -2565,6 +2565,127 @@ async function ensureSkiLeadSchemaD1(env) {
   return true;
 }
 
+async function ensureSkiTripSchemaD1(env) {
+  if (!hasRuntimeStore(env)) return false;
+  await safeD1Run(env, `
+    CREATE TABLE IF NOT EXISTS ski_trip_sessions (
+      trip_id TEXT PRIMARY KEY,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'planning',
+      customer_name TEXT,
+      customer_email TEXT,
+      departure_city TEXT,
+      travel_window TEXT,
+      notes TEXT,
+      transcript_json TEXT NOT NULL DEFAULT '[]',
+      topic_state_json TEXT NOT NULL DEFAULT '{}',
+      payload_json TEXT NOT NULL DEFAULT '{}'
+    )
+  `);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_updated ON ski_trip_sessions (updated_at DESC)`);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_email ON ski_trip_sessions (customer_email, updated_at DESC)`);
+  return true;
+}
+
+function normalizeSkiTripRow(row = {}) {
+  return {
+    tripId: row.trip_id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    status: row.status,
+    name: row.customer_name || "",
+    email: row.customer_email || "",
+    departureCity: row.departure_city || "",
+    travelWindow: row.travel_window || "",
+    notes: row.notes || "",
+    transcript: JSON.parse(row.transcript_json || "[]"),
+    topicState: JSON.parse(row.topic_state_json || "{}"),
+    payload: JSON.parse(row.payload_json || "{}")
+  };
+}
+
+async function handleSkiTrips(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({ error: "Ski trips require the Cloudflare D1 runtime store." }, 503, origin);
+  }
+
+  await ensureSkiTripSchemaD1(env);
+  const url = new URL(request.url);
+
+  if (request.method === "GET") {
+    const tripId = skiJson(url.searchParams.get("tripId")).slice(0, 120);
+    if (!tripId) return jsonResponse({ error: "tripId is required." }, 400, origin);
+    const row = await env.DB.prepare(`
+      SELECT trip_id, created_at, updated_at, status, customer_name, customer_email,
+             departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json
+      FROM ski_trip_sessions
+      WHERE trip_id = ?
+    `).bind(tripId).first();
+    if (!row) return jsonResponse({ error: "Trip not found." }, 404, origin);
+    return jsonResponse({ ok: true, trip: normalizeSkiTripRow(row) }, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const now = new Date().toISOString();
+  const tripId = skiJson(body.tripId).slice(0, 120) || `ski-trip-${crypto.randomUUID()}`;
+  const transcript = Array.isArray(body.transcript) ? body.transcript.slice(-120) : [];
+  const topicState = body.topicState && typeof body.topicState === "object" ? body.topicState : {};
+  const payload = {
+    source: skiJson(body.source, "ski-voice-agent-web").slice(0, 120),
+    userAgent: skiJson(request.headers.get("User-Agent")).slice(0, 300),
+    lastSaveReason: skiJson(body.reason).slice(0, 80)
+  };
+
+  await safeD1Run(env, `
+    INSERT INTO ski_trip_sessions (
+      trip_id, created_at, updated_at, status, customer_name, customer_email,
+      departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(trip_id) DO UPDATE SET
+      updated_at = excluded.updated_at,
+      status = excluded.status,
+      customer_name = excluded.customer_name,
+      customer_email = excluded.customer_email,
+      departure_city = excluded.departure_city,
+      travel_window = excluded.travel_window,
+      notes = excluded.notes,
+      transcript_json = excluded.transcript_json,
+      topic_state_json = excluded.topic_state_json,
+      payload_json = excluded.payload_json
+  `, [
+    tripId,
+    now,
+    now,
+    skiJson(body.status, "planning").slice(0, 80),
+    skiJson(body.name).slice(0, 160),
+    normalizeEmail(body.email || "").slice(0, 200),
+    skiJson(body.departureCity).slice(0, 160),
+    skiJson(body.travelWindow).slice(0, 220),
+    skiJson(body.notes).slice(0, 16000),
+    JSON.stringify(transcript),
+    JSON.stringify(topicState),
+    JSON.stringify(payload)
+  ]);
+
+  const row = await env.DB.prepare(`
+    SELECT trip_id, created_at, updated_at, status, customer_name, customer_email,
+           departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json
+    FROM ski_trip_sessions
+    WHERE trip_id = ?
+  `).bind(tripId).first();
+
+  return jsonResponse({
+    ok: true,
+    trip: normalizeSkiTripRow(row),
+    savedAt: now
+  }, 200, origin);
+}
+
 async function handleSkiRealtimeClientSecret(env, request, origin) {
   if (request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405, origin);
@@ -8000,6 +8121,10 @@ export default {
 
       if (url.pathname === "/ski/leads") {
         return handleSkiLeads(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/trips") {
+        return handleSkiTrips(env, request, origin);
       }
 
       if (url.pathname === "/models/openrouter/opinion") {

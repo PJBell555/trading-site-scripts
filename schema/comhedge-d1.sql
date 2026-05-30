@@ -291,6 +291,27 @@ CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_created
 CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_email
   ON ski_voice_leads (customer_email, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS ski_trip_sessions (
+  trip_id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'planning',
+  customer_name TEXT,
+  customer_email TEXT,
+  departure_city TEXT,
+  travel_window TEXT,
+  notes TEXT,
+  transcript_json TEXT NOT NULL DEFAULT '[]',
+  topic_state_json TEXT NOT NULL DEFAULT '{}',
+  payload_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_updated
+  ON ski_trip_sessions (updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_email
+  ON ski_trip_sessions (customer_email, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS ski_rate_limits (
   bucket_key TEXT PRIMARY KEY,
   scope TEXT NOT NULL,
