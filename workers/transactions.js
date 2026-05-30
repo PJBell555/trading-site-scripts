@@ -2196,7 +2196,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["2-4 night ski weekends", "Portes du Soleil", "high-convenience short trips"],
     airportNotes: "Usually positioned around Geneva access; transfer details need human verification.",
     humanCheck: "Verify live dates, chalet availability, rooming, transfers, baggage, lift passes, and final GBP/USD pricing.",
-    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/avoriaz"
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/avoriaz"
   },
   {
     partner: "SkiWeekends",
@@ -2207,7 +2207,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["easy Geneva transfers", "mixed ski groups", "classic chalet atmosphere"],
     airportNotes: "Geneva is commonly the practical airport; exact transfer package needs checking.",
     humanCheck: "Verify live chalet/hotel inventory and whether the quote is packaged or accommodation-only.",
-    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/morzine"
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/morzine"
   },
   {
     partner: "SkiWeekends",
@@ -2218,7 +2218,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["confident skiers", "iconic scenery", "short premium trips"],
     airportNotes: "Geneva transfers are common but timing and weather risk should be checked.",
     humanCheck: "Check ski level fit carefully; Chamonix can be less beginner-simple than Avoriaz or Morzine.",
-    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/chamonix"
+    sourceUrl: "https://www.skiweekends.com/chamonix-ski-areas"
   },
   {
     partner: "SkiWeekends",
@@ -2229,7 +2229,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["snow reliability", "advanced/intermediate groups", "premium ski weekends"],
     airportNotes: "Transfers can be longer than Portes du Soleil resorts; weekend timing matters.",
     humanCheck: "Verify whether the customer can tolerate the transfer time for a short break.",
-    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/val-d-isere"
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/val-d-isere"
   },
   {
     partner: "Flexiski",
@@ -2240,7 +2240,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["non-standard durations", "US customers comparing short stays", "flexible dates"],
     airportNotes: "Best used when the customer needs flexibility around nights, airports, or extras.",
     humanCheck: "Verify the exact resort/accommodation inventory with Flexiski before quoting.",
-    sourceUrl: "https://www.flexiski.com/ski-resorts/france"
+    sourceUrl: "https://www.flexiski.com/destinations/france/avoriaz/"
   },
   {
     partner: "Flexiski",
@@ -2251,7 +2251,7 @@ const SKI_PARTNER_OFFERS = [
     bestFor: ["custom dates", "couples", "small groups", "hotel-led ski weekends"],
     airportNotes: "Good fit when the customer is flexible on resort but firm on trip length.",
     humanCheck: "Use customer constraints to pick candidate resorts, then verify inventory and terms.",
-    sourceUrl: "https://www.flexiski.com/"
+    sourceUrl: "https://www.flexiski.com/destinations/france/"
   }
 ];
 
