@@ -29,6 +29,7 @@ const DEFAULT_ELEVENLABS_OUTPUT_FORMAT = "mp3_44100_128";
 const SKI_CONCIERGE_INSTRUCTIONS = [
   "You are a warm, efficient ski holiday specialist for US customers booking British-style catered chalet and flexible ski vacations in Europe.",
   "Your job is to qualify the trip, explain European ski logistics in American terms, recommend suitable SkiWeekends and Flexiski-style options at a high level, and prepare a human specialist to verify availability and pricing.",
+  "When the customer asks about resorts, chalets, prices, packages, SkiWeekends, Flexiski, or available ski holiday ideas, call search_ski_holidays before answering.",
   "Ask concise questions. Focus on departure city, dates, flexibility, group size, adults and children, ski ability mix, budget per person, rooming, dietary needs, childcare, resort vibe, and chalet preference.",
   "Never claim live availability, final price, booking confirmation, or final package inclusions. Say a UK ski specialist will verify live availability, pricing, transfers, payment rules, and cancellation terms.",
   "Keep spoken responses short enough for a phone-like sales conversation. Prefer one question at a time unless summarizing."
@@ -2185,6 +2186,75 @@ function getElevenLabsApiKey(env) {
   return env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_TOKEN || "";
 }
 
+const SKI_PARTNER_OFFERS = [
+  {
+    partner: "SkiWeekends",
+    resort: "Avoriaz",
+    country: "France",
+    tripType: "short-break chalet holiday",
+    accommodationStyle: "ski-in / ski-out chalet or hotel-led short break",
+    bestFor: ["2-4 night ski weekends", "Portes du Soleil", "high-convenience short trips"],
+    airportNotes: "Usually positioned around Geneva access; transfer details need human verification.",
+    humanCheck: "Verify live dates, chalet availability, rooming, transfers, baggage, lift passes, and final GBP/USD pricing.",
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/avoriaz"
+  },
+  {
+    partner: "SkiWeekends",
+    resort: "Morzine",
+    country: "France",
+    tripType: "flexible short-break ski holiday",
+    accommodationStyle: "classic chalet village with hotels and catered options",
+    bestFor: ["easy Geneva transfers", "mixed ski groups", "classic chalet atmosphere"],
+    airportNotes: "Geneva is commonly the practical airport; exact transfer package needs checking.",
+    humanCheck: "Verify live chalet/hotel inventory and whether the quote is packaged or accommodation-only.",
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/morzine"
+  },
+  {
+    partner: "SkiWeekends",
+    resort: "Chamonix",
+    country: "France",
+    tripType: "premium short-break ski holiday",
+    accommodationStyle: "hotel/chalet base with strong dining and scenery",
+    bestFor: ["confident skiers", "iconic scenery", "short premium trips"],
+    airportNotes: "Geneva transfers are common but timing and weather risk should be checked.",
+    humanCheck: "Check ski level fit carefully; Chamonix can be less beginner-simple than Avoriaz or Morzine.",
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/chamonix"
+  },
+  {
+    partner: "SkiWeekends",
+    resort: "Val d'Isere",
+    country: "France",
+    tripType: "snow-sure chalet or hotel ski break",
+    accommodationStyle: "higher-altitude resort with premium inventory",
+    bestFor: ["snow reliability", "advanced/intermediate groups", "premium ski weekends"],
+    airportNotes: "Transfers can be longer than Portes du Soleil resorts; weekend timing matters.",
+    humanCheck: "Verify whether the customer can tolerate the transfer time for a short break.",
+    sourceUrl: "https://www.skiweekends.com/ski-resorts/france/val-d-isere"
+  },
+  {
+    partner: "Flexiski",
+    resort: "Avoriaz / Portes du Soleil",
+    country: "France",
+    tripType: "flexible-duration ski holiday",
+    accommodationStyle: "hotel and chalet-style flexible ski packages",
+    bestFor: ["non-standard durations", "US customers comparing short stays", "flexible dates"],
+    airportNotes: "Best used when the customer needs flexibility around nights, airports, or extras.",
+    humanCheck: "Verify the exact resort/accommodation inventory with Flexiski before quoting.",
+    sourceUrl: "https://www.flexiski.com/ski-resorts/france"
+  },
+  {
+    partner: "Flexiski",
+    resort: "French Alps",
+    country: "France",
+    tripType: "tailor-made flexible ski trip",
+    accommodationStyle: "hotels, chalets, and flexible break options depending on live inventory",
+    bestFor: ["custom dates", "couples", "small groups", "hotel-led ski weekends"],
+    airportNotes: "Good fit when the customer is flexible on resort but firm on trip length.",
+    humanCheck: "Use customer constraints to pick candidate resorts, then verify inventory and terms.",
+    sourceUrl: "https://www.flexiski.com/"
+  }
+];
+
 function getSkiAgentRateLimitConfig(env) {
   return {
     realtimeHourlyPerIp: clamp(Number(env.SKI_AGENT_REALTIME_HOURLY_PER_IP || 3), 1, 500),
@@ -2392,6 +2462,86 @@ async function enforceSkiTtsRateLimit(env, request, origin, textLength) {
   ]);
 }
 
+function scoreSkiOffer(offer, query) {
+  const text = [
+    offer.partner,
+    offer.resort,
+    offer.country,
+    offer.tripType,
+    offer.accommodationStyle,
+    ...(offer.bestFor || []),
+    offer.airportNotes
+  ].join(" ").toLowerCase();
+  const terms = String(query || "").toLowerCase().split(/[^a-z0-9']+/).filter((term) => term.length > 2);
+  let score = 0;
+  for (const term of terms) {
+    if (text.includes(term)) score += 2;
+  }
+  if (/weekend|short|2|3|4/.test(query)) score += /weekend|short|2-4/.test(text) ? 3 : 0;
+  if (/chalet|catered/.test(query)) score += /chalet/.test(text) ? 3 : 0;
+  if (/geneva|transfer/.test(query)) score += /geneva|transfer/.test(text) ? 2 : 0;
+  return score;
+}
+
+function searchSkiPartnerOffers(query = "") {
+  const scored = SKI_PARTNER_OFFERS.map((offer) => ({
+    ...offer,
+    relevance: scoreSkiOffer(offer, query)
+  })).sort((left, right) => right.relevance - left.relevance);
+  return scored.filter((offer, index) => offer.relevance > 0 || index < 4).slice(0, 5);
+}
+
+function extractHtmlTag(html, pattern) {
+  const match = String(html || "").match(pattern);
+  return match ? match[1].replace(/\s+/g, " ").trim().slice(0, 240) : "";
+}
+
+async function fetchPartnerPageSummary(url) {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": "ComHedge Ski Voice Agent Prototype/1.0",
+        "Accept": "text/html"
+      }
+    });
+    if (!response.ok) return { url, ok: false, status: response.status };
+    const html = await response.text();
+    return {
+      url,
+      ok: true,
+      status: response.status,
+      title: extractHtmlTag(html, /<title[^>]*>([\s\S]*?)<\/title>/i),
+      description: extractHtmlTag(html, /<meta[^>]+name=["']description["'][^>]+content=["']([^"']+)["']/i)
+        || extractHtmlTag(html, /<meta[^>]+content=["']([^"']+)["'][^>]+name=["']description["']/i)
+    };
+  } catch (error) {
+    return { url, ok: false, error: error.message };
+  }
+}
+
+async function handleSkiPartnerSearch(_env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const query = skiJson(body.query || body.destination || body.resort || "ski weekend").slice(0, 500);
+  const offers = searchSkiPartnerOffers(query);
+  const livePages = await Promise.all(
+    Array.from(new Set(offers.map((offer) => offer.sourceUrl))).slice(0, 4).map(fetchPartnerPageSummary)
+  );
+
+  return jsonResponse({
+    ok: true,
+    generatedAt: new Date().toISOString(),
+    query,
+    availability: "not_live_verified",
+    bookingPolicy: "Use these as candidate ideas only. A UK ski specialist must verify live availability, final price, package inclusions, transfers, and booking terms before sending a quote.",
+    offers,
+    livePages
+  }, 200, origin);
+}
+
 async function ensureSkiLeadSchemaD1(env) {
   if (!hasRuntimeStore(env)) return false;
   await safeD1Run(env, `
@@ -2436,6 +2586,24 @@ async function handleSkiRealtimeClientSecret(env, request, origin) {
     model: env.OPENAI_REALTIME_MODEL || DEFAULT_OPENAI_REALTIME_MODEL,
     instructions: SKI_CONCIERGE_INSTRUCTIONS,
     output_modalities: ["audio"],
+    tools: [
+      {
+        type: "function",
+        name: "search_ski_holidays",
+        description: "Search basic SkiWeekends and Flexiski candidate ski holiday information for a destination, resort, trip type, or customer preference. Returns candidate ideas and source URLs, not live-confirmed availability.",
+        parameters: {
+          type: "object",
+          properties: {
+            query: {
+              type: "string",
+              description: "Customer request or destination, such as Avoriaz ski weekend for 2 people, Morzine chalet, Geneva transfer, family ski trip, or Flexiski France."
+            }
+          },
+          required: ["query"]
+        }
+      }
+    ],
+    tool_choice: "auto",
     max_output_tokens: 700,
     audio: {
       input: {
@@ -7824,6 +7992,10 @@ export default {
 
       if (url.pathname === "/ski/voice/speak") {
         return handleSkiVoiceSpeak(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/partner-search") {
+        return handleSkiPartnerSearch(env, request, origin);
       }
 
       if (url.pathname === "/ski/leads") {

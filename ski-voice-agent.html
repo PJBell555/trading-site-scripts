@@ -1030,7 +1030,7 @@
             <button class="prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Avoriaz, Friday to Sunday, 2 people</button>
             <button class="prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family of 5 from Boston, mixed levels</button>
             <button class="prompt-chip" type="button" data-prompt="We need a short trip with the easiest Geneva transfer and ski-in ski-out accommodation if possible.">Easy Geneva transfer, ski-in / ski-out</button>
-            <button class="prompt-chip" type="button" data-prompt="We want a lively resort, good apres, rentals and lift passes handled, but final booking confirmed by a specialist.">Lively resort, extras handled</button>
+            <button class="prompt-chip" type="button" data-prompt="Search SkiWeekends and Flexiski for basic Avoriaz ski weekend ideas and explain the best candidates.">Search partner ski ideas</button>
           </div>
           <div class="transcript" id="transcript" aria-live="polite">
             <div class="message">
@@ -1219,10 +1219,66 @@
       return "";
     }
 
+    function getFunctionCalls(event) {
+      const calls = [];
+      if (event.item?.type === "function_call") calls.push(event.item);
+      if (Array.isArray(event.response?.output)) {
+        event.response.output.forEach((item) => {
+          if (item?.type === "function_call") calls.push(item);
+        });
+      }
+      return calls;
+    }
+
+    async function runRealtimeTool(call) {
+      if (!call?.call_id || call.name !== "search_ski_holidays") return;
+      setStatus("Checking SkiWeekends and Flexiski candidate information.", "ready");
+      let args = {};
+      try {
+        args = JSON.parse(call.arguments || "{}");
+      } catch {
+        args = { query: call.arguments || "ski weekend" };
+      }
+
+      try {
+        const response = await fetch(`${API_BASE}/ski/partner-search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: args.query || "ski weekend" })
+        });
+        const result = await response.json();
+        sendEvent({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify(result)
+          }
+        });
+        sendEvent({ type: "response.create" });
+      } catch (error) {
+        sendEvent({
+          type: "conversation.item.create",
+          item: {
+            type: "function_call_output",
+            call_id: call.call_id,
+            output: JSON.stringify({ ok: false, error: error.message })
+          }
+        });
+        sendEvent({ type: "response.create" });
+      }
+    }
+
     async function handleRealtimeEvent(event) {
       const type = event.type || "";
       if (type === "input_audio_buffer.speech_started") {
         setStatus("Listening. You can interrupt naturally.", "ready");
+      }
+
+      const functionCalls = getFunctionCalls(event);
+      if (functionCalls.length) {
+        functionCalls.forEach((call) => runRealtimeTool(call));
+        return;
       }
 
       if (/transcription.*completed|transcript.*done/i.test(type)) {
