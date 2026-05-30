@@ -2186,6 +2186,10 @@ function getElevenLabsApiKey(env) {
   return env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_TOKEN || "";
 }
 
+function getResendApiKey(env) {
+  return env.RESEND_API_KEY || env.SKI_CONFIRMATION_EMAIL_API_KEY || "";
+}
+
 const SKI_PARTNER_OFFERS = [
   {
     partner: "SkiWeekends",
@@ -2580,9 +2584,16 @@ async function ensureSkiTripSchemaD1(env) {
       notes TEXT,
       transcript_json TEXT NOT NULL DEFAULT '[]',
       topic_state_json TEXT NOT NULL DEFAULT '{}',
-      payload_json TEXT NOT NULL DEFAULT '{}'
+      payload_json TEXT NOT NULL DEFAULT '{}',
+      confirmation_sent_at TEXT,
+      confirmation_email TEXT,
+      confirmation_provider_id TEXT
     )
   `);
+  const columns = await getD1TableColumns(env, "ski_trip_sessions");
+  if (!columns.has("confirmation_sent_at")) await safeD1Run(env, "ALTER TABLE ski_trip_sessions ADD COLUMN confirmation_sent_at TEXT");
+  if (!columns.has("confirmation_email")) await safeD1Run(env, "ALTER TABLE ski_trip_sessions ADD COLUMN confirmation_email TEXT");
+  if (!columns.has("confirmation_provider_id")) await safeD1Run(env, "ALTER TABLE ski_trip_sessions ADD COLUMN confirmation_provider_id TEXT");
   await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_updated ON ski_trip_sessions (updated_at DESC)`);
   await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_email ON ski_trip_sessions (customer_email, updated_at DESC)`);
   return true;
@@ -2601,8 +2612,167 @@ function normalizeSkiTripRow(row = {}) {
     notes: row.notes || "",
     transcript: JSON.parse(row.transcript_json || "[]"),
     topicState: JSON.parse(row.topic_state_json || "{}"),
-    payload: JSON.parse(row.payload_json || "{}")
+    payload: JSON.parse(row.payload_json || "{}"),
+    confirmationSentAt: row.confirmation_sent_at || "",
+    confirmationEmail: row.confirmation_email || "",
+    confirmationProviderId: row.confirmation_provider_id || ""
   };
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function buildTripConfirmationEmail(trip) {
+  const name = trip.name || "there";
+  const lines = [
+    `Hi ${name},`,
+    "",
+    "Thanks for sharing your ski trip details. Here is the current trip summary we have saved:",
+    "",
+    `Travel window: ${trip.travelWindow || "Not set yet"}`,
+    `Departure city: ${trip.departureCity || "Not set yet"}`,
+    "",
+    "Specialist notes:",
+    trip.notes || "No specialist notes have been captured yet.",
+    "",
+    "A human travel booking specialist will verify availability, pricing, transfers, package rules, and booking terms before anything is quoted or booked.",
+    "",
+    "Ski in Europe"
+  ];
+  const text = lines.join("\n");
+  const html = `
+    <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111927">
+      <h2 style="color:#08233d">Your ski trip summary</h2>
+      <p>Hi ${escapeHtml(name)},</p>
+      <p>Thanks for sharing your ski trip details. Here is the current trip summary we have saved:</p>
+      <table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:620px">
+        <tr><td style="border:1px solid #d9e2ec;padding:8px;font-weight:bold">Travel window</td><td style="border:1px solid #d9e2ec;padding:8px">${escapeHtml(trip.travelWindow || "Not set yet")}</td></tr>
+        <tr><td style="border:1px solid #d9e2ec;padding:8px;font-weight:bold">Departure city</td><td style="border:1px solid #d9e2ec;padding:8px">${escapeHtml(trip.departureCity || "Not set yet")}</td></tr>
+      </table>
+      <h3 style="color:#08233d">Specialist notes</h3>
+      <pre style="white-space:pre-wrap;background:#f5f7fb;border:1px solid #d9e2ec;padding:12px">${escapeHtml(trip.notes || "No specialist notes have been captured yet.")}</pre>
+      <p>A human travel booking specialist will verify availability, pricing, transfers, package rules, and booking terms before anything is quoted or booked.</p>
+      <p>Ski in Europe</p>
+    </div>
+  `;
+  return { subject: "Your ski trip summary", text, html };
+}
+
+async function sendSkiTripConfirmationEmail(env, trip) {
+  const apiKey = getResendApiKey(env);
+  const from = env.SKI_CONFIRMATION_FROM_EMAIL || env.RESEND_FROM_EMAIL || "";
+  if (!apiKey || !from) {
+    return {
+      ok: false,
+      configured: false,
+      error: "Confirmation email requires RESEND_API_KEY and SKI_CONFIRMATION_FROM_EMAIL."
+    };
+  }
+
+  const to = normalizeEmail(trip.email || "");
+  if (!to) {
+    return { ok: false, configured: true, error: "Customer email is required." };
+  }
+
+  const email = buildTripConfirmationEmail(trip);
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "Idempotency-Key": `ski-trip-confirm-${trip.tripId}-${to}`
+    },
+    body: JSON.stringify({
+      from,
+      to: [to],
+      subject: email.subject,
+      text: email.text,
+      html: email.html
+    })
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    return {
+      ok: false,
+      configured: true,
+      error: result.message || result.error || "Confirmation email failed.",
+      status: response.status
+    };
+  }
+  return {
+    ok: true,
+    configured: true,
+    provider: "resend",
+    providerId: result.id || ""
+  };
+}
+
+async function handleSkiTripConfirmation(env, request, origin) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({ error: "Ski trips require the Cloudflare D1 runtime store." }, 503, origin);
+  }
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  await ensureSkiTripSchemaD1(env);
+  const body = await request.json().catch(() => ({}));
+  const tripId = skiJson(body.tripId).slice(0, 120);
+  const force = Boolean(body.force);
+  if (!tripId) return jsonResponse({ error: "tripId is required." }, 400, origin);
+
+  const row = await env.DB.prepare(`
+    SELECT trip_id, created_at, updated_at, status, customer_name, customer_email,
+           departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json,
+           confirmation_sent_at, confirmation_email, confirmation_provider_id
+    FROM ski_trip_sessions
+    WHERE trip_id = ?
+  `).bind(tripId).first();
+  if (!row) return jsonResponse({ error: "Trip not found." }, 404, origin);
+
+  const trip = normalizeSkiTripRow(row);
+  const to = normalizeEmail(trip.email || "");
+  if (!to) return jsonResponse({ error: "Customer email is required." }, 400, origin);
+
+  if (!force && trip.confirmationSentAt && normalizeEmail(trip.confirmationEmail) === to) {
+    return jsonResponse({
+      ok: true,
+      skipped: true,
+      reason: "already_sent",
+      sentAt: trip.confirmationSentAt,
+      email: to
+    }, 200, origin);
+  }
+
+  const sent = await sendSkiTripConfirmationEmail(env, trip);
+  if (!sent.ok) {
+    return jsonResponse({
+      ok: false,
+      emailConfigured: sent.configured,
+      error: sent.error
+    }, sent.configured ? (sent.status || 502) : 503, origin);
+  }
+
+  const now = new Date().toISOString();
+  await safeD1Run(env, `
+    UPDATE ski_trip_sessions
+    SET confirmation_sent_at = ?, confirmation_email = ?, confirmation_provider_id = ?, updated_at = ?
+    WHERE trip_id = ?
+  `, [now, to, sent.providerId, now, tripId]);
+
+  return jsonResponse({
+    ok: true,
+    sentAt: now,
+    email: to,
+    provider: sent.provider,
+    providerId: sent.providerId
+  }, 200, origin);
 }
 
 async function handleSkiTrips(env, request, origin) {
@@ -2618,7 +2788,8 @@ async function handleSkiTrips(env, request, origin) {
     if (!tripId) return jsonResponse({ error: "tripId is required." }, 400, origin);
     const row = await env.DB.prepare(`
       SELECT trip_id, created_at, updated_at, status, customer_name, customer_email,
-             departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json
+             departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json,
+             confirmation_sent_at, confirmation_email, confirmation_provider_id
       FROM ski_trip_sessions
       WHERE trip_id = ?
     `).bind(tripId).first();
@@ -2674,7 +2845,8 @@ async function handleSkiTrips(env, request, origin) {
 
   const row = await env.DB.prepare(`
     SELECT trip_id, created_at, updated_at, status, customer_name, customer_email,
-           departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json
+           departure_city, travel_window, notes, transcript_json, topic_state_json, payload_json,
+           confirmation_sent_at, confirmation_email, confirmation_provider_id
     FROM ski_trip_sessions
     WHERE trip_id = ?
   `).bind(tripId).first();
@@ -8125,6 +8297,10 @@ export default {
 
       if (url.pathname === "/ski/trips") {
         return handleSkiTrips(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/trips/confirmation") {
+        return handleSkiTripConfirmation(env, request, origin);
       }
 
       if (url.pathname === "/models/openrouter/opinion") {

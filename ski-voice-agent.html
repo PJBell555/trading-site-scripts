@@ -1364,6 +1364,8 @@
     const urlParams = new URLSearchParams(window.location.search);
     let cloudTripId = urlParams.get("trip") || "";
     let cloudSaveTimer = null;
+    let confirmationTimer = null;
+    let confirmationUnavailable = false;
     let isHydratingTrip = false;
     let peerConnection = null;
     let dataChannel = null;
@@ -1464,6 +1466,9 @@
         }
         const saved = await response.json();
         setCloudTripId(saved.trip?.tripId);
+        if (isValidEmail(leadEmail.value) && (leadDates.value.trim() || leadCity.value.trim() || leadNotes.value.trim())) {
+          scheduleTripConfirmation();
+        }
         if (!quiet) setStatus("Trip saved to Cloudflare for shared access.", "ready");
         return saved.trip || null;
       } catch (error) {
@@ -1497,6 +1502,42 @@
         addPhoneBubble(entry.role || "Concierge", entry.text || "");
       });
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    }
+
+    function isValidEmail(value) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(value || "").trim());
+    }
+
+    async function sendTripConfirmation({ force = false, quiet = true } = {}) {
+      if (!cloudTripId || !isValidEmail(leadEmail.value)) return null;
+      if (confirmationUnavailable && quiet) return null;
+      try {
+        const response = await fetch(`${API_BASE}/ski/trips/confirmation`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tripId: cloudTripId, force })
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          if (result.emailConfigured === false) confirmationUnavailable = true;
+          throw new Error(result.error || "Confirmation email failed");
+        }
+        if (!quiet && result.skipped) setStatus("Confirmation email was already sent for this trip.", "ready");
+        if (!quiet && !result.skipped) setStatus(`Confirmation email sent to ${result.email}.`, "ready");
+        return result;
+      } catch (error) {
+        if (!quiet) setStatus(`Confirmation email issue: ${error.message}`, "error");
+        return null;
+      }
+    }
+
+    function scheduleTripConfirmation() {
+      if (confirmationUnavailable || !isValidEmail(leadEmail.value)) return;
+      if (confirmationTimer) clearTimeout(confirmationTimer);
+      confirmationTimer = setTimeout(() => {
+        confirmationTimer = null;
+        sendTripConfirmation();
+      }, 1100);
     }
 
     function applyCloudTrip(trip) {
@@ -1609,6 +1650,7 @@
       bindPhoneSamplePrompt();
       updateTripSummary();
       clearCloudTripId();
+      confirmationUnavailable = false;
       saveCloudTripNow("reset");
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
     }
@@ -1881,6 +1923,7 @@
       };
       try {
         await saveCloudTripNow("human-review-submit");
+        await sendTripConfirmation({ force: true, quiet: false });
         const response = await fetch(`${API_BASE}/ski/leads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1932,6 +1975,7 @@
       field.addEventListener("input", () => {
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
+        if (field === leadEmail) scheduleTripConfirmation();
       });
     });
 

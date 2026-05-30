@@ -303,7 +303,10 @@ CREATE TABLE IF NOT EXISTS ski_trip_sessions (
   notes TEXT,
   transcript_json TEXT NOT NULL DEFAULT '[]',
   topic_state_json TEXT NOT NULL DEFAULT '{}',
-  payload_json TEXT NOT NULL DEFAULT '{}'
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  confirmation_sent_at TEXT,
+  confirmation_email TEXT,
+  confirmation_provider_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_ski_trip_sessions_updated
