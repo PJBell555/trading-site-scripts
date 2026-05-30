@@ -176,17 +176,20 @@
         url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
       color: #fff;
       overflow: hidden;
+      position: sticky;
+      top: 70px;
+      z-index: 15;
     }
 
     .hero-inner {
+      align-items: stretch;
       display: grid;
-      gap: 28px;
-      grid-template-columns: minmax(280px, 0.82fr) minmax(280px, 0.58fr) minmax(320px, 0.72fr);
-      min-height: calc(100vh - 78px);
-      align-items: center;
+      gap: 18px;
+      grid-template-columns: minmax(240px, 0.7fr) minmax(320px, 0.85fr) minmax(280px, 0.75fr);
+      min-height: 25vh;
       margin: 0 auto;
       max-width: 1380px;
-      padding: 38px clamp(18px, 4vw, 48px) 52px;
+      padding: 18px clamp(18px, 4vw, 48px);
     }
 
     .eyebrow {
@@ -207,10 +210,10 @@
 
     h1 {
       font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(2.6rem, 5vw, 5rem);
-      line-height: 0.95;
-      margin-bottom: 22px;
-      max-width: 720px;
+      font-size: clamp(2rem, 3.4vw, 3.7rem);
+      line-height: 0.98;
+      margin-bottom: 10px;
+      max-width: 520px;
     }
 
     h1 em {
@@ -234,7 +237,7 @@
 
     .lede {
       color: rgba(255, 255, 255, 0.86);
-      font-size: 1.18rem;
+      font-size: 0.98rem;
       max-width: 640px;
     }
 
@@ -242,7 +245,7 @@
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin-top: 20px;
+      margin-top: 12px;
     }
 
     .hero-control-panel {
@@ -250,14 +253,15 @@
       border: 1px solid rgba(255, 255, 255, 0.6);
       box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
       color: var(--ink);
-      margin-top: 20px;
-      padding: 16px;
+      display: grid;
+      gap: 10px;
+      padding: 14px;
     }
 
     .hero-control-panel .section-lede {
       color: #31465b;
       font-size: 0.92rem;
-      margin-bottom: 12px;
+      margin-bottom: 0;
     }
 
     .hero-control-panel .prompt-grid {
@@ -267,7 +271,7 @@
     .hero-showcase {
       align-self: center;
       display: grid;
-      min-height: 640px;
+      min-height: 0;
       padding: 8px;
       place-items: center;
     }
@@ -277,20 +281,21 @@
       border: 2px solid rgba(255, 255, 255, 0.7);
       border-radius: 42px;
       box-shadow: 0 26px 60px rgba(0, 0, 0, 0.5), inset 0 0 0 5px rgba(255, 255, 255, 0.12);
-      max-width: 310px;
-      padding: 10px;
-      width: min(100%, 310px);
+      border-radius: 28px;
+      max-width: 100%;
+      padding: 7px;
+      width: min(100%, 360px);
     }
 
     .phone-screen {
       background: linear-gradient(180deg, #08233d 0%, #061827 100%);
       border: 1px solid rgba(255, 255, 255, 0.12);
-      border-radius: 32px;
+      border-radius: 22px;
       color: #fff;
-      height: min(70vh, 660px);
-      min-height: 560px;
+      height: 218px;
+      min-height: 0;
       overflow: hidden;
-      padding: 20px 16px 14px;
+      padding: 12px 12px 10px;
       position: relative;
     }
 
@@ -298,7 +303,7 @@
       align-items: center;
       display: flex;
       justify-content: space-between;
-      margin-bottom: 28px;
+      margin-bottom: 10px;
     }
 
     .phone-brand {
@@ -385,23 +390,23 @@
 
     .phone-greeting {
       font-family: Georgia, "Times New Roman", serif;
-      font-size: 1.25rem;
+      font-size: 1rem;
       line-height: 1.25;
-      margin-bottom: 16px;
+      margin-bottom: 6px;
     }
 
     .phone-helper {
       color: rgba(255, 255, 255, 0.78);
       font-size: 0.76rem;
-      margin-bottom: 16px;
+      margin-bottom: 8px;
     }
 
     .phone-chat {
       display: grid;
-      gap: 14px;
-      max-height: calc(100% - 158px);
+      gap: 8px;
+      max-height: 74px;
       overflow-y: auto;
-      padding-bottom: 64px;
+      padding-bottom: 58px;
     }
 
     .phone-bubble {
@@ -447,6 +452,7 @@
       border-radius: 12px;
       color: var(--ink);
       overflow: hidden;
+      display: none;
       width: 100%;
     }
 
@@ -527,10 +533,10 @@
       display: grid;
       gap: 8px;
       grid-template-columns: 1fr 34px;
-      left: 14px;
+      left: 12px;
       padding: 8px;
       position: absolute;
-      right: 14px;
+      right: 12px;
     }
 
     .phone-input-row input {
@@ -744,6 +750,77 @@
       width: 28px;
     }
 
+    .trip-workspace {
+      background: #eef3f8;
+      padding: 28px clamp(18px, 4vw, 42px) 54px;
+    }
+
+    .trip-workspace-inner {
+      display: grid;
+      gap: 18px;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      margin: 0 auto;
+      max-width: 1220px;
+    }
+
+    .trip-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      box-shadow: 0 12px 34px rgba(8, 35, 61, 0.08);
+      display: grid;
+      gap: 12px;
+      min-height: 215px;
+      padding: 20px;
+    }
+
+    .trip-card.large {
+      grid-column: span 2;
+    }
+
+    .trip-card-header {
+      align-items: start;
+      display: flex;
+      gap: 12px;
+      justify-content: space-between;
+    }
+
+    .trip-card h3 {
+      margin-bottom: 2px;
+    }
+
+    .trip-card p {
+      color: var(--muted);
+      margin-bottom: 0;
+    }
+
+    .trip-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .trip-actions .button,
+    .trip-actions button {
+      border-radius: 10px;
+      font-size: 0.86rem;
+      min-height: 34px;
+      padding: 6px 10px;
+    }
+
+    .summary-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    .summary-list span {
+      background: #edf6fc;
+      color: var(--navy);
+      display: inline-flex;
+      font-weight: 800;
+      justify-content: space-between;
+      padding: 8px 10px;
+    }
+
     .controls,
     .prompt-grid,
     .lead-grid {
@@ -892,12 +969,22 @@
 
       .hero-inner,
       .voice-layout,
+      .trip-workspace-inner,
       .chalet-grid {
         grid-template-columns: 1fr;
       }
 
       .hero-inner {
         min-height: auto;
+      }
+
+      .hero {
+        position: relative;
+        top: auto;
+      }
+
+      .trip-card.large {
+        grid-column: auto;
       }
 
       .feature-grid,
@@ -967,12 +1054,6 @@
           <div class="hero-control-panel">
             <p class="section-lede">Speak naturally or use a starter prompt. The chat window updates first; the envelope is the human handoff summary.</p>
             <div class="status" id="status" data-state="idle">Idle. Start a voice session or choose a prompt.</div>
-            <div class="prompt-grid" aria-label="Sample ski prompts">
-              <button class="prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Avoriaz, Friday to Sunday, 2 people</button>
-              <button class="prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family of 5 from Boston, mixed levels</button>
-              <button class="prompt-chip" type="button" data-prompt="We need a short trip with the easiest Geneva transfer and ski-in ski-out accommodation if possible.">Easy Geneva transfer, ski-in / ski-out</button>
-              <button class="prompt-chip" type="button" data-prompt="Search for basic Avoriaz ski trip ideas and explain the best candidates.">Search ski trip ideas</button>
-            </div>
             <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
           </div>
         </div>
@@ -999,7 +1080,7 @@
                 <button type="button" id="phone-menu-brief">Add Avoriaz Brief</button>
               </nav>
 
-              <div class="phone-greeting">Hi Dan 👋<br>Planning a short ski trip<br>in Avoriaz?</div>
+              <div class="phone-greeting">Hi<span id="phone-customer-name"></span> 👋<br>Planning a short ski trip<br>in Avoriaz?</div>
               <p class="phone-helper">I'll plan your perfect trip in seconds.</p>
 
               <div class="phone-chat" id="phone-chat">
@@ -1039,7 +1120,92 @@
             </div>
           </div>
         </section>
-        <aside class="brief-card handoff-envelope" aria-label="Human review brief">
+        <div class="hero-control-panel">
+          <p class="section-lede">Scroll the trip workspace below to refine dates, travel, chalet style, and handoff details. This top panel stays ready for voice or text.</p>
+          <div class="summary-list">
+            <span><small>Dates</small><strong id="summary-dates">Not set</strong></span>
+            <span><small>From</small><strong id="summary-city">Not set</strong></span>
+            <span><small>Style</small><strong id="summary-style">Short chalet trip</strong></span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="trip-workspace" aria-label="Live trip workspace">
+      <div class="trip-workspace-inner">
+        <article class="trip-card">
+          <div class="trip-card-header">
+            <div>
+              <p class="eyebrow">Travel Dates</p>
+              <h3>When should the trip happen?</h3>
+            </div>
+          </div>
+          <label>
+            Travel window
+            <input id="lead-dates" placeholder="Friday to Sunday in March">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Use Example</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-dates">Edit</button>
+            <button class="button dark talk-topic" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Travel</p>
+            <h3>Where are you leaving from?</h3>
+          </div>
+          <label>
+            Departure city
+            <input id="lead-city" placeholder="Boston, New York, Chicago">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family Example</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-city">Edit</button>
+            <button class="button dark talk-topic" type="button" data-topic="I want to update only my departure city and transfer preferences.">Talk Travel</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Chalet Type</p>
+            <h3>What sort of chalet fits?</h3>
+          </div>
+          <p id="chalet-style-summary">Ski-in / ski-out, short transfer, breakfast included. Refine this as the conversation develops.</p>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to ski-in ski-out if possible, with a short transfer and breakfast included.">Ski-in / Ski-out</button>
+            <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to a lively village location with restaurants nearby.">Village Location</button>
+            <button class="button secondary prompt-chip" type="button" data-prompt="Search for basic Avoriaz ski trip ideas and explain the best candidates.">Search Ideas</button>
+            <button class="button dark talk-topic" type="button" data-topic="I want to update only the chalet type and accommodation style.">Talk Chalets</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Resort</p>
+            <h3>Where should we focus?</h3>
+          </div>
+          <p id="resort-summary">Avoriaz is the starter example. The concierge can compare other European resorts as the brief develops.</p>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="Keep Avoriaz as the main resort but compare similar European ski resorts for a short trip.">Compare Resorts</button>
+            <button class="button dark talk-topic" type="button" data-topic="I want to update only the resort choice.">Talk Resort</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Group</p>
+            <h3>Who is travelling?</h3>
+          </div>
+          <p id="group-summary">Group size, ages, ski levels, lessons, rooming, and dietary notes will appear in the specialist notes as you talk.</p>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="I want to update the group details: number of people, ages, ski levels, lessons, and rooming needs.">Update Group</button>
+            <button class="button dark talk-topic" type="button" data-topic="I want to update only the group details.">Talk Group</button>
+          </div>
+        </article>
+
+        <aside class="brief-card handoff-envelope trip-card large" aria-label="Human review brief">
           <div class="handoff-label"><span>@</span> Human handoff email</div>
           <h3>Trip summary for UK specialist</h3>
           <form class="lead-form" id="lead-form">
@@ -1051,16 +1217,6 @@
               <label>
                 Email
                 <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com">
-              </label>
-            </div>
-            <div class="lead-grid">
-              <label>
-                Departure city
-                <input id="lead-city" placeholder="Boston, New York, Chicago">
-              </label>
-              <label>
-                Travel window
-                <input id="lead-dates" placeholder="Friday to Sunday in March">
               </label>
             </div>
             <label>
@@ -1191,12 +1347,19 @@
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
+    const summaryDates = document.querySelector("#summary-dates");
+    const summaryCity = document.querySelector("#summary-city");
+    const summaryStyle = document.querySelector("#summary-style");
+    const chaletStyleSummary = document.querySelector("#chalet-style-summary");
+    const resortSummary = document.querySelector("#resort-summary");
+    const groupSummary = document.querySelector("#group-summary");
     const phoneMenuButton = document.querySelector("#phone-menu-button");
     const phoneMenu = document.querySelector("#phone-menu");
     const phoneMenuBrief = document.querySelector("#phone-menu-brief");
     const phoneForm = document.querySelector("#phone-form");
     const phoneInput = document.querySelector("#phone-input");
     const phoneChat = document.querySelector("#phone-chat");
+    const phoneCustomerName = document.querySelector("#phone-customer-name");
 
     let peerConnection = null;
     let dataChannel = null;
@@ -1211,6 +1374,26 @@
     function setStatus(message, state = "idle") {
       statusEl.textContent = message;
       statusEl.dataset.state = state;
+    }
+
+    function updateTripSummary() {
+      const customerName = leadName.value.trim();
+      phoneCustomerName.textContent = customerName ? ` ${customerName}` : "";
+      summaryDates.textContent = leadDates.value.trim() || "Not set";
+      summaryCity.textContent = leadCity.value.trim() || "Not set";
+      const notes = leadNotes.value.toLowerCase();
+      if (notes.includes("village")) {
+        summaryStyle.textContent = "Village chalet";
+        chaletStyleSummary.textContent = "Lively village location with restaurants nearby.";
+      } else if (notes.includes("ski-in") || notes.includes("ski in")) {
+        summaryStyle.textContent = "Ski-in / ski-out";
+        chaletStyleSummary.textContent = "Ski-in / ski-out, short transfer, breakfast included.";
+      } else {
+        summaryStyle.textContent = "Short chalet trip";
+      }
+      if (notes.includes("morzine")) resortSummary.textContent = "Morzine is being considered for easy Geneva access and village feel.";
+      if (notes.includes("chamonix")) resortSummary.textContent = "Chamonix is being considered for scenery, dining, and advanced terrain.";
+      if (notes.includes("family") || notes.includes("group")) groupSummary.textContent = "Group details are being captured in the specialist notes.";
     }
 
     function addMessage(role, text) {
@@ -1229,6 +1412,7 @@
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
       addPhoneBubble(role, clean);
+      updateTripSummary();
     }
 
     function updateTripFieldsFromText(text) {
@@ -1283,6 +1467,7 @@
       phoneInput.value = "";
       phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
       bindPhoneSamplePrompt();
+      updateTripSummary();
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
     }
 
@@ -1571,6 +1756,32 @@
     document.querySelectorAll(".prompt-chip").forEach((button) => {
       button.addEventListener("click", () => applyPrompt(button.dataset.prompt));
     });
+
+    document.querySelectorAll(".edit-topic").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = document.querySelector(button.dataset.focus);
+        if (!target) return;
+        target.focus();
+        target.select?.();
+        setStatus("Edit this trip detail directly, or use Talk to update it by voice.", "ready");
+      });
+    });
+
+    document.querySelectorAll(".talk-topic").forEach((button) => {
+      button.addEventListener("click", () => {
+        phoneInput.value = button.dataset.topic || "";
+        document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
+        setStatus("Topic loaded. Start voice or send the text prompt to update this part only.", "ready");
+        if (!dataChannel || dataChannel.readyState !== "open") {
+          startSession();
+        }
+      });
+    });
+
+    [leadCity, leadDates, leadNotes].forEach((field) => {
+      field.addEventListener("input", updateTripSummary);
+    });
+    leadName.addEventListener("input", updateTripSummary);
 
     document.querySelectorAll(".destination-button").forEach((button) => {
       button.addEventListener("click", () => {
