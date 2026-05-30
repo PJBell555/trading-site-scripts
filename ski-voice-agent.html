@@ -678,6 +678,18 @@
       margin: 16px 0;
     }
 
+    .trip-reset-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 12px;
+    }
+
+    .reset-button {
+      border-radius: 10px;
+      min-height: 38px;
+      padding: 8px 12px;
+    }
+
     .prompt-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       margin: 14px 0 16px;
@@ -1021,6 +1033,9 @@
       <div class="voice-layout">
         <section class="voice-panel" aria-label="Voice concierge">
           <p class="section-lede">Start the session, allow microphone access, and speak naturally. The first live version uses OpenAI Realtime voice directly; the prompt buttons still create a realistic human-review brief.</p>
+          <div class="trip-reset-row">
+            <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
+          </div>
           <div class="controls">
             <button class="primary" type="button" id="start-button">Start Voice Session</button>
             <button class="danger" type="button" id="stop-button" disabled>Stop</button>
@@ -1033,10 +1048,6 @@
             <button class="prompt-chip" type="button" data-prompt="Search SkiWeekends and Flexiski for basic Avoriaz ski weekend ideas and explain the best candidates.">Search partner ski ideas</button>
           </div>
           <div class="transcript" id="transcript" aria-live="polite">
-            <div class="message">
-              <strong>System</strong>
-              <span>Ask about group size, dates, budget, departure city, ski level, resort vibe, and chalet preferences.</span>
-            </div>
           </div>
         </section>
 
@@ -1089,18 +1100,21 @@
 
   <script>
     const API_BASE = "https://trading-site-scripts.peter-bell54.workers.dev";
+    const INITIAL_PHONE_CHAT_HTML = document.querySelector("#phone-chat").innerHTML;
     const startButton = document.querySelector("#start-button");
     const stopButton = document.querySelector("#stop-button");
+    const resetTripButton = document.querySelector("#reset-trip-button");
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
+    const leadName = document.querySelector("#lead-name");
+    const leadEmail = document.querySelector("#lead-email");
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
     const phoneMenuButton = document.querySelector("#phone-menu-button");
     const phoneMenu = document.querySelector("#phone-menu");
     const phoneMenuBrief = document.querySelector("#phone-menu-brief");
-    const phoneSamplePrompt = document.querySelector("#phone-sample-prompt");
     const phoneForm = document.querySelector("#phone-form");
     const phoneInput = document.querySelector("#phone-input");
     const phoneChat = document.querySelector("#phone-chat");
@@ -1124,6 +1138,7 @@
       const clean = String(text || "").trim();
       if (!clean) return;
       transcript.push({ role, text: clean, at: new Date().toISOString() });
+      if (role === "Customer") updateTripFieldsFromText(clean);
       const item = document.createElement("div");
       item.className = "message";
       const label = document.createElement("strong");
@@ -1136,6 +1151,35 @@
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
     }
 
+    function updateTripFieldsFromText(text) {
+      const lower = text.toLowerCase();
+      if (!leadCity.value.trim()) {
+        const departure = text.match(/\b(?:from|leaving from|departing from|fly(?:ing)? from)\s+([A-Z][A-Za-z .'-]{2,36}|[A-Z]{3})/i);
+        if (departure) {
+          leadCity.value = departure[1].replace(/\s+(?:for|to|on|in)\b.*$/i, "").replace(/[,.]$/, "").trim();
+        } else if (/\bSMF\b/i.test(text)) {
+          leadCity.value = "SMF";
+        } else if (lower.includes("boston")) {
+          leadCity.value = "Boston";
+        } else if (lower.includes("new york")) {
+          leadCity.value = "New York";
+        } else if (lower.includes("chicago")) {
+          leadCity.value = "Chicago";
+        } else if (lower.includes("los angeles")) {
+          leadCity.value = "Los Angeles";
+        }
+      }
+      if (!leadDates.value.trim()) {
+        const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|skiweekend|january|february|march|april)\b[^,.]*/i);
+        if (travel) {
+          const resort = lower.includes("avoriaz") && !/avoriaz/i.test(travel[0]) ? ", Avoriaz" : "";
+          leadDates.value = `${travel[0].trim()}${resort}`;
+        } else if (lower.includes("avoriaz")) {
+          leadDates.value = "Avoriaz";
+        }
+      }
+    }
+
     function addPhoneBubble(role, text) {
       const clean = String(text || "").trim();
       if (!clean) return;
@@ -1144,6 +1188,28 @@
       bubble.textContent = clean;
       phoneChat.append(bubble);
       phoneChat.scrollTop = phoneChat.scrollHeight;
+    }
+
+    function resetTrip({ keepStatus = false } = {}) {
+      stopSession({ resetStatus: false });
+      transcript = [];
+      assistantBuffer = "";
+      leadName.value = "";
+      leadEmail.value = "";
+      leadCity.value = "";
+      leadDates.value = "";
+      leadNotes.value = "";
+      transcriptEl.innerHTML = "";
+      phoneInput.value = "";
+      phoneChat.innerHTML = INITIAL_PHONE_CHAT_HTML;
+      bindPhoneSamplePrompt();
+      if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
+    }
+
+    function bindPhoneSamplePrompt() {
+      document.querySelector("#phone-sample-prompt")?.addEventListener("click", () => {
+        applyPrompt("I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.");
+      });
     }
 
     function createDemoAnswer(prompt) {
@@ -1374,11 +1440,11 @@
       } catch (error) {
         setStatus(error.message, "error");
         startButton.disabled = false;
-        stopSession();
+        stopSession({ resetStatus: false });
       }
     }
 
-    function stopSession() {
+    function stopSession(options = {}) {
       stopCurrentAudio();
       if (dataChannel) dataChannel.close();
       if (peerConnection) peerConnection.close();
@@ -1392,7 +1458,7 @@
       mediaStream = null;
       startButton.disabled = false;
       stopButton.disabled = true;
-      if (statusEl.dataset.state !== "error") setStatus("Stopped.");
+      if (options.resetStatus !== false && statusEl.dataset.state !== "error") setStatus("Stopped.");
     }
 
     leadForm.addEventListener("submit", async (event) => {
@@ -1471,9 +1537,7 @@
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
-    phoneSamplePrompt.addEventListener("click", () => {
-      applyPrompt("I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.");
-    });
+    bindPhoneSamplePrompt();
 
     phoneForm.addEventListener("submit", (event) => {
       event.preventDefault();
@@ -1484,6 +1548,8 @@
 
     startButton.addEventListener("click", startSession);
     stopButton.addEventListener("click", stopSession);
+    resetTripButton.addEventListener("click", () => resetTrip());
+    resetTrip({ keepStatus: true });
   </script>
 </body>
 </html>
