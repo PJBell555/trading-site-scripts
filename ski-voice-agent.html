@@ -180,13 +180,13 @@
 
     .hero-inner {
       display: grid;
-      gap: 30px;
-      grid-template-columns: minmax(320px, 0.95fr) minmax(340px, 0.62fr);
-      min-height: 720px;
+      gap: 28px;
+      grid-template-columns: minmax(280px, 0.82fr) minmax(280px, 0.58fr) minmax(320px, 0.72fr);
+      min-height: calc(100vh - 78px);
       align-items: center;
       margin: 0 auto;
       max-width: 1380px;
-      padding: 56px clamp(18px, 4vw, 48px) 72px;
+      padding: 38px clamp(18px, 4vw, 48px) 52px;
     }
 
     .eyebrow {
@@ -207,7 +207,7 @@
 
     h1 {
       font-family: Georgia, "Times New Roman", serif;
-      font-size: clamp(2.7rem, 6.5vw, 6.3rem);
+      font-size: clamp(2.6rem, 5vw, 5rem);
       line-height: 0.95;
       margin-bottom: 22px;
       max-width: 720px;
@@ -242,13 +242,32 @@
       display: flex;
       flex-wrap: wrap;
       gap: 12px;
-      margin-top: 28px;
+      margin-top: 20px;
+    }
+
+    .hero-control-panel {
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.6);
+      box-shadow: 0 20px 54px rgba(0, 0, 0, 0.18);
+      color: var(--ink);
+      margin-top: 20px;
+      padding: 16px;
+    }
+
+    .hero-control-panel .section-lede {
+      color: #31465b;
+      font-size: 0.92rem;
+      margin-bottom: 12px;
+    }
+
+    .hero-control-panel .prompt-grid {
+      grid-template-columns: 1fr;
     }
 
     .hero-showcase {
       align-self: center;
       display: grid;
-      min-height: 660px;
+      min-height: 640px;
       padding: 8px;
       place-items: center;
     }
@@ -268,7 +287,8 @@
       border: 1px solid rgba(255, 255, 255, 0.12);
       border-radius: 32px;
       color: #fff;
-      min-height: 620px;
+      height: min(70vh, 660px);
+      min-height: 560px;
       overflow: hidden;
       padding: 20px 16px 14px;
       position: relative;
@@ -379,6 +399,8 @@
     .phone-chat {
       display: grid;
       gap: 14px;
+      max-height: calc(100% - 158px);
+      overflow-y: auto;
       padding-bottom: 64px;
     }
 
@@ -591,8 +613,10 @@
     .destination {
       border-radius: 16px;
       cursor: pointer;
+      display: block;
       min-height: 132px;
       text-align: left;
+      text-decoration: none;
       white-space: normal;
     }
 
@@ -666,6 +690,60 @@
       padding: 22px;
     }
 
+    .handoff-envelope {
+      background:
+        linear-gradient(145deg, rgba(168, 220, 255, 0.24), transparent 34%),
+        linear-gradient(#fff, #fff);
+      border: 1px solid rgba(8, 35, 61, 0.18);
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.2);
+      color: var(--ink);
+      overflow: hidden;
+      position: relative;
+    }
+
+    .handoff-envelope::before {
+      background: linear-gradient(135deg, rgba(8, 35, 61, 0.12), rgba(91, 183, 236, 0.08));
+      clip-path: polygon(0 0, 50% 56px, 100% 0);
+      content: "";
+      height: 76px;
+      left: 0;
+      position: absolute;
+      right: 0;
+      top: 0;
+    }
+
+    .handoff-envelope h3,
+    .handoff-envelope form {
+      position: relative;
+      z-index: 1;
+    }
+
+    .handoff-label {
+      align-items: center;
+      color: var(--navy);
+      display: flex;
+      font-size: 0.78rem;
+      font-weight: 900;
+      gap: 8px;
+      letter-spacing: 0.08em;
+      margin-bottom: 10px;
+      position: relative;
+      text-transform: uppercase;
+      z-index: 1;
+    }
+
+    .handoff-label span {
+      align-items: center;
+      background: var(--navy);
+      border-radius: 999px;
+      color: #fff;
+      display: inline-flex;
+      height: 28px;
+      justify-content: center;
+      letter-spacing: 0;
+      width: 28px;
+    }
+
     .controls,
     .prompt-grid,
     .lead-grid {
@@ -730,6 +808,17 @@
       min-height: 260px;
       overflow-y: auto;
       padding: 14px;
+    }
+
+    .transcript.is-hidden {
+      height: 1px;
+      left: -9999px;
+      min-height: 0;
+      opacity: 0;
+      overflow: hidden;
+      padding: 0;
+      position: absolute;
+      width: 1px;
     }
 
     .message {
@@ -807,6 +896,10 @@
         grid-template-columns: 1fr;
       }
 
+      .hero-inner {
+        min-height: auto;
+      }
+
       .feature-grid,
       .destination-grid,
       .steps {
@@ -841,7 +934,7 @@
 </head>
 <body>
   <header class="topbar">
-    <a class="brand" href="#home" aria-label="Ski in Europe home">
+    <a class="brand" href="#concierge" aria-label="Ski in Europe home">
       <span class="brand-mark" aria-hidden="true">
         <img src="./favicon.svg" alt="">
       </span>
@@ -860,15 +953,27 @@
   </header>
 
   <main>
-    <section class="hero" id="home">
+    <section class="hero" id="concierge">
       <div class="hero-inner">
         <div>
           <p class="eyebrow">British chalet holidays reimagined by AI</p>
           <h1>Skiweekends in Avoriaz, made effortless <em>by AI</em></h1>
           <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget, and it prepares a UK specialist to verify the best-fit chalet options.</p>
           <div class="hero-actions">
-            <a class="button primary" href="#concierge" id="hero-plan-button">Plan My Avoriaz Skiweekend</a>
-            <a class="button secondary" href="#chalets">View Chalet Matches</a>
+            <button class="primary" type="button" id="start-button">Start Voice Session</button>
+            <button class="danger" type="button" id="stop-button" disabled>Stop</button>
+            <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
+          </div>
+          <div class="hero-control-panel">
+            <p class="section-lede">Speak naturally or use a starter prompt. The chat window updates first; the envelope is the human handoff summary.</p>
+            <div class="status" id="status" data-state="idle">Idle. Start a voice session or choose a prompt.</div>
+            <div class="prompt-grid" aria-label="Sample ski prompts">
+              <button class="prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Avoriaz, Friday to Sunday, 2 people</button>
+              <button class="prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family of 5 from Boston, mixed levels</button>
+              <button class="prompt-chip" type="button" data-prompt="We need a short trip with the easiest Geneva transfer and ski-in ski-out accommodation if possible.">Easy Geneva transfer, ski-in / ski-out</button>
+              <button class="prompt-chip" type="button" data-prompt="Search SkiWeekends and Flexiski for basic Avoriaz ski weekend ideas and explain the best candidates.">Search partner ski ideas</button>
+            </div>
+            <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
           </div>
         </div>
         <section class="hero-showcase" aria-label="Interactive mobile ski concierge preview">
@@ -934,6 +1039,37 @@
             </div>
           </div>
         </section>
+        <aside class="brief-card handoff-envelope" aria-label="Human review brief">
+          <div class="handoff-label"><span>@</span> Human handoff email</div>
+          <h3>Trip summary for UK specialist</h3>
+          <form class="lead-form" id="lead-form">
+            <div class="lead-grid">
+              <label>
+                Customer name
+                <input id="lead-name" autocomplete="name" placeholder="Name">
+              </label>
+              <label>
+                Email
+                <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com">
+              </label>
+            </div>
+            <div class="lead-grid">
+              <label>
+                Departure city
+                <input id="lead-city" placeholder="Boston, New York, Chicago">
+              </label>
+              <label>
+                Travel window
+                <input id="lead-dates" placeholder="Friday to Sunday in March">
+              </label>
+            </div>
+            <label>
+              Specialist notes
+              <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff."></textarea>
+            </label>
+            <button class="button dark" type="submit">Send Human Review Brief</button>
+          </form>
+        </aside>
       </div>
     </section>
 
@@ -968,20 +1104,20 @@
     <section class="page-section" id="destinations">
       <p class="eyebrow">Destinations</p>
       <h2>Start with resorts that fit short trips</h2>
-      <p class="section-lede">These cards behave like live filters for the prototype: pick one and the concierge brief updates before the call starts.</p>
+      <p class="section-lede">Use these as a guide for the kinds of trips the concierge can help qualify. The live trip details stay in the chat and handoff email at the top of the page.</p>
       <div class="destination-grid">
-        <button class="destination destination-button" type="button" data-destination="Avoriaz" data-note="Destination preference: Avoriaz. Priorities: ski-in / ski-out, Portes du Soleil, weekend-friendly transfers.">
+        <a class="destination" href="#concierge">
           <strong>Avoriaz</strong>
           <span>1800m, Portes du Soleil, ski-in / ski-out focus.</span>
-        </button>
-        <button class="destination destination-button" type="button" data-destination="Morzine" data-note="Destination preference: Morzine. Priorities: classic chalet feel, flexible short stays, lively village.">
+        </a>
+        <a class="destination" href="#concierge">
           <strong>Morzine</strong>
           <span>Classic chalet base with easy Geneva transfers.</span>
-        </button>
-        <button class="destination destination-button" type="button" data-destination="Chamonix" data-note="Destination preference: Chamonix. Priorities: iconic scenery, advanced terrain, premium weekend trip.">
+        </a>
+        <a class="destination" href="#concierge">
           <strong>Chamonix</strong>
           <span>Big scenery, strong dining, best for confident skiers.</span>
-        </button>
+        </a>
       </div>
     </section>
 
@@ -998,7 +1134,7 @@
             <span class="pill">Breakfast included</span>
             <span class="pill">From estimate only</span>
           </div>
-          <button class="button dark sample-brief-button" type="button">Use This Chalet In My Brief</button>
+          <a class="button dark" href="#concierge">Discuss This Chalet</a>
         </article>
         <article class="chalet">
           <h3>What the AI checks</h3>
@@ -1024,63 +1160,6 @@
           <h3>3. Human verifies</h3>
           <p>The UK specialist confirms availability, final price, package rules, and booking links.</p>
         </article>
-      </div>
-    </section>
-
-    <section class="page-section" id="concierge">
-      <p class="eyebrow">Voice concierge prototype</p>
-      <h2>Plan the trip with voice or text</h2>
-      <div class="voice-layout">
-        <section class="voice-panel" aria-label="Voice concierge">
-          <p class="section-lede">Start the session, allow microphone access, and speak naturally. The first live version uses OpenAI Realtime voice directly; the prompt buttons still create a realistic human-review brief.</p>
-          <div class="trip-reset-row">
-            <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
-          </div>
-          <div class="controls">
-            <button class="primary" type="button" id="start-button">Start Voice Session</button>
-            <button class="danger" type="button" id="stop-button" disabled>Stop</button>
-          </div>
-          <div class="status" id="status" data-state="idle">Idle. Choose a prompt or start a voice session.</div>
-          <div class="prompt-grid" aria-label="Sample ski prompts">
-            <button class="prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Avoriaz, Friday to Sunday, 2 people</button>
-            <button class="prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family of 5 from Boston, mixed levels</button>
-            <button class="prompt-chip" type="button" data-prompt="We need a short trip with the easiest Geneva transfer and ski-in ski-out accommodation if possible.">Easy Geneva transfer, ski-in / ski-out</button>
-            <button class="prompt-chip" type="button" data-prompt="Search SkiWeekends and Flexiski for basic Avoriaz ski weekend ideas and explain the best candidates.">Search partner ski ideas</button>
-          </div>
-          <div class="transcript" id="transcript" aria-live="polite">
-          </div>
-        </section>
-
-        <aside class="brief-card" aria-label="Human review brief">
-          <h3>Human review brief</h3>
-          <form class="lead-form" id="lead-form">
-            <div class="lead-grid">
-              <label>
-                Customer name
-                <input id="lead-name" autocomplete="name" placeholder="Name">
-              </label>
-              <label>
-                Email
-                <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com">
-              </label>
-            </div>
-            <div class="lead-grid">
-              <label>
-                Departure city
-                <input id="lead-city" placeholder="Boston, New York, Chicago">
-              </label>
-              <label>
-                Travel window
-                <input id="lead-dates" placeholder="Friday to Sunday in March">
-              </label>
-            </div>
-            <label>
-              Specialist notes
-              <textarea id="lead-notes" placeholder="The transcript and notes will be saved for the UK ski specialist."></textarea>
-            </label>
-            <button class="button dark" type="submit">Send Human Review Brief</button>
-          </form>
-        </aside>
       </div>
     </section>
 
@@ -1149,6 +1228,7 @@
       transcriptEl.append(item);
       transcriptEl.scrollTop = transcriptEl.scrollHeight;
       leadNotes.value = transcript.map((entry) => `${entry.role}: ${entry.text}`).join("\n\n");
+      addPhoneBubble(role, clean);
     }
 
     function updateTripFieldsFromText(text) {
@@ -1233,8 +1313,6 @@
       addMessage("Customer", prompt);
       const answer = createDemoAnswer(prompt);
       addMessage("Concierge", answer);
-      addPhoneBubble("Customer", prompt);
-      addPhoneBubble("Concierge", answer);
       setStatus("Prompt added to the human review brief.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
       if (dataChannel && dataChannel.readyState === "open") {
@@ -1503,7 +1581,7 @@
       });
     });
 
-    document.querySelector(".sample-brief-button").addEventListener("click", () => {
+    document.querySelector(".sample-brief-button")?.addEventListener("click", () => {
       leadNotes.value = [
         leadNotes.value,
         "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until SkiWeekends/Flexiski or a human specialist verifies live inventory, dates, price, and inclusions."
