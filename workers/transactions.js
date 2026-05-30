@@ -100,6 +100,12 @@ function jsonResponse(payload, status = 200, origin = "*") {
   });
 }
 
+function rateLimitResponse(payload, origin = "*", retryAfterSeconds = 60) {
+  const response = jsonResponse(payload, 429, origin);
+  response.headers.set("Retry-After", String(Math.max(1, Math.ceil(retryAfterSeconds))));
+  return response;
+}
+
 function cachedJsonResponse(payload, status = 200, origin = "*", cacheControl = "public, max-age=10, stale-while-revalidate=30") {
   const response = jsonResponse(payload, status, origin);
   response.headers.set("Cache-Control", cacheControl);
@@ -2178,6 +2184,213 @@ function getElevenLabsApiKey(env) {
   return env.ELEVENLABS_API_KEY || env.ELEVENLABS_API_TOKEN || "";
 }
 
+function getSkiAgentRateLimitConfig(env) {
+  return {
+    realtimeHourlyPerIp: clamp(Number(env.SKI_AGENT_REALTIME_HOURLY_PER_IP || 3), 1, 500),
+    realtimeDailyPerIp: clamp(Number(env.SKI_AGENT_REALTIME_DAILY_PER_IP || 10), 1, 2000),
+    ttsHourlyPerIp: clamp(Number(env.SKI_AGENT_TTS_HOURLY_PER_IP || 20), 1, 1000),
+    ttsDailyPerIp: clamp(Number(env.SKI_AGENT_TTS_DAILY_PER_IP || 60), 1, 5000),
+    ttsCharsPerRequest: clamp(Number(env.SKI_AGENT_TTS_CHARS_PER_REQUEST || 1200), 100, 4000),
+    ttsCharsHourlyPerIp: clamp(Number(env.SKI_AGENT_TTS_CHARS_HOURLY_PER_IP || 12000), 1000, 200000),
+    ttsCharsDailyPerIp: clamp(Number(env.SKI_AGENT_TTS_CHARS_DAILY_PER_IP || 30000), 1000, 1000000),
+    ttsCharsDailyGlobal: clamp(Number(env.SKI_AGENT_TTS_CHARS_DAILY_GLOBAL || 50000), 1000, 5000000)
+  };
+}
+
+function getClientIp(request) {
+  return request.headers.get("CF-Connecting-IP")
+    || request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim()
+    || "local";
+}
+
+async function sha256Hex(text) {
+  const bytes = new TextEncoder().encode(text);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest)).map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function getRateLimitSubject(request) {
+  return `ip:${(await sha256Hex(getClientIp(request))).slice(0, 32)}`;
+}
+
+function getWindowStart(nowMs, windowMs) {
+  return new Date(Math.floor(nowMs / windowMs) * windowMs).toISOString();
+}
+
+async function ensureSkiRateLimitSchemaD1(env) {
+  if (!hasRuntimeStore(env)) return false;
+  await safeD1Run(env, `
+    CREATE TABLE IF NOT EXISTS ski_rate_limits (
+      bucket_key TEXT PRIMARY KEY,
+      scope TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      window_start TEXT NOT NULL,
+      count INTEGER NOT NULL DEFAULT 0,
+      text_units INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )
+  `);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_rate_limits_scope_subject ON ski_rate_limits (scope, subject, window_start DESC)`);
+  await safeD1Run(env, `CREATE INDEX IF NOT EXISTS idx_ski_rate_limits_updated ON ski_rate_limits (updated_at DESC)`);
+  return true;
+}
+
+async function checkSkiRateBucket(env, options) {
+  const nowMs = Date.now();
+  const windowStart = getWindowStart(nowMs, options.windowMs);
+  const bucketKey = [options.scope, options.subject, windowStart].join("|");
+  const row = await env.DB.prepare(`
+    SELECT count, text_units
+    FROM ski_rate_limits
+    WHERE bucket_key = ?
+  `).bind(bucketKey).first();
+  const currentCount = Number(row?.count || 0);
+  const currentTextUnits = Number(row?.text_units || 0);
+  const nextCount = currentCount + Number(options.count || 1);
+  const nextTextUnits = currentTextUnits + Number(options.textUnits || 0);
+  const windowEndsAtMs = new Date(windowStart).getTime() + options.windowMs;
+
+  if (Number.isFinite(options.maxCount) && nextCount > options.maxCount) {
+    return {
+      ok: false,
+      reason: `${options.label || options.scope} limit reached`,
+      retryAfterSeconds: Math.max(1, Math.ceil((windowEndsAtMs - nowMs) / 1000)),
+      limit: options.maxCount,
+      used: currentCount
+    };
+  }
+
+  if (Number.isFinite(options.maxTextUnits) && nextTextUnits > options.maxTextUnits) {
+    return {
+      ok: false,
+      reason: `${options.label || options.scope} text limit reached`,
+      retryAfterSeconds: Math.max(1, Math.ceil((windowEndsAtMs - nowMs) / 1000)),
+      limit: options.maxTextUnits,
+      used: currentTextUnits
+    };
+  }
+
+  return {
+    ok: true,
+    bucketKey,
+    scope: options.scope,
+    subject: options.subject,
+    windowStart,
+    count: Number(options.count || 1),
+    textUnits: Number(options.textUnits || 0)
+  };
+}
+
+async function consumeSkiRateBuckets(env, checks) {
+  const now = new Date().toISOString();
+  for (const check of checks) {
+    await safeD1Run(env, `
+      INSERT INTO ski_rate_limits (bucket_key, scope, subject, window_start, count, text_units, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(bucket_key) DO UPDATE SET
+        count = count + excluded.count,
+        text_units = text_units + excluded.text_units,
+        updated_at = excluded.updated_at
+    `, [check.bucketKey, check.scope, check.subject, check.windowStart, check.count, check.textUnits, now]);
+  }
+}
+
+async function enforceSkiRateLimit(env, request, origin, checks) {
+  if (!hasRuntimeStore(env)) {
+    return {
+      ok: false,
+      response: jsonResponse({ error: "Ski voice rate limiting requires the Cloudflare D1 runtime store." }, 503, origin)
+    };
+  }
+
+  await ensureSkiRateLimitSchemaD1(env);
+  const prepared = [];
+  for (const check of checks) {
+    const result = await checkSkiRateBucket(env, check);
+    if (!result.ok) {
+      return {
+        ok: false,
+        response: rateLimitResponse({
+          error: "Ski voice agent rate limit reached.",
+          detail: result.reason,
+          limit: result.limit,
+          used: result.used
+        }, origin, result.retryAfterSeconds)
+      };
+    }
+    prepared.push(result);
+  }
+
+  await consumeSkiRateBuckets(env, prepared);
+  return { ok: true };
+}
+
+async function enforceSkiRealtimeRateLimit(env, request, origin) {
+  const config = getSkiAgentRateLimitConfig(env);
+  const subject = await getRateLimitSubject(request);
+  return enforceSkiRateLimit(env, request, origin, [
+    {
+      scope: "ski-realtime-hour",
+      subject,
+      windowMs: 60 * 60 * 1000,
+      maxCount: config.realtimeHourlyPerIp,
+      label: "Realtime sessions per hour"
+    },
+    {
+      scope: "ski-realtime-day",
+      subject,
+      windowMs: 24 * 60 * 60 * 1000,
+      maxCount: config.realtimeDailyPerIp,
+      label: "Realtime sessions per day"
+    }
+  ]);
+}
+
+async function enforceSkiTtsRateLimit(env, request, origin, textLength) {
+  const config = getSkiAgentRateLimitConfig(env);
+  const subject = await getRateLimitSubject(request);
+  if (textLength > config.ttsCharsPerRequest) {
+    return {
+      ok: false,
+      response: rateLimitResponse({
+        error: "Ski voice agent response is too long.",
+        detail: `TTS is capped at ${config.ttsCharsPerRequest} characters per response during testing.`,
+        limit: config.ttsCharsPerRequest,
+        used: textLength
+      }, origin, 60)
+    };
+  }
+
+  return enforceSkiRateLimit(env, request, origin, [
+    {
+      scope: "ski-tts-hour",
+      subject,
+      windowMs: 60 * 60 * 1000,
+      maxCount: config.ttsHourlyPerIp,
+      maxTextUnits: config.ttsCharsHourlyPerIp,
+      textUnits: textLength,
+      label: "ElevenLabs requests per hour"
+    },
+    {
+      scope: "ski-tts-day",
+      subject,
+      windowMs: 24 * 60 * 60 * 1000,
+      maxCount: config.ttsDailyPerIp,
+      maxTextUnits: config.ttsCharsDailyPerIp,
+      textUnits: textLength,
+      label: "ElevenLabs requests per day"
+    },
+    {
+      scope: "ski-tts-global-day",
+      subject: "global",
+      windowMs: 24 * 60 * 60 * 1000,
+      maxTextUnits: config.ttsCharsDailyGlobal,
+      textUnits: textLength,
+      label: "Global ElevenLabs daily"
+    }
+  ]);
+}
+
 async function ensureSkiLeadSchemaD1(env) {
   if (!hasRuntimeStore(env)) return false;
   await safeD1Run(env, `
@@ -2205,6 +2418,9 @@ async function handleSkiRealtimeClientSecret(env, request, origin) {
   if (request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405, origin);
   }
+
+  const rateLimit = await enforceSkiRealtimeRateLimit(env, request, origin);
+  if (!rateLimit.ok) return rateLimit.response;
 
   const apiKey = getOpenAiApiKey(env);
   if (!apiKey) {
@@ -2265,18 +2481,21 @@ async function handleSkiVoiceSpeak(env, request, origin) {
     return jsonResponse({ error: "Method not allowed" }, 405, origin);
   }
 
+  const body = await request.json().catch(() => ({}));
+  const text = skiJson(body.text).slice(0, 4000);
+  if (!text) {
+    return jsonResponse({ error: "Text is required." }, 400, origin);
+  }
+
+  const rateLimit = await enforceSkiTtsRateLimit(env, request, origin, text.length);
+  if (!rateLimit.ok) return rateLimit.response;
+
   const apiKey = getElevenLabsApiKey(env);
   const voiceId = env.ELEVENLABS_VOICE_ID || "";
   if (!apiKey || !voiceId) {
     return jsonResponse({
       error: "ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID are required for ski voice output."
     }, 503, origin);
-  }
-
-  const body = await request.json().catch(() => ({}));
-  const text = skiJson(body.text).slice(0, 4000);
-  if (!text) {
-    return jsonResponse({ error: "Text is required." }, 400, origin);
   }
 
   const modelId = env.ELEVENLABS_MODEL_ID || DEFAULT_ELEVENLABS_TTS_MODEL;

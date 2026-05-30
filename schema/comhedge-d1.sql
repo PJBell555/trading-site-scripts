@@ -290,3 +290,19 @@ CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_created
 
 CREATE INDEX IF NOT EXISTS idx_ski_voice_leads_email
   ON ski_voice_leads (customer_email, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS ski_rate_limits (
+  bucket_key TEXT PRIMARY KEY,
+  scope TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  window_start TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  text_units INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_ski_rate_limits_scope_subject
+  ON ski_rate_limits (scope, subject, window_start DESC);
+
+CREATE INDEX IF NOT EXISTS idx_ski_rate_limits_updated
+  ON ski_rate_limits (updated_at DESC);
