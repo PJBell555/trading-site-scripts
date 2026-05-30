@@ -946,10 +946,10 @@
     <nav class="nav" aria-label="Landing page navigation">
       <a href="#destinations">Destinations</a>
       <a href="#chalets">Chalets</a>
-      <a href="#skiweekends">Skiweekends</a>
+      <a href="#workflow">How It Works</a>
       <a href="#about">About Us</a>
     </nav>
-    <a class="button primary" href="#concierge" id="top-plan-button">Plan My Skiweekend</a>
+    <a class="button primary" href="#concierge" id="top-plan-button">Plan My Ski Trip</a>
   </header>
 
   <main>
@@ -957,7 +957,7 @@
       <div class="hero-inner">
         <div>
           <p class="eyebrow">British chalet holidays reimagined by AI</p>
-          <h1>Skiweekends in Europe, made effortless <em>by AI</em></h1>
+          <h1>European ski trips, made effortless <em>by AI</em></h1>
           <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget, and it prepares a UK specialist to verify the best-fit chalet options.</p>
           <div class="hero-actions">
             <button class="primary" type="button" id="start-button">Start Voice Session</button>
@@ -971,7 +971,7 @@
               <button class="prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Avoriaz, Friday to Sunday, 2 people</button>
               <button class="prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family of 5 from Boston, mixed levels</button>
               <button class="prompt-chip" type="button" data-prompt="We need a short trip with the easiest Geneva transfer and ski-in ski-out accommodation if possible.">Easy Geneva transfer, ski-in / ski-out</button>
-              <button class="prompt-chip" type="button" data-prompt="Search SkiWeekends and Flexiski for basic Avoriaz ski weekend ideas and explain the best candidates.">Search partner ski ideas</button>
+              <button class="prompt-chip" type="button" data-prompt="Search for basic Avoriaz ski trip ideas and explain the best candidates.">Search ski trip ideas</button>
             </div>
             <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
           </div>
@@ -999,16 +999,16 @@
                 <button type="button" id="phone-menu-brief">Add Avoriaz Brief</button>
               </nav>
 
-              <div class="phone-greeting">Hi Dan 👋<br>Planning a skiweekend<br>in Avoriaz?</div>
+              <div class="phone-greeting">Hi Dan 👋<br>Planning a short ski trip<br>in Avoriaz?</div>
               <p class="phone-helper">I'll plan your perfect trip in seconds.</p>
 
               <div class="phone-chat" id="phone-chat">
                 <button class="phone-bubble user" type="button" id="phone-sample-prompt">
-                  I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.
+                  I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.
                   <span class="phone-time">10:42</span>
                 </button>
                 <div class="phone-bubble agent">
-                  Perfect! Here's your AI-curated Skiweekend in Avoriaz.
+                  Perfect! Here's your AI-curated short ski trip in Avoriaz.
                   <div class="phone-card">
                     <img src="./assets/chalet-poudreuse-interior.png" alt="Chalet Poudreuse living room">
                     <div class="phone-card-body">
@@ -1075,7 +1075,7 @@
 
     <section class="feature-band">
       <div class="page-section">
-        <h2>The smarter way to skiweekend</h2>
+        <h2>The smarter way to plan short ski trips</h2>
         <div class="feature-grid">
           <article class="feature">
             <span class="icon" aria-hidden="true">✦</span>
@@ -1085,7 +1085,7 @@
           <article class="feature">
             <span class="icon" aria-hidden="true">⌂</span>
             <h3>Handpicked chalets</h3>
-            <p>SkiWeekends and Flexiski inventory gives the human team strong options to verify.</p>
+            <p>Specialist chalet inventory gives the human team strong options to verify.</p>
           </article>
           <article class="feature">
             <span class="icon" aria-hidden="true">☷</span>
@@ -1144,8 +1144,8 @@
       </div>
     </section>
 
-    <section class="page-section" id="skiweekends">
-      <p class="eyebrow">Skiweekends</p>
+    <section class="page-section" id="workflow">
+      <p class="eyebrow">Workflow</p>
       <h2>How the booking flow works</h2>
       <div class="steps">
         <article class="step">
@@ -1154,7 +1154,7 @@
         </article>
         <article class="step">
           <h3>2. Build a brief</h3>
-          <p>The AI writes a structured handoff for SkiWeekends and Flexiski-style inventory review.</p>
+          <p>The AI writes a structured handoff for specialist inventory review.</p>
         </article>
         <article class="step">
           <h3>3. Human verifies</h3>
@@ -1250,7 +1250,7 @@
         }
       }
       if (!leadDates.value.trim()) {
-        const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|skiweekend|january|february|march|april)\b[^,.]*/i);
+        const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
         if (travel) {
           const resort = lower.includes("avoriaz") && !/avoriaz/i.test(travel[0]) ? ", Avoriaz" : "";
           leadDates.value = `${travel[0].trim()}${resort}`;
@@ -1288,7 +1288,7 @@
 
     function bindPhoneSamplePrompt() {
       document.querySelector("#phone-sample-prompt")?.addEventListener("click", () => {
-        applyPrompt("I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.");
+        applyPrompt("I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.");
       });
     }
 
@@ -1376,7 +1376,7 @@
 
     async function runRealtimeTool(call) {
       if (!call?.call_id || call.name !== "search_ski_holidays") return;
-      setStatus("Checking SkiWeekends and Flexiski candidate information.", "ready");
+      setStatus("Checking ski trip candidate information.", "ready");
       let args = {};
       try {
         args = JSON.parse(call.arguments || "{}");
@@ -1584,7 +1584,7 @@
     document.querySelector(".sample-brief-button")?.addEventListener("click", () => {
       leadNotes.value = [
         leadNotes.value,
-        "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until SkiWeekends/Flexiski or a human specialist verifies live inventory, dates, price, and inclusions."
+        "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until a human specialist verifies live inventory, dates, price, and inclusions."
       ].filter(Boolean).join("\n\n");
       setStatus("Chalet Poudreuse added as an illustrative candidate.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1609,7 +1609,7 @@
       leadDates.value = leadDates.value || "Friday to Sunday in Avoriaz";
       leadNotes.value = [
         leadNotes.value,
-        "Phone preview action: Dan is interested in an Avoriaz skiweekend for 2 people, Friday to Sunday. Prioritise ski-in / ski-out, short transfer, and human-verified pricing."
+        "Phone preview action: Dan is interested in an Avoriaz short ski trip for 2 people, Friday to Sunday. Prioritise ski-in / ski-out, short transfer, and human-verified pricing."
       ].filter(Boolean).join("\n\n");
       setStatus("Dan's Avoriaz brief added from the phone preview.", "ready");
       document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
@@ -1619,7 +1619,7 @@
 
     phoneForm.addEventListener("submit", (event) => {
       event.preventDefault();
-      const text = phoneInput.value.trim() || "I want to go to Avoriaz for a skiweekend Friday to Sunday, 2 people.";
+      const text = phoneInput.value.trim() || "I want to go to Avoriaz for a short ski trip Friday to Sunday, 2 people.";
       phoneInput.value = "";
       applyPrompt(text);
     });
