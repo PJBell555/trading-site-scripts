@@ -864,6 +864,9 @@ let strategyEdits = {};
 let backendSyncInFlight = false;
 let backendHistoryWriteInFlight = false;
 let backendSettingsSyncInFlight = false;
+let modelSettingsSaveInFlight = false;
+let localModelSettingsUpdatedAt = "";
+let modelSettingsSaveSequence = 0;
 let backendAdvisorySyncInFlight = false;
 let backendMicroPredictionSyncInFlight = false;
 let backendHistoryReady = false;
@@ -1972,9 +1975,57 @@ function getSharedModelSettingsPayload() {
   });
 }
 
-function saveModelSettings() {
-  sharedModelSettings = getSharedModelSettingsPayload();
-  saveSharedSettings();
+function shouldApplyCloudModelSettings(settings = {}) {
+  if (!modelSettingsSaveInFlight && !localModelSettingsUpdatedAt) return true;
+  const cloudUpdatedAt = getTransactionDate(settings.updatedAt).getTime();
+  const localUpdatedAt = getTransactionDate(localModelSettingsUpdatedAt).getTime();
+  if (!localUpdatedAt) return true;
+  return Boolean(cloudUpdatedAt && cloudUpdatedAt >= localUpdatedAt);
+}
+
+async function persistModelSettingsToCloud(settings) {
+  sharedModelSettings = normalizeModelSettings(settings);
+  localModelSettingsUpdatedAt = sharedModelSettings.updatedAt || new Date().toISOString();
+  const saveSequence = ++modelSettingsSaveSequence;
+  modelSettingsSaveInFlight = true;
+  if (secondOpinionStatusEl) secondOpinionStatusEl.textContent = "Saving model selections to Cloudflare";
+
+  if (!hasHistoryBackend()) {
+    modelSettingsSaveInFlight = false;
+    if (secondOpinionStatusEl) secondOpinionStatusEl.textContent = "Cloudflare settings unavailable";
+    return false;
+  }
+
+  try {
+    const response = await fetchWithTimeout(getSharedSettingsUrl(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        settingsLoadedAt: sharedSettingsLoadedAt,
+        modelSettings: sharedModelSettings
+      })
+    }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    if (!response.ok) throw new Error("model settings save failed");
+
+    const data = await response.json();
+    if (saveSequence !== modelSettingsSaveSequence) return true;
+    sharedSettingsLoadedAt = data?.settings?.generatedAt || sharedSettingsLoadedAt || new Date().toISOString();
+    if (data?.settings?.modelSettings) applyModelSettings(data.settings.modelSettings);
+    modelSettingsSaveInFlight = false;
+    localModelSettingsUpdatedAt = "";
+    if (secondOpinionStatusEl) secondOpinionStatusEl.textContent = `${getSelectedSecondOpinionModels().length} second-opinion gate model${getSelectedSecondOpinionModels().length === 1 ? "" : "s"} saved in Cloudflare`;
+    return true;
+  } catch (error) {
+    if (saveSequence !== modelSettingsSaveSequence) return false;
+    modelSettingsSaveInFlight = false;
+    nextBackendSettingsSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
+    if (secondOpinionStatusEl) secondOpinionStatusEl.textContent = "Model selections save failed";
+    return false;
+  }
+}
+
+async function saveModelSettings() {
+  return persistModelSettingsToCloud(getSharedModelSettingsPayload());
 }
 
 function loadModelSettings() {
@@ -2668,14 +2719,15 @@ async function renderTokenCosts() {
 }
 
 function persistModelRoleChanges() {
-  sharedModelSettings = normalizeModelSettings({
+  const nextModelSettings = normalizeModelSettings({
     ...sharedModelSettings,
     primaryModelId,
     criticModelId: secondaryModelId,
     updatedAt: new Date().toISOString(),
     updatedBy: getCurrentUserProfile()?.email || getCurrentAccessEmail() || ""
   });
-  saveSharedSettings();
+  sharedModelSettings = nextModelSettings;
+  persistModelSettingsToCloud(nextModelSettings);
   renderPrimaryModelSelector();
   renderSecondOpinionControls();
   renderTokenCosts();
@@ -11220,7 +11272,10 @@ async function loadSharedSettings(manual = false) {
     const usersChanged = mergeSharedUsers(settings.users);
     const profilesChanged = mergeSharedUserProfiles(settings.userProfiles);
     const appStateChanged = applySharedAppState(settings.appState);
-    applyModelSettings(settings.modelSettings || sharedModelSettings);
+    const cloudModelSettings = settings.modelSettings || sharedModelSettings;
+    if (shouldApplyCloudModelSettings(cloudModelSettings)) {
+      applyModelSettings(cloudModelSettings);
+    }
     const cloudPromptIds = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []);
     syncSecondOpinionPromptSettings();
     const promptSettingsChanged = JSON.stringify(sharedModelSettings.secondOpinionPrompts || []) !== cloudPromptIds;
