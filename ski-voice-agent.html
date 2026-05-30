@@ -174,8 +174,8 @@
       border-radius: 8px;
       display: grid;
       flex: 1 1 520px;
-      grid-template-columns: 1.12fr 1fr 0.92fr;
-      max-width: 720px;
+      grid-template-columns: 1.05fr 0.95fr 0.95fr 0.85fr;
+      max-width: 900px;
       min-width: 360px;
       overflow: hidden;
     }
@@ -866,7 +866,27 @@
             <span class="customer-pill" id="banner-customer-name" data-visible="false"></span>
             <span id="banner-trip-name">Trip</span>
           </small>
-          <strong id="banner-destination">Where are you going?</strong>
+          <strong id="banner-trip-label">Plan details</strong>
+        </span>
+      </div>
+      <div class="trip-strip-cell">
+        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 18 9 8l4 6 3-4 4 8H4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M8 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+        </svg>
+        <span class="trip-strip-copy">
+          <small>Destination</small>
+          <strong id="banner-destination">Destination not set</strong>
+        </span>
+      </div>
+      <div class="trip-strip-cell">
+        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M5 19V8l7-4 7 4v11" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M9 19v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+        </svg>
+        <span class="trip-strip-copy">
+          <small>Chalet</small>
+          <strong id="banner-chalet">Chalet not set</strong>
         </span>
       </div>
       <div class="trip-strip-cell">
@@ -893,7 +913,6 @@
     <nav class="nav" aria-label="Landing page navigation">
       <a href="#destinations">Destinations</a>
       <a href="#chalets">Chalets</a>
-      <a href="#workflow">How It Works</a>
       <a href="#about">About Us</a>
     </nav>
   </header>
@@ -957,7 +976,10 @@
             <p class="eyebrow">Chalet Type</p>
             <h3>What sort of chalet fits?</h3>
           </div>
-          <p id="chalet-style-summary">Ski-in / ski-out, short transfer, breakfast included. Refine this as the conversation develops.</p>
+          <label>
+            Chalet preference
+            <input id="lead-chalet" placeholder="Ski-in / ski-out, catered, village location" title="Enter the chalet type, board basis, or accommodation style.">
+          </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to ski-in ski-out if possible, with a short transfer and breakfast included.">Ski-in / Ski-out</button>
             <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to a lively village location with restaurants nearby.">Village Location</button>
@@ -971,9 +993,13 @@
             <p class="eyebrow">Resort</p>
             <h3>Where should we focus?</h3>
           </div>
-          <p id="resort-summary">Avoriaz is the starter example. The concierge can compare other European resorts as the brief develops.</p>
+          <label>
+            Destination
+            <input id="lead-destination" placeholder="Avoriaz, Morzine, Chamonix" title="Enter the destination or resort the trip should focus on.">
+          </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="Keep Avoriaz as the main resort but compare similar European ski resorts for a short trip.">Compare Resorts</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-destination">Edit</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the resort choice.">Talk Resort</button>
           </div>
         </article>
@@ -1081,9 +1107,10 @@
       </div>
     </section>
 
-    <section class="page-section" id="workflow">
-      <p class="eyebrow">Workflow</p>
-      <h2>How the booking flow works</h2>
+    <section class="page-section" id="about">
+      <p class="eyebrow">About us</p>
+      <h2>AI speed, specialist judgment</h2>
+      <p class="section-lede">This prototype is built for US customers who need help translating European ski inventory into a confident plan. The AI qualifies and summarizes. A human travel booking specialist verifies everything commercial before a quote or booking link is sent.</p>
       <div class="steps">
         <article class="step">
           <h3>1. Talk it through</h3>
@@ -1098,12 +1125,6 @@
           <p>The human travel booking specialist confirms availability, final price, package rules, and booking links.</p>
         </article>
       </div>
-    </section>
-
-    <section class="page-section" id="about">
-      <p class="eyebrow">About us</p>
-      <h2>AI speed, specialist judgment</h2>
-      <p class="section-lede">This prototype is built for US customers who need help translating European ski inventory into a confident plan. The AI qualifies and summarizes. A human travel booking specialist verifies everything commercial before a quote or booking link is sent.</p>
     </section>
   </main>
 
@@ -1127,14 +1148,15 @@
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
-    const chaletStyleSummary = document.querySelector("#chalet-style-summary");
-    const resortSummary = document.querySelector("#resort-summary");
+    const leadChalet = document.querySelector("#lead-chalet");
+    const leadDestination = document.querySelector("#lead-destination");
     const groupSummary = document.querySelector("#group-summary");
     const conciergeForm = document.querySelector("#concierge-form");
     const conciergeInput = document.querySelector("#concierge-input");
     const bannerCustomerName = document.querySelector("#banner-customer-name");
     const bannerTripName = document.querySelector("#banner-trip-name");
     const bannerDestination = document.querySelector("#banner-destination");
+    const bannerChalet = document.querySelector("#banner-chalet");
     const bannerDates = document.querySelector("#banner-dates");
     const bannerParty = document.querySelector("#banner-party");
 
@@ -1183,22 +1205,6 @@
       statusEl.dataset.state = state;
     }
 
-    function extractDestination(notes) {
-      const destinationMatches = [
-        ["avoriaz", "Avoriaz"],
-        ["morzine", "Morzine"],
-        ["chamonix", "Chamonix"],
-        ["val d'isere", "Val d'Isere"],
-        ["val d isere", "Val d'Isere"],
-        ["courchevel", "Courchevel"],
-        ["meribel", "Meribel"],
-        ["verbier", "Verbier"]
-      ];
-      const haystack = `${leadDates.value} ${notes}`.toLowerCase();
-      const match = destinationMatches.find(([needle]) => haystack.includes(needle));
-      return match ? match[1] : "";
-    }
-
     function extractParty(notes) {
       const lower = notes.toLowerCase();
       const adults = lower.match(/(\d+)\s*adults?/);
@@ -1217,28 +1223,25 @@
       const customerName = leadName.value.trim();
       bannerCustomerName.textContent = customerName;
       bannerCustomerName.dataset.visible = customerName ? "true" : "false";
-      const notes = leadNotes.value.toLowerCase();
-      const destination = extractDestination(notes);
-      bannerDestination.textContent = destination || "Where are you going?";
+      const destination = leadDestination.value.trim();
+      bannerDestination.textContent = destination || "Destination not set";
       bannerTripName.textContent = destination ? `${destination} ski trip` : "Trip";
+      bannerChalet.textContent = leadChalet.value.trim() || "Chalet not set";
       bannerDates.textContent = leadDates.value.trim() || "Check-in date - Check-out date";
+      const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = extractParty(notes);
       if (notes.includes("village")) {
-        chaletStyleSummary.textContent = "Lively village location with restaurants nearby.";
+        leadChalet.value = leadChalet.value || "Village location";
       } else if (notes.includes("ski-in") || notes.includes("ski in")) {
-        chaletStyleSummary.textContent = "Ski-in / ski-out, short transfer, breakfast included.";
-      } else {
-        chaletStyleSummary.textContent = "Short chalet trip. Refine this as the conversation develops.";
+        leadChalet.value = leadChalet.value || "Ski-in / ski-out";
       }
-      if (notes.includes("morzine")) resortSummary.textContent = "Morzine is being considered for easy Geneva access and village feel.";
-      if (notes.includes("chamonix")) resortSummary.textContent = "Chamonix is being considered for scenery, dining, and advanced terrain.";
       if (notes.includes("family") || notes.includes("group")) groupSummary.textContent = "Group details are being captured in the specialist notes.";
     }
 
     function getTopicState() {
       return {
-        chaletStyle: chaletStyleSummary.textContent,
-        resort: resortSummary.textContent,
+        chaletStyle: leadChalet.value,
+        resort: leadDestination.value,
         group: groupSummary.textContent
       };
     }
@@ -1266,6 +1269,8 @@
         email: leadEmail.value,
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
+        destination: leadDestination.value,
+        chaletPreference: leadChalet.value,
         notes: leadNotes.value,
         transcript,
         topicState: getTopicState(),
@@ -1280,6 +1285,8 @@
         || leadEmail.value.trim()
         || leadCity.value.trim()
         || leadDates.value.trim()
+        || leadDestination.value.trim()
+        || leadChalet.value.trim()
         || leadNotes.value.trim()
         || transcript.length;
       if (!hasTripData && !cloudTripId) return null;
@@ -1375,10 +1382,10 @@
       leadEmail.value = trip.email || "";
       leadCity.value = trip.departureCity || "";
       leadDates.value = trip.travelWindow || "";
+      leadDestination.value = trip.destination || trip.topicState?.resort || "";
+      leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
       leadNotes.value = trip.notes || "";
       transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
-      if (trip.topicState?.chaletStyle) chaletStyleSummary.textContent = trip.topicState.chaletStyle;
-      if (trip.topicState?.resort) resortSummary.textContent = trip.topicState.resort;
       if (trip.topicState?.group) groupSummary.textContent = trip.topicState.group;
       renderTranscript();
       updateTripSummary();
@@ -1443,11 +1450,18 @@
       if (!leadDates.value.trim()) {
         const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
         if (travel) {
-          const resort = lower.includes("avoriaz") && !/avoriaz/i.test(travel[0]) ? ", Avoriaz" : "";
-          leadDates.value = `${travel[0].trim()}${resort}`;
-        } else if (lower.includes("avoriaz")) {
-          leadDates.value = "Avoriaz";
+          leadDates.value = travel[0].trim();
         }
+      }
+      if (!leadDestination.value.trim()) {
+        if (lower.includes("avoriaz")) leadDestination.value = "Avoriaz";
+        else if (lower.includes("morzine")) leadDestination.value = "Morzine";
+        else if (lower.includes("chamonix")) leadDestination.value = "Chamonix";
+      }
+      if (!leadChalet.value.trim()) {
+        if (lower.includes("ski-in") || lower.includes("ski in")) leadChalet.value = "Ski-in / ski-out";
+        else if (lower.includes("village")) leadChalet.value = "Village location";
+        else if (lower.includes("catered")) leadChalet.value = "Catered chalet";
       }
     }
 
@@ -1459,6 +1473,8 @@
       leadEmail.value = "";
       leadCity.value = "";
       leadDates.value = "";
+      leadDestination.value = "";
+      leadChalet.value = "";
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
       if (conciergeInput) conciergeInput.value = "";
@@ -1473,7 +1489,8 @@
       const lower = prompt.toLowerCase();
       if (lower.includes("avoriaz")) {
         leadCity.value = leadCity.value || "New York / Boston";
-        leadDates.value = leadDates.value || "Friday to Sunday, Avoriaz";
+        leadDates.value = leadDates.value || "Friday to Sunday";
+        leadDestination.value = leadDestination.value || "Avoriaz";
         return "Perfect. For Avoriaz, I would prepare a short-break brief around ski-in / ski-out chalet options, Geneva transfers, lift passes, rentals, and a human check on live availability before quoting.";
       }
       if (lower.includes("family")) {
@@ -1727,6 +1744,8 @@
         email: document.querySelector("#lead-email").value,
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
+        destination: leadDestination.value,
+        chaletPreference: leadChalet.value,
         notes: leadNotes.value,
         transcript,
         source: "ski-voice-agent-web"
@@ -1775,7 +1794,7 @@
       });
     });
 
-    [leadCity, leadDates, leadNotes].forEach((field) => {
+    [leadCity, leadDates, leadDestination, leadChalet, leadNotes].forEach((field) => {
       field.addEventListener("input", () => {
         updateTripSummary();
         scheduleCloudTripSave("field-edit");

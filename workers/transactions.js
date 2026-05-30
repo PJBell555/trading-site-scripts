@@ -2600,6 +2600,8 @@ async function ensureSkiTripSchemaD1(env) {
 }
 
 function normalizeSkiTripRow(row = {}) {
+  const payload = JSON.parse(row.payload_json || "{}");
+  const topicState = JSON.parse(row.topic_state_json || "{}");
   return {
     tripId: row.trip_id,
     createdAt: row.created_at,
@@ -2609,10 +2611,12 @@ function normalizeSkiTripRow(row = {}) {
     email: row.customer_email || "",
     departureCity: row.departure_city || "",
     travelWindow: row.travel_window || "",
+    destination: payload.destination || topicState.resort || "",
+    chaletPreference: payload.chaletPreference || topicState.chaletStyle || "",
     notes: row.notes || "",
     transcript: JSON.parse(row.transcript_json || "[]"),
-    topicState: JSON.parse(row.topic_state_json || "{}"),
-    payload: JSON.parse(row.payload_json || "{}"),
+    topicState,
+    payload,
     confirmationSentAt: row.confirmation_sent_at || "",
     confirmationEmail: row.confirmation_email || "",
     confirmationProviderId: row.confirmation_provider_id || ""
@@ -2809,7 +2813,9 @@ async function handleSkiTrips(env, request, origin) {
   const payload = {
     source: skiJson(body.source, "ski-voice-agent-web").slice(0, 120),
     userAgent: skiJson(request.headers.get("User-Agent")).slice(0, 300),
-    lastSaveReason: skiJson(body.reason).slice(0, 80)
+    lastSaveReason: skiJson(body.reason).slice(0, 80),
+    destination: skiJson(body.destination).slice(0, 160),
+    chaletPreference: skiJson(body.chaletPreference).slice(0, 220)
   };
 
   await safeD1Run(env, `
@@ -3054,6 +3060,8 @@ async function handleSkiLeads(env, request, origin) {
     budgetPerPersonUsd: body.budgetPerPersonUsd || null,
     resortPreferences: body.resortPreferences || [],
     accommodationPreference: body.accommodationPreference || null,
+    destination: body.destination || null,
+    chaletPreference: body.chaletPreference || null,
     source: body.source || "ski-voice-agent-web"
   };
 
