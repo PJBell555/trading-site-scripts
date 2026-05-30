@@ -1045,7 +1045,7 @@
         <div>
           <p class="eyebrow">British chalet holidays reimagined by AI</p>
           <h1>European ski trips, made effortless <em>by AI</em></h1>
-          <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget, and it prepares a UK specialist to verify the best-fit chalet options.</p>
+          <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget, and it prepares a human travel booking specialist to verify the best-fit chalet options.</p>
           <div class="hero-actions">
             <button class="primary" type="button" id="start-button">Start Voice Session</button>
             <button class="danger" type="button" id="stop-button" disabled>Stop</button>
@@ -1207,7 +1207,7 @@
 
         <aside class="brief-card handoff-envelope trip-card large" aria-label="Human review brief">
           <div class="handoff-label"><span>@</span> Human handoff email</div>
-          <h3>Trip summary for UK specialist</h3>
+          <h3>Trip summary for a human travel booking specialist</h3>
           <form class="lead-form" id="lead-form">
             <div class="lead-grid">
               <label>
@@ -1283,7 +1283,7 @@
       <div class="chalet-grid">
         <article class="chalet">
           <h3>Chalet Poudreuse, Avoriaz</h3>
-          <p>Good fit for a small US group asking for a high-convenience weekend. Human specialist must verify live availability, price, inclusions, and transfer options.</p>
+          <p>Good fit for a small US group asking for a high-convenience weekend. A human travel booking specialist must verify live availability, price, inclusions, and transfer options.</p>
           <div class="chalet-meta">
             <span class="pill">Ski-in / Ski-out</span>
             <span class="pill">2-4 nights</span>
@@ -1314,7 +1314,7 @@
         </article>
         <article class="step">
           <h3>3. Human verifies</h3>
-          <p>The UK specialist confirms availability, final price, package rules, and booking links.</p>
+          <p>The human travel booking specialist confirms availability, final price, package rules, and booking links.</p>
         </article>
       </div>
     </section>
@@ -1322,7 +1322,7 @@
     <section class="page-section" id="about">
       <p class="eyebrow">About us</p>
       <h2>AI speed, specialist judgment</h2>
-      <p class="section-lede">This prototype is built for US customers who need help translating European ski inventory into a confident plan. The AI qualifies and summarizes. The England-based human team verifies everything commercial before a quote or booking link is sent.</p>
+      <p class="section-lede">This prototype is built for US customers who need help translating European ski inventory into a confident plan. The AI qualifies and summarizes. A human travel booking specialist verifies everything commercial before a quote or booking link is sent.</p>
     </section>
   </main>
 
@@ -1631,7 +1631,7 @@
         return "For a family of 5, I need rooming, children ages, ski levels, lesson needs, and whether catered chalet meals are important. I will keep the budget target visible for the specialist.";
       }
       if (lower.includes("geneva")) {
-        return "I will prioritise resorts with easier Geneva access, short transfer time, and high-convenience accommodation. The human specialist should verify transfer options before sending a quote.";
+        return "I will prioritise resorts with easier Geneva access, short transfer time, and high-convenience accommodation. The human travel booking specialist should verify transfer options before sending a quote.";
       }
       return "I will capture apres preference, rentals, lift passes, and package extras, then hand the final shortlist to a specialist for availability and pricing confirmation.";
     }
@@ -1949,7 +1949,7 @@
     document.querySelector(".sample-brief-button")?.addEventListener("click", () => {
       leadNotes.value = [
         leadNotes.value,
-        "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until a human specialist verifies live inventory, dates, price, and inclusions."
+        "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until a human travel booking specialist verifies live inventory, dates, price, and inclusions."
       ].filter(Boolean).join("\n\n");
       updateTripSummary();
       scheduleCloudTripSave("chalet");
