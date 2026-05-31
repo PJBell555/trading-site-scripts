@@ -278,7 +278,7 @@
         linear-gradient(180deg, rgba(7, 30, 52, 0.42) 0%, rgba(7, 30, 52, 0.1) 64%, rgba(245, 247, 251, 1) 100%),
         url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
       color: #fff;
-      height: clamp(340px, 38vh, 420px);
+      height: clamp(275px, 31vh, 335px);
       overflow: hidden;
       position: sticky;
       top: 70px;
@@ -586,7 +586,7 @@
     .trip-workspace {
       background: #eef3f8;
       min-height: calc(66vh - 70px);
-      padding: 16px clamp(18px, 4vw, 42px) 54px;
+      padding: 10px clamp(18px, 4vw, 42px) 54px;
     }
 
     .trip-workspace-inner {
@@ -935,11 +935,6 @@
         </span>
       </div>
     </div>
-    <nav class="nav" aria-label="Landing page navigation">
-      <a href="#destinations">Destinations</a>
-      <a href="#chalets">Chalets</a>
-      <a href="#about">About Us</a>
-    </nav>
   </header>
 
   <main>
@@ -1034,9 +1029,13 @@
             <p class="eyebrow">Group</p>
             <h3>Who is travelling?</h3>
           </div>
-          <p id="group-summary">Group size, ages, ski levels, lessons, rooming, and dietary notes will appear in the specialist notes as you talk.</p>
+          <label>
+            Group details
+            <input id="lead-group" placeholder="2 adults, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
+          </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="I want to update the group details: number of people, ages, ski levels, lessons, and rooming needs.">Update Group</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-group">Edit</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the group details.">Talk Group</button>
           </div>
         </article>
@@ -1175,7 +1174,7 @@
     const leadDates = document.querySelector("#lead-dates");
     const leadChalet = document.querySelector("#lead-chalet");
     const leadDestination = document.querySelector("#lead-destination");
-    const groupSummary = document.querySelector("#group-summary");
+    const leadGroup = document.querySelector("#lead-group");
     const conciergeForm = document.querySelector("#concierge-form");
     const conciergeInput = document.querySelector("#concierge-input");
     const bannerCustomerName = document.querySelector("#banner-customer-name");
@@ -1238,6 +1237,7 @@
         || leadDates.value.trim()
         || leadDestination.value.trim()
         || leadChalet.value.trim()
+        || leadGroup.value.trim()
         || leadNotes.value.trim()
         || transcript.length
         || cloudTripId
@@ -1268,21 +1268,20 @@
       bannerChalet.textContent = leadChalet.value.trim() || "Chalet not set";
       bannerDates.textContent = leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
-      bannerParty.textContent = extractParty(notes);
+      bannerParty.textContent = leadGroup.value.trim() || extractParty(notes);
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
       if (notes.includes("village")) {
         leadChalet.value = leadChalet.value || "Village location";
       } else if (notes.includes("ski-in") || notes.includes("ski in")) {
         leadChalet.value = leadChalet.value || "Ski-in / ski-out";
       }
-      if (notes.includes("family") || notes.includes("group")) groupSummary.textContent = "Group details are being captured in the specialist notes.";
     }
 
     function getTopicState() {
       return {
         chaletStyle: leadChalet.value,
         resort: leadDestination.value,
-        group: groupSummary.textContent
+        group: leadGroup.value
       };
     }
 
@@ -1311,6 +1310,7 @@
         travelWindow: leadDates.value,
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
+        groupDetails: leadGroup.value,
         notes: leadNotes.value,
         transcript,
         topicState: getTopicState(),
@@ -1416,9 +1416,9 @@
       leadDates.value = trip.travelWindow || "";
       leadDestination.value = trip.destination || trip.topicState?.resort || "";
       leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
+      leadGroup.value = trip.groupDetails || trip.topicState?.group || "";
       leadNotes.value = trip.notes || "";
       transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
-      if (trip.topicState?.group) groupSummary.textContent = trip.topicState.group;
       renderTranscript();
       updateTripSummary();
       isHydratingTrip = false;
@@ -1495,6 +1495,17 @@
         else if (lower.includes("village")) leadChalet.value = "Village location";
         else if (lower.includes("catered")) leadChalet.value = "Catered chalet";
       }
+      if (!leadGroup.value.trim()) {
+        const people = text.match(/(\d+)\s*(people|guests|persons?|travellers?|travelers?)/i);
+        const adults = text.match(/(\d+)\s*adults?/i);
+        const children = text.match(/(\d+)\s*children?/i);
+        const rooms = text.match(/(\d+)\s*rooms?/i);
+        if (adults || children || rooms) {
+          leadGroup.value = `${adults?.[1] || 0} adults, ${children?.[1] || 0} children, ${rooms?.[1] || 1} room`;
+        } else if (people) {
+          leadGroup.value = `${people[1]} people`;
+        }
+      }
     }
 
     function resetTrip({ keepStatus = false } = {}) {
@@ -1507,6 +1518,7 @@
       leadDates.value = "";
       leadDestination.value = "";
       leadChalet.value = "";
+      leadGroup.value = "";
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
       if (conciergeInput) conciergeInput.value = "";
@@ -1778,6 +1790,7 @@
         travelWindow: leadDates.value,
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
+        groupDetails: leadGroup.value,
         notes: leadNotes.value,
         transcript,
         source: "ski-voice-agent-web"
@@ -1826,7 +1839,7 @@
       });
     });
 
-    [leadCity, leadDates, leadDestination, leadChalet, leadNotes].forEach((field) => {
+    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, leadNotes].forEach((field) => {
       field.addEventListener("input", () => {
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
