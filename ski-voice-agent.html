@@ -153,22 +153,6 @@
       font-size: 0.78rem;
     }
 
-    .customer-pill {
-      color: #a8dcff;
-      display: block;
-      font-size: 0.78rem;
-      font-weight: 900;
-      line-height: 1.1;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      text-transform: none;
-      white-space: nowrap;
-    }
-
-    .customer-pill[data-visible="true"] {
-      display: block;
-    }
-
     .header-trip-strip {
       align-items: stretch;
       border: 2px solid #f4b000;
@@ -241,17 +225,6 @@
       color: var(--ink);
       font-size: 0.78rem;
       line-height: 1.15;
-    }
-
-    .trip-strip-meta {
-      color: var(--muted);
-      display: block;
-      font-size: 0.68rem;
-      font-weight: 800;
-      margin-top: 2px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .nav {
@@ -958,32 +931,29 @@
           <path d="M8 6V4h8v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <span class="trip-strip-copy">
-          <small>
-            <span class="customer-pill" id="banner-customer-name" data-visible="false"></span>
-            <span id="banner-trip-name">Trip</span>
-          </small>
-          <strong id="banner-trip-label">Plan details</strong>
-          <span class="trip-strip-meta" id="banner-party">Party not set</span>
+          <small>Trip ID</small>
+          <strong id="banner-trip-id">New trip</strong>
         </span>
       </div>
       <div class="trip-strip-cell">
         <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M4 18 9 8l4 6 3-4 4 8H4Z" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M8 18h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M20 21a8 8 0 0 0-16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M12 13a5 5 0 1 0 0-10 5 5 0 0 0 0 10Z" stroke="currentColor" stroke-width="2"/>
         </svg>
         <span class="trip-strip-copy">
-          <small>Destination</small>
-          <strong id="banner-destination">Destination not set</strong>
+          <small>Name</small>
+          <strong id="banner-customer-name">Name not set</strong>
         </span>
       </div>
       <div class="trip-strip-cell">
         <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M5 19V8l7-4 7 4v11" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
-          <path d="M9 19v-6h6v6" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>
+          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+          <path d="M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="2"/>
+          <path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
         </svg>
         <span class="trip-strip-copy">
-          <small>Chalet</small>
-          <strong id="banner-chalet">Chalet not set</strong>
+          <small>Party</small>
+          <strong id="banner-party">Party not set</strong>
         </span>
       </div>
       <div class="trip-strip-cell">
@@ -1396,10 +1366,8 @@
     const leadSkiPasses = document.querySelector("#lead-ski-passes");
     const conciergeForm = document.querySelector("#concierge-form");
     const conciergeInput = document.querySelector("#concierge-input");
+    const bannerTripId = document.querySelector("#banner-trip-id");
     const bannerCustomerName = document.querySelector("#banner-customer-name");
-    const bannerTripName = document.querySelector("#banner-trip-name");
-    const bannerDestination = document.querySelector("#banner-destination");
-    const bannerChalet = document.querySelector("#banner-chalet");
     const bannerDates = document.querySelector("#banner-dates");
     const bannerParty = document.querySelector("#banner-party");
 
@@ -1572,14 +1540,9 @@
 
     function updateTripSummary() {
       const customerName = leadName.value.trim();
-      bannerCustomerName.textContent = customerName;
-      bannerCustomerName.dataset.visible = customerName ? "true" : "false";
+      bannerTripId.textContent = cloudTripId || "New trip";
+      bannerCustomerName.textContent = customerName || "Name not set";
       const bookingDetails = getBookingDetails();
-      const destination = bookingDetails.destination || leadDestination.value.trim();
-      bannerDestination.textContent = destination || "Destination not set";
-      const country = bookingDetails.country || leadCountry.value.trim();
-      bannerTripName.textContent = destination ? `${destination} ski trip` : country ? `${country} ski trip` : "Trip";
-      bannerChalet.textContent = bookingDetails.chaletNames || leadChalet.value.trim() || "Chalet not set";
       bannerDates.textContent = bookingDetails.dates || leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
