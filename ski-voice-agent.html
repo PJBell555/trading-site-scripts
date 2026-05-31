@@ -1356,92 +1356,6 @@
       </div>
     </section>
 
-    <section class="feature-band">
-      <div class="page-section">
-        <h2>The smarter way to plan short ski trips</h2>
-        <div class="feature-grid">
-          <article class="feature">
-            <h3>AI-powered planning</h3>
-            <p>Tell us what you want and the concierge turns it into a clear, review-ready trip brief.</p>
-          </article>
-          <article class="feature">
-            <h3>Handpicked chalets</h3>
-            <p>Specialist chalet inventory gives the human team strong options to verify.</p>
-          </article>
-          <article class="feature">
-            <h3>Everything sorted</h3>
-            <p>Transfers, lift passes, rentals, lessons, dietary notes, and rooming needs captured early.</p>
-          </article>
-          <article class="feature">
-            <h3>Weekend maximised</h3>
-            <p>Built for 2-4 night trips where airport choice and transfer time matter.</p>
-          </article>
-        </div>
-      </div>
-    </section>
-
-    <section class="page-section" id="destinations">
-      <p class="eyebrow">Destinations</p>
-      <h2>Start with resorts that fit short trips</h2>
-      <p class="section-lede">Use these as a guide for the kinds of trips the concierge can help qualify. The live trip details stay in the chat and handoff email at the top of the page.</p>
-      <div class="destination-grid">
-        <a class="destination" href="#concierge">
-          <strong>Avoriaz</strong>
-          <span>1800m, Portes du Soleil, ski-in / ski-out focus.</span>
-        </a>
-        <a class="destination" href="#concierge">
-          <strong>Morzine</strong>
-          <span>Classic chalet base with easy Geneva transfers.</span>
-        </a>
-        <a class="destination" href="#concierge">
-          <strong>Chamonix</strong>
-          <span>Big scenery, strong dining, best for confident skiers.</span>
-        </a>
-      </div>
-    </section>
-
-    <section class="page-section" id="chalets">
-      <p class="eyebrow">Chalets</p>
-      <h2>Example chalet shortlist</h2>
-      <div class="chalet-grid">
-        <article class="chalet">
-          <h3>Chalet Poudreuse, Avoriaz</h3>
-          <p>Good fit for a small US group asking for a high-convenience weekend. A human travel booking specialist must verify live availability, price, inclusions, and transfer options.</p>
-          <div class="chalet-meta">
-            <span class="pill">Ski-in / Ski-out</span>
-            <span class="pill">2-4 nights</span>
-            <span class="pill">Breakfast included</span>
-            <span class="pill">From estimate only</span>
-          </div>
-          <a class="button dark" href="#concierge">Discuss This Chalet</a>
-        </article>
-        <article class="chalet">
-          <h3>What the AI checks</h3>
-          <p>Group size, rooming, ski level, dates, airport, budget, transfer tolerance, board basis, dietary needs, lessons, rentals, and whether the customer needs a short-break package or full chalet week.</p>
-          <a class="button secondary" href="#concierge">Ask the Concierge</a>
-        </article>
-      </div>
-    </section>
-
-    <section class="page-section" id="about">
-      <p class="eyebrow">About us</p>
-      <h2>AI speed, specialist judgment</h2>
-      <p class="section-lede">This prototype is built for US customers who need help translating European ski inventory into a confident plan. The AI qualifies and summarizes. A human travel booking specialist verifies everything commercial before a quote or booking link is sent.</p>
-      <div class="steps">
-        <article class="step">
-          <h3>1. Talk it through</h3>
-          <p>The customer speaks naturally or uses text prompts. The page captures the useful buying details.</p>
-        </article>
-        <article class="step">
-          <h3>2. Build a brief</h3>
-          <p>The AI writes a structured handoff for specialist inventory review.</p>
-        </article>
-        <article class="step">
-          <h3>3. Human verifies</h3>
-          <p>The human travel booking specialist confirms availability, final price, package rules, and booking links.</p>
-        </article>
-      </div>
-    </section>
   </main>
 
   <footer class="footer">
@@ -2319,17 +2233,6 @@
         setStatus(`${button.dataset.destination} added to the brief.`, "ready");
         document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
       });
-    });
-
-    document.querySelector(".sample-brief-button")?.addEventListener("click", () => {
-      leadNotes.value = [
-        leadNotes.value,
-        "Candidate chalet: Chalet Poudreuse, Avoriaz. Treat as illustrative until a human travel booking specialist verifies live inventory, dates, price, and inclusions."
-      ].filter(Boolean).join("\n\n");
-      updateTripSummary();
-      scheduleCloudTripSave("chalet");
-      setStatus("Chalet Poudreuse added as an illustrative candidate.", "ready");
-      document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
     });
 
     conciergeForm?.addEventListener("submit", (event) => {
