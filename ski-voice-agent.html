@@ -1019,6 +1019,12 @@
       width: 100%;
     }
 
+    input[readonly] {
+      background: #eef3f8;
+      color: #596675;
+      cursor: not-allowed;
+    }
+
     textarea {
       min-height: 150px;
       resize: vertical;
@@ -1645,7 +1651,7 @@
             <div class="lead-grid">
               <label>
                 Email
-                <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com" title="Email address for the trip confirmation.">
+                <input id="lead-email" type="text" autocomplete="off" readonly value="*****.*****.travel@gmail.com" title="Test system email is fixed and cannot be edited.">
               </label>
             </div>
             <label>
@@ -1670,6 +1676,8 @@
 
   <script>
     const API_BASE = "https://trading-site-scripts.peter-bell54.workers.dev";
+    const TEST_CONFIRMATION_EMAIL = "peter.bell.travel@gmail.com";
+    const MASKED_TEST_CONFIRMATION_EMAIL = "*****.*****.travel@gmail.com";
     const startButton = document.querySelector("#start-button");
     const stopButton = document.querySelector("#stop-button");
     const resetTripButton = document.querySelector("#reset-trip-button");
@@ -1762,6 +1770,15 @@
 
     function fieldValue(field) {
       return field?.value?.trim() || "";
+    }
+
+    function setMaskedTestEmail() {
+      leadEmail.value = MASKED_TEST_CONFIRMATION_EMAIL;
+      leadEmail.dataset.actualEmail = TEST_CONFIRMATION_EMAIL;
+    }
+
+    function getLeadEmailValue() {
+      return leadEmail.dataset.actualEmail || TEST_CONFIRMATION_EMAIL;
     }
 
     function ensureSelectOption(select, value) {
@@ -1979,7 +1996,6 @@
     function hasTripData() {
       return Boolean(
         leadName.value.trim()
-        || leadEmail.value.trim()
         || leadCity.value.trim()
         || leadDates.value.trim()
         || leadDestination.value.trim()
@@ -2049,7 +2065,7 @@
         tripId: cloudTripId || undefined,
         status: "planning",
         name: leadName.value,
-        email: leadEmail.value,
+        email: getLeadEmailValue(),
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
         country: getSelectionSummary("countries"),
@@ -2118,7 +2134,7 @@
     }
 
     async function sendTripConfirmation({ force = false, quiet = true } = {}) {
-      if (!cloudTripId || !isValidEmail(leadEmail.value)) return { ok: false, error: "Trip ID and customer email are required before sending." };
+      if (!cloudTripId || !isValidEmail(getLeadEmailValue())) return { ok: false, error: "Trip ID and customer email are required before sending." };
       if (confirmationUnavailable && quiet) return { ok: false, error: "Confirmation email is not configured." };
       try {
         const response = await fetch(`${API_BASE}/ski/trips/confirmation`, {
@@ -2141,7 +2157,7 @@
     }
 
     function scheduleTripConfirmation() {
-      if (confirmationUnavailable || !isValidEmail(leadEmail.value)) return;
+      if (confirmationUnavailable || !isValidEmail(getLeadEmailValue())) return;
       if (confirmationTimer) clearTimeout(confirmationTimer);
       confirmationTimer = setTimeout(() => {
         confirmationTimer = null;
@@ -2156,7 +2172,7 @@
       leadForm.dataset.closed = "false";
       handoffConfirmation.dataset.visible = "false";
       leadName.value = trip.name || "";
-      leadEmail.value = trip.email || "";
+      setMaskedTestEmail();
       leadCity.value = trip.departureCity || "";
       leadDates.value = trip.travelWindow || "";
       applyBookingDetails(trip.bookingDetails || trip.topicState?.bookingDetails || {});
@@ -2280,7 +2296,7 @@
       transcript = [];
       assistantBuffer = "";
       leadName.value = "";
-      leadEmail.value = "";
+      setMaskedTestEmail();
       leadCity.value = "";
       leadDates.value = "";
       setSelectionChoices("countries", []);
@@ -2573,7 +2589,7 @@
       const payload = {
         tripId: cloudTripId || undefined,
         name: document.querySelector("#lead-name").value,
-        email: document.querySelector("#lead-email").value,
+        email: getLeadEmailValue(),
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
         country: getSelectionSummary("countries"),
@@ -2591,7 +2607,7 @@
         const confirmation = await sendTripConfirmation({ force: true, quiet: false });
         if (!confirmation?.ok) throw new Error(confirmation?.error || "Confirmation email was not sent.");
         stopSession({ resetStatus: false });
-        showHandoffConfirmation(confirmation.email || leadEmail.value);
+        showHandoffConfirmation(confirmation.email || getLeadEmailValue());
         setStatus("Email sent and trip handoff closed.", "ready");
         try {
           const response = await fetch(`${API_BASE}/ski/leads`, {
