@@ -329,7 +329,8 @@
     .hero-actions {
       display: flex;
       flex-wrap: nowrap;
-      gap: 8px;
+      align-items: center;
+      gap: 10px;
       margin-top: 8px;
     }
 
@@ -337,6 +338,58 @@
     .hero-actions .button {
       min-height: 38px;
       padding: 0 14px;
+    }
+
+    .talk-hero-button {
+      border: 2px solid rgba(255, 255, 255, 0.88);
+      box-shadow: 0 18px 40px rgba(91, 183, 236, 0.34);
+      gap: 12px;
+      min-height: 72px;
+      padding: 8px 18px 8px 10px;
+    }
+
+    .talk-avatar.mic-status {
+      background: #111827;
+      border: 3px solid #fff;
+      border-radius: 999px;
+      box-shadow: inset 0 0 0 3px #1aaee4;
+      color: #fff;
+      flex: 0 0 auto;
+      height: 56px;
+      overflow: hidden;
+      width: 56px;
+    }
+
+    .talk-avatar svg {
+      height: 56px;
+      width: 56px;
+    }
+
+    .talk-avatar .avatar-mic,
+    .talk-avatar .avatar-cable {
+      color: #fff;
+    }
+
+    .talk-avatar .avatar-sound {
+      color: #9bd4ff;
+    }
+
+    .talk-hero-copy {
+      display: grid;
+      line-height: 1.05;
+      text-align: left;
+    }
+
+    .talk-hero-copy strong {
+      font-size: 1.05rem;
+    }
+
+    .talk-hero-copy small {
+      color: rgba(7, 28, 49, 0.68);
+      font-size: 0.68rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
     }
 
     .hero-panel {
@@ -378,7 +431,7 @@
       display: grid;
       grid-column: 1;
       grid-row: 1;
-      max-width: 170px;
+      max-width: 230px;
     }
 
     body[data-trip-compact="true"] h1 {
@@ -408,6 +461,11 @@
       display: block;
       height: 15px;
       width: 15px;
+    }
+
+    .talk-avatar.mic-status svg {
+      height: 56px;
+      width: 56px;
     }
 
     .mic-status .mic-slash {
@@ -1025,6 +1083,17 @@
         padding: 0 12px;
       }
 
+      .talk-hero-button {
+        min-height: 64px;
+        padding: 7px 14px 7px 8px;
+      }
+
+      .talk-avatar.mic-status,
+      .talk-avatar svg {
+        height: 48px;
+        width: 48px;
+      }
+
       .brand {
         flex: 1 1 auto;
         min-width: 0;
@@ -1133,7 +1202,30 @@
             <h1>European ski trips, made effortless <em>by AI</em></h1>
           </div>
           <div class="hero-actions">
-            <button class="primary voice-button" type="button" id="start-button">Click to Talk</button>
+            <button class="primary voice-button talk-hero-button" type="button" id="start-button">
+              <span class="talk-avatar mic-status" aria-hidden="true">
+                <svg viewBox="0 0 64 64" fill="none">
+                  <circle cx="32" cy="32" r="30" fill="#111827"/>
+                  <circle cx="32" cy="32" r="21" fill="#10a7d8"/>
+                  <path d="M13 42l12-14 7 8 7-12 13 18H13Z" fill="#fff"/>
+                  <path d="M16 43l12-12 6 7 6-11 12 16H16Z" fill="#10223a"/>
+                  <path d="M26 20c1-5 8-6 12-2l-1 8-10-1-1-5Z" fill="#b91c1c"/>
+                  <path d="M35 25l4 9 8 2" stroke="#7f1d1d" stroke-width="4" stroke-linecap="round"/>
+                  <path d="M31 26l-4 12 7 8" stroke="#f6d3b2" stroke-width="5" stroke-linecap="round"/>
+                  <path d="M27 38l-2 13M34 46l7 7" stroke="#6b3f24" stroke-width="5" stroke-linecap="round"/>
+                  <path d="M18 55c9 2 27 1 37-4" stroke="#6b3f24" stroke-width="4" stroke-linecap="round"/>
+                  <path class="avatar-mic" d="M43 19a4 4 0 0 0-4 4v7a4 4 0 0 0 8 0v-7a4 4 0 0 0-4-4Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path class="avatar-mic" d="M35 29a8 8 0 0 0 16 0M43 38v6M39 44h8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path class="avatar-cable" d="M39 33c-7 1-14-3-19-9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                  <path class="avatar-sound" d="M17 26l-6 3 7 2-6 4 9-1-6 6" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  <path class="mic-slash" d="M14 14l36 36" stroke="currentColor" stroke-width="4" stroke-linecap="round"/>
+                </svg>
+              </span>
+              <span class="talk-hero-copy">
+                <strong>Click to Talk</strong>
+                <small>Voice concierge</small>
+              </span>
+            </button>
             <button class="danger voice-button" type="button" id="stop-button" disabled>Stop Talking</button>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
