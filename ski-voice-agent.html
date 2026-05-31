@@ -1094,6 +1094,126 @@
           </div>
         </article>
 
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Flights</p>
+            <h3>What flights are needed?</h3>
+          </div>
+          <label>
+            Flight details
+            <input id="lead-flights" placeholder="Needs flights, booked separately, airport preference" title="Flight requirements, airports, or existing flight details.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-flights">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the flight requirements.">Talk Flights</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Transfers</p>
+            <h3>How should transfers work?</h3>
+          </div>
+          <label>
+            Transfer details
+            <input id="lead-transfers" placeholder="Geneva transfer, private transfer, rental car" title="Transfer requirements.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-transfers">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the transfer requirements.">Talk Transfers</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Chalet shortlist</p>
+            <h3>Which chalets are in the running?</h3>
+          </div>
+          <label>
+            Chalet names
+            <input id="lead-chalet-names" placeholder="Chalet Poudreuse or shortlist names" title="Specific chalet names or shortlist options.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-chalet-names">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the chalet names or shortlist.">Talk Chalets</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Ski rental</p>
+            <h3>What rental gear is needed?</h3>
+          </div>
+          <label>
+            Rental details
+            <input id="lead-ski-rental" placeholder="Skis, boots, poles, beginner/intermediate/advanced" title="Ski rental requirements.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-ski-rental">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only ski rental needs.">Talk Rentals</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Boots</p>
+            <h3>Boots and foot size</h3>
+          </div>
+          <label>
+            Boot details
+            <input id="lead-boots" placeholder="Boots needed, US/EU foot sizes" title="Boot rental needs and foot sizes.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-boots">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only boot rental and foot sizes.">Talk Boots</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Skis</p>
+            <h3>Skis and ski size</h3>
+          </div>
+          <label>
+            Ski details
+            <input id="lead-skis" placeholder="Skis needed, height/weight or ski length" title="Ski rental needs and sizing information.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-skis">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only skis and ski sizing.">Talk Skis</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Helmet</p>
+            <h3>Helmet and size</h3>
+          </div>
+          <label>
+            Helmet details
+            <input id="lead-helmet" placeholder="Helmets needed, adult/child sizes" title="Helmet rental needs and sizes.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-helmet">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only helmet needs and sizes.">Talk Helmets</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Ski passes</p>
+            <h3>What lift passes are needed?</h3>
+          </div>
+          <label>
+            Ski pass details
+            <input id="lead-ski-passes" placeholder="Lift passes needed, days, adults/children" title="Lift pass requirements.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-ski-passes">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only ski pass requirements.">Talk Passes</button>
+          </div>
+        </article>
+
         <aside class="brief-card handoff-envelope trip-card large" aria-label="Human review brief">
           <div class="handoff-label"><span>@</span> Human handoff email</div>
           <h3>Trip summary for a human travel booking specialist</h3>
@@ -1106,52 +1226,6 @@
               <label>
                 Email
                 <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com" title="Email address for the trip confirmation.">
-              </label>
-            </div>
-            <div class="lead-grid">
-              <label>
-                Dates
-                <input id="lead-booking-dates" placeholder="Friday to Sunday in March" title="Trip dates or travel window.">
-              </label>
-              <label>
-                Destination
-                <input id="lead-booking-destination" placeholder="Avoriaz, Morzine, Chamonix" title="Destination or resort.">
-              </label>
-              <label>
-                Flights
-                <input id="lead-flights" placeholder="Needs flights / booked separately / airport preference" title="Flight requirements, airports, or existing flight details.">
-              </label>
-              <label>
-                Transfers
-                <input id="lead-transfers" placeholder="Geneva transfer, private transfer, rental car" title="Transfer requirements.">
-              </label>
-              <label>
-                Group
-                <input id="lead-booking-group" placeholder="2 adults, 0 children, 1 room" title="Number of people, ages, rooms, and ski levels.">
-              </label>
-              <label>
-                Chalet names
-                <input id="lead-chalet-names" placeholder="Chalet Poudreuse or shortlist names" title="Specific chalet names or shortlist options.">
-              </label>
-              <label>
-                Ski rental
-                <input id="lead-ski-rental" placeholder="Skis, boots, poles, beginner/intermediate/advanced" title="Ski rental requirements.">
-              </label>
-              <label>
-                Boots and foot size
-                <input id="lead-boots" placeholder="Boots needed, US/EU foot sizes" title="Boot rental needs and foot sizes.">
-              </label>
-              <label>
-                Skis and ski size
-                <input id="lead-skis" placeholder="Skis needed, height/weight or ski length" title="Ski rental needs and sizing information.">
-              </label>
-              <label>
-                Helmet and size
-                <input id="lead-helmet" placeholder="Helmets needed, adult/child sizes" title="Helmet rental needs and sizes.">
-              </label>
-              <label>
-                Ski passes
-                <input id="lead-ski-passes" placeholder="Lift passes needed, days, adults/children" title="Lift pass requirements.">
               </label>
             </div>
             <label>
@@ -1522,8 +1596,8 @@
     }
 
     async function sendTripConfirmation({ force = false, quiet = true } = {}) {
-      if (!cloudTripId || !isValidEmail(leadEmail.value)) return null;
-      if (confirmationUnavailable && quiet) return null;
+      if (!cloudTripId || !isValidEmail(leadEmail.value)) return { ok: false, error: "Trip ID and customer email are required before sending." };
+      if (confirmationUnavailable && quiet) return { ok: false, error: "Confirmation email is not configured." };
       try {
         const response = await fetch(`${API_BASE}/ski/trips/confirmation`, {
           method: "POST",
@@ -1540,7 +1614,7 @@
         return result;
       } catch (error) {
         if (!quiet) setStatus(`Confirmation email issue: ${error.message}`, "error");
-        return null;
+        return { ok: false, error: error.message };
       }
     }
 
@@ -1969,7 +2043,7 @@
         const savedTrip = await saveCloudTripNow("human-review-submit", { quiet: false });
         if (!savedTrip && !cloudTripId) throw new Error("Trip could not be saved before sending email.");
         const confirmation = await sendTripConfirmation({ force: true, quiet: false });
-        if (!confirmation?.ok) throw new Error("Confirmation email was not sent.");
+        if (!confirmation?.ok) throw new Error(confirmation?.error || "Confirmation email was not sent.");
         const response = await fetch(`${API_BASE}/ski/leads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
