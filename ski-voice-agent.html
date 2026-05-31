@@ -100,7 +100,7 @@
       backdrop-filter: blur(14px);
       color: #fff;
       display: flex;
-      gap: 22px;
+      gap: 14px;
       justify-content: space-between;
       left: 0;
       padding: 16px clamp(18px, 4vw, 48px);
@@ -114,6 +114,7 @@
       align-items: center;
       color: #fff;
       display: flex;
+      flex: 0 0 300px;
       gap: 12px;
       text-decoration: none;
     }
@@ -153,11 +154,10 @@
 
     .customer-pill {
       color: #a8dcff;
-      display: none;
-      font-size: 0.72rem;
+      display: block;
+      font-size: 0.78rem;
       font-weight: 900;
       line-height: 1.1;
-      max-width: 150px;
       overflow: hidden;
       text-overflow: ellipsis;
       text-transform: none;
@@ -173,11 +173,25 @@
       border: 2px solid #f4b000;
       border-radius: 8px;
       display: grid;
-      flex: 1 1 520px;
-      grid-template-columns: 1.05fr 0.95fr 0.95fr 0.85fr;
-      max-width: 900px;
-      min-width: 360px;
-      overflow: hidden;
+      flex: 1 1 auto;
+      grid-auto-columns: minmax(190px, 1fr);
+      grid-auto-flow: column;
+      grid-template-columns: repeat(4, minmax(190px, 1fr));
+      max-width: 980px;
+      min-width: 0;
+      overflow-x: auto;
+      overflow-y: hidden;
+      scrollbar-width: thin;
+      scroll-snap-type: x proximity;
+    }
+
+    .header-trip-strip::-webkit-scrollbar {
+      height: 5px;
+    }
+
+    .header-trip-strip::-webkit-scrollbar-thumb {
+      background: rgba(8, 35, 61, 0.35);
+      border-radius: 999px;
     }
 
     .trip-strip-cell {
@@ -185,9 +199,11 @@
       background: rgba(255, 255, 255, 0.97);
       color: var(--ink);
       display: flex;
-      gap: 10px;
+      gap: 8px;
+      min-width: 0;
       min-height: 42px;
-      padding: 8px 12px;
+      padding: 7px 10px;
+      scroll-snap-align: start;
     }
 
     .trip-strip-cell + .trip-strip-cell {
@@ -197,8 +213,8 @@
     .trip-strip-icon {
       color: #5a6470;
       flex: none;
-      height: 22px;
-      width: 22px;
+      height: 19px;
+      width: 19px;
     }
 
     .trip-strip-copy {
@@ -215,15 +231,26 @@
 
     .trip-strip-copy small {
       color: var(--muted);
-      font-size: 0.62rem;
+      font-size: 0.58rem;
       font-weight: 800;
       text-transform: uppercase;
     }
 
     .trip-strip-copy strong {
       color: var(--ink);
-      font-size: 0.86rem;
+      font-size: 0.78rem;
       line-height: 1.15;
+    }
+
+    .trip-strip-meta {
+      color: var(--muted);
+      display: block;
+      font-size: 0.68rem;
+      font-weight: 800;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .nav {
@@ -638,6 +665,10 @@
       padding: 8px 12px;
     }
 
+    .reset-button[data-visible="false"] {
+      display: none;
+    }
+
     .prompt-grid {
       grid-template-columns: repeat(2, minmax(0, 1fr));
       margin: 14px 0 16px;
@@ -811,8 +842,10 @@
 
       .header-trip-strip {
         flex: none;
+        grid-auto-flow: row;
         grid-template-columns: 1fr;
         min-width: 0;
+        overflow: hidden;
         width: 100%;
       }
 
@@ -868,6 +901,7 @@
             <span id="banner-trip-name">Trip</span>
           </small>
           <strong id="banner-trip-label">Plan details</strong>
+          <span class="trip-strip-meta" id="banner-party">Party not set</span>
         </span>
       </div>
       <div class="trip-strip-cell">
@@ -898,16 +932,6 @@
         <span class="trip-strip-copy">
           <small>Dates</small>
           <strong id="banner-dates">Check-in date - Check-out date</strong>
-        </span>
-      </div>
-      <div class="trip-strip-cell">
-        <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-          <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" stroke="currentColor" stroke-width="2"/>
-          <path d="M4 21a8 8 0 0 1 16 0" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
-        </svg>
-        <span class="trip-strip-copy">
-          <small>Party</small>
-          <strong id="banner-party">Party not set</strong>
         </span>
       </div>
     </div>
@@ -1206,6 +1230,20 @@
       statusEl.dataset.state = state;
     }
 
+    function hasTripData() {
+      return Boolean(
+        leadName.value.trim()
+        || leadEmail.value.trim()
+        || leadCity.value.trim()
+        || leadDates.value.trim()
+        || leadDestination.value.trim()
+        || leadChalet.value.trim()
+        || leadNotes.value.trim()
+        || transcript.length
+        || cloudTripId
+      );
+    }
+
     function extractParty(notes) {
       const lower = notes.toLowerCase();
       const adults = lower.match(/(\d+)\s*adults?/);
@@ -1231,6 +1269,7 @@
       bannerDates.textContent = leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = extractParty(notes);
+      resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
       if (notes.includes("village")) {
         leadChalet.value = leadChalet.value || "Village location";
       } else if (notes.includes("ski-in") || notes.includes("ski in")) {
@@ -1282,15 +1321,7 @@
 
     async function saveCloudTripNow(reason = "update", { quiet = true } = {}) {
       if (isHydratingTrip) return null;
-      const hasTripData = leadName.value.trim()
-        || leadEmail.value.trim()
-        || leadCity.value.trim()
-        || leadDates.value.trim()
-        || leadDestination.value.trim()
-        || leadChalet.value.trim()
-        || leadNotes.value.trim()
-        || transcript.length;
-      if (!hasTripData && !cloudTripId) return null;
+      if (!hasTripData()) return null;
 
       try {
         const response = await fetch(`${API_BASE}/ski/trips`, {
