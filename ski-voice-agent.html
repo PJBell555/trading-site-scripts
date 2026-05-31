@@ -39,6 +39,7 @@
 
     button,
     input,
+    select,
     textarea {
       font: inherit;
     }
@@ -791,6 +792,7 @@
     }
 
     input,
+    select,
     textarea {
       border: 1px solid var(--line);
       color: var(--ink);
@@ -1069,7 +1071,83 @@
           </div>
           <label>
             Destination
-            <input id="lead-destination" placeholder="Avoriaz, Morzine, Chamonix" title="Enter the destination or resort the trip should focus on.">
+            <select id="lead-destination" title="Choose the destination or resort the trip should focus on.">
+              <option value="">Select a resort</option>
+              <optgroup label="France">
+                <option>Alpe d'Huez</option>
+                <option>Avoriaz</option>
+                <option>Brides Les Bains</option>
+                <option>Chamonix</option>
+                <option>Courchevel 1550</option>
+                <option>Courchevel 1650</option>
+                <option>Courchevel 1850</option>
+                <option>Flaine</option>
+                <option>Isola 2000</option>
+                <option>La Clusaz</option>
+                <option>La Plagne</option>
+                <option>Les Arcs</option>
+                <option>Les Deux Alpes</option>
+                <option>Les Gets</option>
+                <option>Les Houches</option>
+                <option>Les Menuires/Reberty</option>
+                <option>Megeve</option>
+                <option>Meribel</option>
+                <option>Meribel Mottaret</option>
+                <option>Morzine</option>
+                <option>Saint Gervais</option>
+                <option>Tignes</option>
+                <option>Val d'Isere</option>
+                <option>Val Thorens</option>
+              </optgroup>
+              <optgroup label="Austria">
+                <option>Axamer Lizum</option>
+                <option>Bad Hofgastein</option>
+                <option>Bad Kleinkirchheim</option>
+                <option>Heiligenblut</option>
+                <option>Innerkrems</option>
+                <option>Innsbruck</option>
+                <option>Ischgl</option>
+                <option>Kaprun</option>
+                <option>Kitzbuhel</option>
+                <option>Mayrhofen</option>
+                <option>Saalbach</option>
+                <option>Schladming</option>
+                <option>Solden</option>
+                <option>St Anton am Arlberg</option>
+                <option>St Christoph am Arlberg</option>
+                <option>Zell am See</option>
+              </optgroup>
+              <optgroup label="Switzerland">
+                <option>Arosa</option>
+                <option>Crans Montana</option>
+                <option>Engelberg</option>
+                <option>Grindelwald</option>
+                <option>Verbier</option>
+                <option>Wengen</option>
+                <option>Zermatt</option>
+              </optgroup>
+              <optgroup label="Italy">
+                <option>Courmayeur</option>
+              </optgroup>
+              <optgroup label="Andorra">
+                <option>Arinsal</option>
+                <option>Pas de la Casa</option>
+                <option>Soldeu</option>
+              </optgroup>
+              <optgroup label="French Pyrenees">
+                <option>Ax Les Thermes</option>
+                <option>Saint Lary</option>
+              </optgroup>
+              <optgroup label="Spain">
+                <option>Sierra Nevada</option>
+              </optgroup>
+              <optgroup label="Scandinavia">
+                <option>Are</option>
+                <option>Myrkdalen</option>
+                <option>Trysil</option>
+                <option>Voss</option>
+              </optgroup>
+            </select>
           </label>
           <div class="trip-actions">
             <button class="button secondary prompt-chip" type="button" data-prompt="Keep Avoriaz as the main resort but compare similar European ski resorts for a short trip.">Compare Resorts</button>
@@ -1400,13 +1478,51 @@
       skiPasses: leadSkiPasses
     };
 
+    function fieldValue(field) {
+      return field?.value?.trim() || "";
+    }
+
+    function ensureSelectOption(select, value) {
+      const clean = String(value || "").trim();
+      if (!select || !clean) return;
+      const exists = Array.from(select.options).some((option) => option.value === clean);
+      if (!exists) select.add(new Option(clean, clean));
+      select.value = clean;
+    }
+
+    function escapeRegExp(value) {
+      return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    }
+
+    function findResortInText(text) {
+      if (!leadDestination) return "";
+      const lower = String(text || "").toLowerCase();
+      const aliases = {
+        "st anton": "St Anton am Arlberg",
+        "courchevel": "Courchevel 1850",
+        "les menuires": "Les Menuires/Reberty",
+        "megeve": "Megeve"
+      };
+      const alias = Object.entries(aliases).find(([key]) => lower.includes(key));
+      if (alias) return alias[1];
+      const options = Array.from(leadDestination.options)
+        .map((option) => option.value.trim())
+        .filter(Boolean);
+      return options.find((resort) => new RegExp(`\\b${escapeRegExp(resort)}\\b`, "i").test(text)) || "";
+    }
+
     function getBookingDetails() {
-      return Object.fromEntries(Object.entries(bookingFieldMap).map(([key, field]) => [key, field.value.trim()]));
+      const details = Object.fromEntries(Object.entries(bookingFieldMap).map(([key, field]) => [key, fieldValue(field)]));
+      details.dates ||= fieldValue(leadDates);
+      details.destination ||= fieldValue(leadDestination);
+      details.groupDetails ||= fieldValue(leadGroup);
+      details.chaletNames ||= fieldValue(leadChalet);
+      return details;
     }
 
     function applyBookingDetails(details = {}) {
       Object.entries(bookingFieldMap).forEach(([key, field]) => {
-        field.value = details[key] || "";
+        if (field) field.value = details[key] || "";
       });
     }
 
@@ -1635,7 +1751,7 @@
       leadEmail.value = trip.email || "";
       leadCity.value = trip.departureCity || "";
       leadDates.value = trip.travelWindow || "";
-      leadDestination.value = trip.destination || trip.topicState?.resort || "";
+      ensureSelectOption(leadDestination, trip.destination || trip.topicState?.resort || "");
       leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
       leadGroup.value = trip.groupDetails || trip.topicState?.group || "";
       applyBookingDetails(trip.bookingDetails || trip.topicState?.bookingDetails || {});
@@ -1705,14 +1821,13 @@
         const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
         if (travel) {
           leadDates.value = travel[0].trim();
-          leadBookingDates.value = leadBookingDates.value || leadDates.value;
+          if (leadBookingDates) leadBookingDates.value = leadBookingDates.value || leadDates.value;
         }
       }
       if (!leadDestination.value.trim()) {
-        if (lower.includes("avoriaz")) leadDestination.value = "Avoriaz";
-        else if (lower.includes("morzine")) leadDestination.value = "Morzine";
-        else if (lower.includes("chamonix")) leadDestination.value = "Chamonix";
-        leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
+        const resort = findResortInText(text);
+        if (resort) ensureSelectOption(leadDestination, resort);
+        if (leadBookingDestination) leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
       }
       if (!leadChalet.value.trim()) {
         if (lower.includes("ski-in") || lower.includes("ski in")) leadChalet.value = "Ski-in / ski-out";
@@ -1729,7 +1844,7 @@
         } else if (people) {
           leadGroup.value = `${people[1]} people`;
         }
-        leadBookingGroup.value = leadBookingGroup.value || leadGroup.value;
+        if (leadBookingGroup) leadBookingGroup.value = leadBookingGroup.value || leadGroup.value;
       }
       if (!leadTransfers.value.trim() && lower.includes("transfer")) {
         leadTransfers.value = text.match(/[^.]*transfer[^.]*/i)?.[0]?.trim() || "Transfer needed";
@@ -1775,9 +1890,9 @@
       if (lower.includes("avoriaz")) {
         leadCity.value = leadCity.value || "New York / Boston";
         leadDates.value = leadDates.value || "Friday to Sunday";
-        leadDestination.value = leadDestination.value || "Avoriaz";
-        leadBookingDates.value = leadBookingDates.value || leadDates.value;
-        leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
+        if (!leadDestination.value) ensureSelectOption(leadDestination, "Avoriaz");
+        if (leadBookingDates) leadBookingDates.value = leadBookingDates.value || leadDates.value;
+        if (leadBookingDestination) leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
         return "Perfect. For Avoriaz, I would prepare a short-break brief around ski-in / ski-out chalet options, Geneva transfers, lift passes, rentals, and a human check on live availability before quoting.";
       }
       if (lower.includes("family")) {
@@ -2089,11 +2204,13 @@
       });
     });
 
-    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, ...Object.values(bookingFieldMap), leadNotes].forEach((field) => {
-      field.addEventListener("input", () => {
+    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, ...Object.values(bookingFieldMap), leadNotes].filter(Boolean).forEach((field) => {
+      const handleFieldUpdate = () => {
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
-      });
+      };
+      field.addEventListener("input", handleFieldUpdate);
+      field.addEventListener("change", handleFieldUpdate);
     });
     [leadName, leadEmail].forEach((field) => {
       field.addEventListener("input", () => {
