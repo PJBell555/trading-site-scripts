@@ -736,6 +736,12 @@
       margin-top: 3px;
     }
 
+    .lead-form[data-closed="true"] .lead-grid,
+    .lead-form[data-closed="true"] label,
+    .lead-form[data-closed="true"] button[type="submit"] {
+      display: none;
+    }
+
     .transcript {
       border: 1px solid var(--line);
       max-height: 390px;
@@ -1608,7 +1614,7 @@
 
     function showHandoffConfirmation(email) {
       const tripLink = `${window.location.origin}${window.location.pathname}?trip=${encodeURIComponent(cloudTripId)}#concierge`;
-      handoffConfirmation.innerHTML = `Email sent. Trip handoff closed.<small>Use trip ID ${cloudTripId} or <a href="${tripLink}">revisit the trip</a> to continue refining later.</small>`;
+      handoffConfirmation.innerHTML = `Email sent. Trip handoff closed. <span aria-hidden="true">&#9993;</span><small>Use trip ID ${cloudTripId} or <a href="${tripLink}">revisit the trip</a> to continue refining later.</small>`;
       handoffConfirmation.dataset.visible = "true";
       leadForm.dataset.closed = "true";
     }
@@ -1726,9 +1732,6 @@
         }
         const saved = await response.json();
         setCloudTripId(saved.trip?.tripId);
-        if (isValidEmail(leadEmail.value) && (leadDates.value.trim() || leadCity.value.trim() || leadNotes.value.trim())) {
-          scheduleTripConfirmation();
-        }
         if (!quiet) setStatus("Trip saved to Cloudflare for shared access.", "ready");
         return saved.trip || null;
       } catch (error) {
@@ -1801,6 +1804,8 @@
       if (!trip) return;
       isHydratingTrip = true;
       setCloudTripId(trip.tripId);
+      leadForm.dataset.closed = "false";
+      handoffConfirmation.dataset.visible = "false";
       leadName.value = trip.name || "";
       leadEmail.value = trip.email || "";
       leadCity.value = trip.departureCity || "";
@@ -1940,6 +1945,9 @@
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
       if (conciergeInput) conciergeInput.value = "";
+      leadForm.dataset.closed = "false";
+      handoffConfirmation.dataset.visible = "false";
+      handoffConfirmation.textContent = "";
       updateTripSummary();
       clearCloudTripId();
       confirmationUnavailable = false;
@@ -2202,6 +2210,10 @@
 
     leadForm.addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (confirmationTimer) {
+        clearTimeout(confirmationTimer);
+        confirmationTimer = null;
+      }
       setStatus("Saving human review brief.");
       const payload = {
         tripId: cloudTripId || undefined,
@@ -2281,9 +2293,10 @@
     });
     [leadName, leadEmail].forEach((field) => {
       field.addEventListener("input", () => {
+        leadForm.dataset.closed = "false";
+        handoffConfirmation.dataset.visible = "false";
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
-        if (field === leadEmail) scheduleTripConfirmation();
       });
     });
 

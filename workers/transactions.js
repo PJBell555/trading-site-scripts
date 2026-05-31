@@ -2691,7 +2691,7 @@ function buildTripConfirmationEmail(trip) {
   return { subject: "Your ski trip summary", text, html };
 }
 
-async function sendSkiTripConfirmationEmail(env, trip) {
+async function sendSkiTripConfirmationEmail(env, trip, options = {}) {
   const apiKey = getResendApiKey(env);
   const from = env.SKI_CONFIRMATION_FROM_EMAIL || env.RESEND_FROM_EMAIL || "";
   if (!apiKey || !from) {
@@ -2713,7 +2713,9 @@ async function sendSkiTripConfirmationEmail(env, trip) {
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
-      "Idempotency-Key": `ski-trip-confirm-${trip.tripId}-${to}`
+      "Idempotency-Key": options.force
+        ? `ski-trip-confirm-${trip.tripId}-${to}-${Date.now()}`
+        : `ski-trip-confirm-${trip.tripId}-${to}`
     },
     body: JSON.stringify({
       from,
@@ -2777,7 +2779,7 @@ async function handleSkiTripConfirmation(env, request, origin) {
     }, 200, origin);
   }
 
-  const sent = await sendSkiTripConfirmationEmail(env, trip);
+  const sent = await sendSkiTripConfirmationEmail(env, trip, { force });
   if (!sent.ok) {
     return jsonResponse({
       ok: false,
