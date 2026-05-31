@@ -256,23 +256,24 @@
         linear-gradient(180deg, rgba(7, 30, 52, 0.42) 0%, rgba(7, 30, 52, 0.1) 64%, rgba(245, 247, 251, 1) 100%),
         url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
       color: #fff;
-      height: clamp(275px, 31vh, 335px);
+      height: calc(100vh - 78px);
+      min-height: 560px;
       overflow: hidden;
-      position: sticky;
-      top: 70px;
+      position: relative;
+      top: auto;
       z-index: 15;
     }
 
     .hero-inner {
-      align-items: stretch;
+      align-items: center;
       display: grid;
       gap: 14px;
-      grid-template-columns: minmax(320px, 0.95fr) minmax(320px, 0.72fr);
+      grid-template-columns: 1fr;
       height: 100%;
       min-height: 0;
       margin: 0 auto;
       max-width: 1380px;
-      padding: 10px clamp(18px, 4vw, 48px);
+      padding: clamp(28px, 5vw, 76px) clamp(18px, 4vw, 48px);
     }
 
     .eyebrow {
@@ -327,11 +328,11 @@
     }
 
     .hero-actions {
-      display: flex;
-      flex-wrap: nowrap;
       align-items: center;
-      gap: 10px;
-      margin-top: 8px;
+      display: grid;
+      gap: 10px 14px;
+      grid-template-columns: max-content minmax(180px, 280px);
+      margin-top: 0;
     }
 
     .hero-actions button,
@@ -392,14 +393,38 @@
       text-transform: uppercase;
     }
 
+    .talk-helper {
+      background: rgba(6, 27, 48, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: rgba(255, 255, 255, 0.9);
+      font-size: 0.86rem;
+      line-height: 1.35;
+      padding: 12px 14px;
+    }
+
+    .hero-actions .danger {
+      grid-column: 1;
+      width: 100%;
+    }
+
     .hero-panel {
+      align-items: center;
+      display: grid;
+      gap: clamp(24px, 5vw, 80px);
+      grid-template-columns: minmax(300px, 0.58fr) minmax(390px, 0.9fr);
       min-width: 0;
+    }
+
+    .hero-title-block {
+      justify-self: end;
     }
 
     body[data-trip-compact="true"] .hero {
       height: auto;
       min-height: clamp(170px, 22vh, 230px);
       overflow: visible;
+      position: sticky;
+      top: 70px;
     }
 
     body[data-trip-compact="true"] .hero-inner {
@@ -431,7 +456,12 @@
       display: grid;
       grid-column: 1;
       grid-row: 1;
+      grid-template-columns: 1fr;
       max-width: 230px;
+    }
+
+    body[data-trip-compact="true"] .talk-helper {
+      display: none;
     }
 
     body[data-trip-compact="true"] h1 {
@@ -1023,8 +1053,13 @@
 
       .hero {
         height: auto;
+        min-height: auto;
         position: relative;
         top: auto;
+      }
+
+      .hero-panel {
+        grid-template-columns: 1fr;
       }
 
       body[data-trip-compact="true"] .hero-inner {
@@ -1083,7 +1118,11 @@
       }
 
       .hero-actions {
-        flex-wrap: wrap;
+        grid-template-columns: 1fr;
+      }
+
+      .talk-helper {
+        max-width: 320px;
       }
 
       .hero-actions button,
@@ -1232,6 +1271,7 @@
                 <small>Voice concierge</small>
               </span>
             </button>
+            <span class="talk-helper">Click the microphone button, then wait for the agent to start talking.</span>
             <button class="danger voice-button" type="button" id="stop-button" disabled>Stop Talking</button>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
