@@ -765,6 +765,10 @@
       padding: 12px;
     }
 
+    .party-picker[data-expanded="false"] {
+      display: none;
+    }
+
     .party-row {
       align-items: center;
       display: grid;
@@ -806,6 +810,11 @@
     .child-age-list label {
       grid-template-columns: minmax(90px, 1fr) minmax(110px, 150px);
       align-items: center;
+    }
+
+    .party-done {
+      justify-self: stretch;
+      margin-top: 2px;
     }
 
     .controls,
@@ -1259,7 +1268,7 @@
             Group details
             <input id="lead-group" placeholder="2 adults, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
           </label>
-          <div class="party-picker" aria-label="Party selector">
+          <div class="party-picker" id="party-picker" data-expanded="false" aria-label="Party selector">
             <div class="party-row">
               <span>Adults</span>
               <div class="stepper" data-party-field="adults">
@@ -1285,6 +1294,7 @@
               </div>
             </div>
             <div class="child-age-list" id="child-age-list" aria-label="Child ages"></div>
+            <button class="button secondary party-done" type="button" id="party-done-button">Done</button>
           </div>
           <div class="trip-actions">
             <button class="button secondary edit-topic" type="button" data-focus="#lead-group">Edit</button>
@@ -1632,6 +1642,8 @@
     const selectedCountries = document.querySelector("#selected-countries");
     const selectedDestinations = document.querySelector("#selected-destinations");
     const selectedChalets = document.querySelector("#selected-chalets");
+    const partyPicker = document.querySelector("#party-picker");
+    const partyDoneButton = document.querySelector("#party-done-button");
     const childAgeList = document.querySelector("#child-age-list");
     const partyOutputs = {
       adults: document.querySelector("#party-adults"),
@@ -1762,6 +1774,11 @@
         ? `, ages ${partyState.childAges.join(", ")}`
         : "";
       return `${partyState.adults} adults, ${partyState.children} ${childLabel}${ageText}, ${partyState.rooms} ${roomLabel}`;
+    }
+
+    function setPartyPickerExpanded(isExpanded) {
+      if (!partyPicker) return;
+      partyPicker.dataset.expanded = isExpanded ? "true" : "false";
     }
 
     function renderPartyPicker({ updateSummary = true } = {}) {
@@ -2220,6 +2237,7 @@
       partyState.rooms = 1;
       partyState.childAges = [];
       renderPartyPicker({ updateSummary: false });
+      setPartyPickerExpanded(false);
       applyBookingDetails({});
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
@@ -2549,6 +2567,7 @@
       button.addEventListener("click", () => {
         const target = document.querySelector(button.dataset.focus);
         if (!target) return;
+        if (target === leadGroup) setPartyPickerExpanded(true);
         target.focus();
         target.select?.();
         setStatus("Edit this trip detail directly, or use Talk to update it by voice.", "ready");
@@ -2597,6 +2616,14 @@
       renderPartyPicker();
       updateTripSummary();
       scheduleCloudTripSave("party");
+    });
+
+    partyDoneButton?.addEventListener("click", () => {
+      renderPartyPicker();
+      setPartyPickerExpanded(false);
+      updateTripSummary();
+      scheduleCloudTripSave("party");
+      setStatus("Party details updated.", "ready");
     });
 
     document.addEventListener("click", (event) => {
