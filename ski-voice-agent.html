@@ -1108,6 +1108,52 @@
                 <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com" title="Email address for the trip confirmation.">
               </label>
             </div>
+            <div class="lead-grid">
+              <label>
+                Dates
+                <input id="lead-booking-dates" placeholder="Friday to Sunday in March" title="Trip dates or travel window.">
+              </label>
+              <label>
+                Destination
+                <input id="lead-booking-destination" placeholder="Avoriaz, Morzine, Chamonix" title="Destination or resort.">
+              </label>
+              <label>
+                Flights
+                <input id="lead-flights" placeholder="Needs flights / booked separately / airport preference" title="Flight requirements, airports, or existing flight details.">
+              </label>
+              <label>
+                Transfers
+                <input id="lead-transfers" placeholder="Geneva transfer, private transfer, rental car" title="Transfer requirements.">
+              </label>
+              <label>
+                Group
+                <input id="lead-booking-group" placeholder="2 adults, 0 children, 1 room" title="Number of people, ages, rooms, and ski levels.">
+              </label>
+              <label>
+                Chalet names
+                <input id="lead-chalet-names" placeholder="Chalet Poudreuse or shortlist names" title="Specific chalet names or shortlist options.">
+              </label>
+              <label>
+                Ski rental
+                <input id="lead-ski-rental" placeholder="Skis, boots, poles, beginner/intermediate/advanced" title="Ski rental requirements.">
+              </label>
+              <label>
+                Boots and foot size
+                <input id="lead-boots" placeholder="Boots needed, US/EU foot sizes" title="Boot rental needs and foot sizes.">
+              </label>
+              <label>
+                Skis and ski size
+                <input id="lead-skis" placeholder="Skis needed, height/weight or ski length" title="Ski rental needs and sizing information.">
+              </label>
+              <label>
+                Helmet and size
+                <input id="lead-helmet" placeholder="Helmets needed, adult/child sizes" title="Helmet rental needs and sizes.">
+              </label>
+              <label>
+                Ski passes
+                <input id="lead-ski-passes" placeholder="Lift passes needed, days, adults/children" title="Lift pass requirements.">
+              </label>
+            </div>
             <label>
               Specialist notes
               <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff." title="Summary sent to the human travel booking specialist."></textarea>
@@ -1231,6 +1277,17 @@
     const leadChalet = document.querySelector("#lead-chalet");
     const leadDestination = document.querySelector("#lead-destination");
     const leadGroup = document.querySelector("#lead-group");
+    const leadBookingDates = document.querySelector("#lead-booking-dates");
+    const leadBookingDestination = document.querySelector("#lead-booking-destination");
+    const leadFlights = document.querySelector("#lead-flights");
+    const leadTransfers = document.querySelector("#lead-transfers");
+    const leadBookingGroup = document.querySelector("#lead-booking-group");
+    const leadChaletNames = document.querySelector("#lead-chalet-names");
+    const leadSkiRental = document.querySelector("#lead-ski-rental");
+    const leadBoots = document.querySelector("#lead-boots");
+    const leadSkis = document.querySelector("#lead-skis");
+    const leadHelmet = document.querySelector("#lead-helmet");
+    const leadSkiPasses = document.querySelector("#lead-ski-passes");
     const conciergeForm = document.querySelector("#concierge-form");
     const conciergeInput = document.querySelector("#concierge-input");
     const bannerCustomerName = document.querySelector("#banner-customer-name");
@@ -1255,6 +1312,29 @@
     let ttsAudioElement = null;
     let currentAudioUrl = null;
     let speakingAbort = null;
+    const bookingFieldMap = {
+      dates: leadBookingDates,
+      destination: leadBookingDestination,
+      flights: leadFlights,
+      transfers: leadTransfers,
+      groupDetails: leadBookingGroup,
+      chaletNames: leadChaletNames,
+      skiRental: leadSkiRental,
+      boots: leadBoots,
+      skis: leadSkis,
+      helmet: leadHelmet,
+      skiPasses: leadSkiPasses
+    };
+
+    function getBookingDetails() {
+      return Object.fromEntries(Object.entries(bookingFieldMap).map(([key, field]) => [key, field.value.trim()]));
+    }
+
+    function applyBookingDetails(details = {}) {
+      Object.entries(bookingFieldMap).forEach(([key, field]) => {
+        field.value = details[key] || "";
+      });
+    }
 
     function micIconMarkup() {
       return `
@@ -1301,6 +1381,7 @@
         || leadDestination.value.trim()
         || leadChalet.value.trim()
         || leadGroup.value.trim()
+        || Object.values(getBookingDetails()).some(Boolean)
         || leadNotes.value.trim()
         || transcript.length
         || cloudTripId
@@ -1325,13 +1406,14 @@
       const customerName = leadName.value.trim();
       bannerCustomerName.textContent = customerName;
       bannerCustomerName.dataset.visible = customerName ? "true" : "false";
-      const destination = leadDestination.value.trim();
+      const bookingDetails = getBookingDetails();
+      const destination = bookingDetails.destination || leadDestination.value.trim();
       bannerDestination.textContent = destination || "Destination not set";
       bannerTripName.textContent = destination ? `${destination} ski trip` : "Trip";
-      bannerChalet.textContent = leadChalet.value.trim() || "Chalet not set";
-      bannerDates.textContent = leadDates.value.trim() || "Check-in date - Check-out date";
+      bannerChalet.textContent = bookingDetails.chaletNames || leadChalet.value.trim() || "Chalet not set";
+      bannerDates.textContent = bookingDetails.dates || leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
-      bannerParty.textContent = leadGroup.value.trim() || extractParty(notes);
+      bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
       if (notes.includes("village")) {
         leadChalet.value = leadChalet.value || "Village location";
@@ -1344,7 +1426,8 @@
       return {
         chaletStyle: leadChalet.value,
         resort: leadDestination.value,
-        group: leadGroup.value
+        group: leadGroup.value,
+        bookingDetails: getBookingDetails()
       };
     }
 
@@ -1374,6 +1457,7 @@
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
         groupDetails: leadGroup.value,
+        bookingDetails: getBookingDetails(),
         notes: leadNotes.value,
         transcript,
         topicState: getTopicState(),
@@ -1480,6 +1564,7 @@
       leadDestination.value = trip.destination || trip.topicState?.resort || "";
       leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
       leadGroup.value = trip.groupDetails || trip.topicState?.group || "";
+      applyBookingDetails(trip.bookingDetails || trip.topicState?.bookingDetails || {});
       leadNotes.value = trip.notes || "";
       transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
       renderTranscript();
@@ -1546,12 +1631,14 @@
         const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
         if (travel) {
           leadDates.value = travel[0].trim();
+          leadBookingDates.value = leadBookingDates.value || leadDates.value;
         }
       }
       if (!leadDestination.value.trim()) {
         if (lower.includes("avoriaz")) leadDestination.value = "Avoriaz";
         else if (lower.includes("morzine")) leadDestination.value = "Morzine";
         else if (lower.includes("chamonix")) leadDestination.value = "Chamonix";
+        leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
       }
       if (!leadChalet.value.trim()) {
         if (lower.includes("ski-in") || lower.includes("ski in")) leadChalet.value = "Ski-in / ski-out";
@@ -1568,6 +1655,22 @@
         } else if (people) {
           leadGroup.value = `${people[1]} people`;
         }
+        leadBookingGroup.value = leadBookingGroup.value || leadGroup.value;
+      }
+      if (!leadTransfers.value.trim() && lower.includes("transfer")) {
+        leadTransfers.value = text.match(/[^.]*transfer[^.]*/i)?.[0]?.trim() || "Transfer needed";
+      }
+      if (!leadSkiRental.value.trim() && (lower.includes("rental") || lower.includes("rentals"))) {
+        leadSkiRental.value = text.match(/[^.]*rental[^.]*/i)?.[0]?.trim() || "Ski rentals needed";
+      }
+      if (!leadBoots.value.trim() && lower.includes("boots")) {
+        leadBoots.value = text.match(/[^.]*boots?[^.]*/i)?.[0]?.trim() || "Boots needed";
+      }
+      if (!leadHelmet.value.trim() && lower.includes("helmet")) {
+        leadHelmet.value = text.match(/[^.]*helmet[^.]*/i)?.[0]?.trim() || "Helmet needed";
+      }
+      if (!leadSkiPasses.value.trim() && (lower.includes("ski pass") || lower.includes("lift pass"))) {
+        leadSkiPasses.value = text.match(/[^.]*(?:ski|lift) pass[^.]*/i)?.[0]?.trim() || "Ski passes needed";
       }
     }
 
@@ -1582,6 +1685,7 @@
       leadDestination.value = "";
       leadChalet.value = "";
       leadGroup.value = "";
+      applyBookingDetails({});
       leadNotes.value = "";
       transcriptEl.innerHTML = "";
       if (conciergeInput) conciergeInput.value = "";
@@ -1598,6 +1702,8 @@
         leadCity.value = leadCity.value || "New York / Boston";
         leadDates.value = leadDates.value || "Friday to Sunday";
         leadDestination.value = leadDestination.value || "Avoriaz";
+        leadBookingDates.value = leadBookingDates.value || leadDates.value;
+        leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
         return "Perfect. For Avoriaz, I would prepare a short-break brief around ski-in / ski-out chalet options, Geneva transfers, lift passes, rentals, and a human check on live availability before quoting.";
       }
       if (lower.includes("family")) {
@@ -1854,6 +1960,7 @@
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
         groupDetails: leadGroup.value,
+        bookingDetails: getBookingDetails(),
         notes: leadNotes.value,
         transcript,
         source: "ski-voice-agent-web"
@@ -1908,7 +2015,7 @@
       });
     });
 
-    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, leadNotes].forEach((field) => {
+    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, ...Object.values(bookingFieldMap), leadNotes].forEach((field) => {
       field.addEventListener("input", () => {
         updateTripSummary();
         scheduleCloudTripSave("field-edit");

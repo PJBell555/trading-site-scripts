@@ -2613,6 +2613,8 @@ function normalizeSkiTripRow(row = {}) {
     travelWindow: row.travel_window || "",
     destination: payload.destination || topicState.resort || "",
     chaletPreference: payload.chaletPreference || topicState.chaletStyle || "",
+    groupDetails: payload.groupDetails || topicState.group || "",
+    bookingDetails: payload.bookingDetails || topicState.bookingDetails || {},
     notes: row.notes || "",
     transcript: JSON.parse(row.transcript_json || "[]"),
     topicState,
@@ -2635,13 +2637,27 @@ function escapeHtml(value) {
 function buildTripConfirmationEmail(trip) {
   const name = trip.name || "there";
   const revisitUrl = `https://pjbell555.github.io/trading-site-scripts/ski-voice-agent.html?trip=${encodeURIComponent(trip.tripId)}#concierge`;
+  const booking = trip.bookingDetails || {};
+  const bookingRows = [
+    ["Travel window", booking.dates || trip.travelWindow || "Not set yet"],
+    ["Destination", booking.destination || trip.destination || "Not set yet"],
+    ["Departure city", trip.departureCity || "Not set yet"],
+    ["Flights", booking.flights || "Not set yet"],
+    ["Transfers", booking.transfers || "Not set yet"],
+    ["Group", booking.groupDetails || trip.groupDetails || "Not set yet"],
+    ["Chalet names", booking.chaletNames || trip.chaletPreference || "Not set yet"],
+    ["Ski rental", booking.skiRental || "Not set yet"],
+    ["Boots / foot size", booking.boots || "Not set yet"],
+    ["Skis / ski size", booking.skis || "Not set yet"],
+    ["Helmet / size", booking.helmet || "Not set yet"],
+    ["Ski passes", booking.skiPasses || "Not set yet"]
+  ];
   const lines = [
     `Hi ${name},`,
     "",
     "Thanks for sharing your ski trip details. Here is the current trip summary we have saved:",
     "",
-    `Travel window: ${trip.travelWindow || "Not set yet"}`,
-    `Departure city: ${trip.departureCity || "Not set yet"}`,
+    ...bookingRows.map(([label, value]) => `${label}: ${value}`),
     "",
     "Specialist notes:",
     trip.notes || "No specialist notes have been captured yet.",
@@ -2659,8 +2675,7 @@ function buildTripConfirmationEmail(trip) {
       <p>Hi ${escapeHtml(name)},</p>
       <p>Thanks for sharing your ski trip details. Here is the current trip summary we have saved:</p>
       <table style="border-collapse:collapse;margin:16px 0;width:100%;max-width:620px">
-        <tr><td style="border:1px solid #d9e2ec;padding:8px;font-weight:bold">Travel window</td><td style="border:1px solid #d9e2ec;padding:8px">${escapeHtml(trip.travelWindow || "Not set yet")}</td></tr>
-        <tr><td style="border:1px solid #d9e2ec;padding:8px;font-weight:bold">Departure city</td><td style="border:1px solid #d9e2ec;padding:8px">${escapeHtml(trip.departureCity || "Not set yet")}</td></tr>
+        ${bookingRows.map(([label, value]) => `<tr><td style="border:1px solid #d9e2ec;padding:8px;font-weight:bold">${escapeHtml(label)}</td><td style="border:1px solid #d9e2ec;padding:8px">${escapeHtml(value)}</td></tr>`).join("")}
       </table>
       <h3 style="color:#08233d">Specialist notes</h3>
       <pre style="white-space:pre-wrap;background:#f5f7fb;border:1px solid #d9e2ec;padding:12px">${escapeHtml(trip.notes || "No specialist notes have been captured yet.")}</pre>
@@ -2821,7 +2836,21 @@ async function handleSkiTrips(env, request, origin) {
     userAgent: skiJson(request.headers.get("User-Agent")).slice(0, 300),
     lastSaveReason: skiJson(body.reason).slice(0, 80),
     destination: skiJson(body.destination).slice(0, 160),
-    chaletPreference: skiJson(body.chaletPreference).slice(0, 220)
+    chaletPreference: skiJson(body.chaletPreference).slice(0, 220),
+    groupDetails: skiJson(body.groupDetails).slice(0, 500),
+    bookingDetails: body.bookingDetails && typeof body.bookingDetails === "object" ? {
+      dates: skiJson(body.bookingDetails.dates).slice(0, 220),
+      destination: skiJson(body.bookingDetails.destination).slice(0, 160),
+      flights: skiJson(body.bookingDetails.flights).slice(0, 500),
+      transfers: skiJson(body.bookingDetails.transfers).slice(0, 500),
+      groupDetails: skiJson(body.bookingDetails.groupDetails).slice(0, 500),
+      chaletNames: skiJson(body.bookingDetails.chaletNames).slice(0, 500),
+      skiRental: skiJson(body.bookingDetails.skiRental).slice(0, 500),
+      boots: skiJson(body.bookingDetails.boots).slice(0, 500),
+      skis: skiJson(body.bookingDetails.skis).slice(0, 500),
+      helmet: skiJson(body.bookingDetails.helmet).slice(0, 500),
+      skiPasses: skiJson(body.bookingDetails.skiPasses).slice(0, 500)
+    } : {}
   };
 
   await safeD1Run(env, `
@@ -3068,6 +3097,8 @@ async function handleSkiLeads(env, request, origin) {
     accommodationPreference: body.accommodationPreference || null,
     destination: body.destination || null,
     chaletPreference: body.chaletPreference || null,
+    groupDetails: body.groupDetails || null,
+    bookingDetails: body.bookingDetails || {},
     source: body.source || "ski-voice-agent-web"
   };
 
