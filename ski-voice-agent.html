@@ -2238,23 +2238,30 @@
         if (!savedTrip && !cloudTripId) throw new Error("Trip could not be saved before sending email.");
         const confirmation = await sendTripConfirmation({ force: true, quiet: false });
         if (!confirmation?.ok) throw new Error(confirmation?.error || "Confirmation email was not sent.");
-        const response = await fetch(`${API_BASE}/ski/leads`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        if (!response.ok) {
-          const error = await response.json().catch(() => ({}));
-          throw new Error(error.error || "Lead save failed");
-        }
-        const saved = await response.json();
         stopSession({ resetStatus: false });
         showHandoffConfirmation(confirmation.email || leadEmail.value);
-        setStatus(`Email sent and human review brief saved: ${saved.leadId}`, "ready");
+        setStatus("Email sent and trip handoff closed.", "ready");
+        try {
+          const response = await fetch(`${API_BASE}/ski/leads`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          });
+          if (!response.ok) {
+            const error = await response.json().catch(() => ({}));
+            throw new Error(error.error || "Lead save failed");
+          }
+          const saved = await response.json();
+          setStatus(`Email sent and human review brief saved: ${saved.leadId}`, "ready");
+        } catch (leadError) {
+          setStatus(`Email sent. Lead archive issue: ${leadError.message}`, "ready");
+        }
       } catch (error) {
         setStatus(error.message, "error");
-        handoffConfirmation.textContent = `Email was not sent: ${error.message}`;
-        handoffConfirmation.dataset.visible = "true";
+        if (leadForm.dataset.closed !== "true") {
+          handoffConfirmation.textContent = `Email was not sent: ${error.message}`;
+          handoffConfirmation.dataset.visible = "true";
+        }
       }
     });
 
