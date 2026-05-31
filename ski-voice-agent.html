@@ -1060,11 +1060,18 @@
           </div>
           <label>
             Chalet preference
-            <input id="lead-chalet" placeholder="Ski-in / ski-out, catered, village location" title="Enter the chalet type, board basis, or accommodation style.">
+            <select id="lead-chalet" title="Choose the accommodation or board basis for this ski trip.">
+              <option value="">Select accommodation type</option>
+              <option>Fully catered chalet</option>
+              <option>Half-board hotel</option>
+              <option>Hotel</option>
+              <option>Accommodation only</option>
+            </select>
           </label>
           <div class="trip-actions">
-            <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to ski-in ski-out if possible, with a short transfer and breakfast included.">Ski-in / Ski-out</button>
-            <button class="button secondary prompt-chip" type="button" data-prompt="Update my chalet preference to a lively village location with restaurants nearby.">Village Location</button>
+            <button class="button secondary prompt-chip" type="button" data-prompt="Update my accommodation preference to a fully catered chalet.">Full Cater</button>
+            <button class="button secondary prompt-chip" type="button" data-prompt="Update my accommodation preference to half-board hotel options.">Half Board</button>
+            <button class="button secondary prompt-chip" type="button" data-prompt="Update my accommodation preference to hotel options.">Hotel</button>
             <button class="button secondary prompt-chip" type="button" data-prompt="Search for basic Avoriaz ski trip ideas and explain the best candidates.">Search Ideas</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the chalet type and accommodation style.">Talk Chalets</button>
           </div>
@@ -1663,11 +1670,6 @@
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
-      if (notes.includes("village")) {
-        leadChalet.value = leadChalet.value || "Village location";
-      } else if (notes.includes("ski-in") || notes.includes("ski in")) {
-        leadChalet.value = leadChalet.value || "Ski-in / ski-out";
-      }
     }
 
     function getTopicState() {
@@ -1814,7 +1816,7 @@
       ensureSelectOption(leadCountry, trip.country || trip.bookingDetails?.country || trip.topicState?.country || "");
       ensureSelectOption(leadDestination, trip.destination || trip.bookingDetails?.destination || trip.topicState?.resort || "");
       if (!leadCountry.value && leadDestination.value) ensureSelectOption(leadCountry, getSelectedResortCountry());
-      leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
+      ensureSelectOption(leadChalet, trip.chaletPreference || trip.topicState?.chaletStyle || "");
       leadGroup.value = trip.groupDetails || trip.topicState?.group || "";
       leadNotes.value = trip.notes || "";
       transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
@@ -1896,9 +1898,10 @@
       }
       if (!leadCountry.value.trim() && leadDestination.value.trim()) ensureSelectOption(leadCountry, getSelectedResortCountry());
       if (!leadChalet.value.trim()) {
-        if (lower.includes("ski-in") || lower.includes("ski in")) leadChalet.value = "Ski-in / ski-out";
-        else if (lower.includes("village")) leadChalet.value = "Village location";
-        else if (lower.includes("catered")) leadChalet.value = "Catered chalet";
+        if (lower.includes("full cater") || lower.includes("fully catered") || lower.includes("catered chalet")) ensureSelectOption(leadChalet, "Fully catered chalet");
+        else if (lower.includes("half board") || lower.includes("half-board")) ensureSelectOption(leadChalet, "Half-board hotel");
+        else if (lower.includes("hotel")) ensureSelectOption(leadChalet, "Hotel");
+        else if (lower.includes("accommodation only")) ensureSelectOption(leadChalet, "Accommodation only");
       }
       if (!leadGroup.value.trim()) {
         const people = text.match(/(\d+)\s*(people|guests|persons?|travellers?|travelers?)/i);
@@ -1968,7 +1971,7 @@
       }
       if (lower.includes("family")) {
         leadCity.value = leadCity.value || "Boston";
-        return "For a family of 5, I need rooming, children ages, ski levels, lesson needs, and whether catered chalet meals are important. I will keep the budget target visible for the specialist.";
+        return "For a family of 5, I need rooming, children ages, ski levels, lesson needs, and whether fully catered chalet, half-board hotel, hotel, or accommodation-only is the right fit. I will keep the budget target visible for the specialist.";
       }
       if (lower.includes("geneva")) {
         return "I will prioritise resorts with easier Geneva access, short transfer time, and high-convenience accommodation. The human travel booking specialist should verify transfer options before sending a quote.";
