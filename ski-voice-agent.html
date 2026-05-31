@@ -153,6 +153,10 @@
       font-size: 0.78rem;
     }
 
+    .topbar .reset-button {
+      flex: 0 0 auto;
+    }
+
     .header-trip-strip {
       align-items: stretch;
       border: 2px solid #f4b000;
@@ -333,6 +337,54 @@
     .hero-actions .button {
       min-height: 38px;
       padding: 0 14px;
+    }
+
+    .hero-panel {
+      min-width: 0;
+    }
+
+    body[data-trip-compact="true"] .hero {
+      height: clamp(110px, 15vh, 155px);
+    }
+
+    body[data-trip-compact="true"] .hero-inner {
+      align-items: center;
+      grid-template-columns: minmax(150px, 0.36fr) minmax(300px, 0.62fr) minmax(360px, 0.72fr);
+    }
+
+    body[data-trip-compact="true"] .hero-panel {
+      display: contents;
+    }
+
+    body[data-trip-compact="true"] .hero-title-block {
+      grid-column: 3;
+      grid-row: 1;
+      justify-self: end;
+      max-width: 520px;
+    }
+
+    body[data-trip-compact="true"] .lede {
+      grid-column: 2;
+      grid-row: 1;
+      margin: 0;
+      max-width: 500px;
+    }
+
+    body[data-trip-compact="true"] .hero-actions {
+      align-self: center;
+      display: grid;
+      grid-column: 1;
+      grid-row: 1;
+      max-width: 170px;
+    }
+
+    body[data-trip-compact="true"] h1 {
+      font-size: clamp(1.7rem, 3.2vw, 3.05rem);
+      margin-bottom: 0;
+    }
+
+    body[data-trip-compact="true"] .hero-title-block .eyebrow {
+      margin-bottom: 4px;
     }
 
     .voice-button {
@@ -952,6 +1004,7 @@
         <span>British chalet holidays reimagined by AI</span>
       </span>
     </a>
+    <button class="button secondary reset-button" type="button" id="reset-trip-button" data-visible="false">Start New Trip</button>
     <div class="header-trip-strip" aria-label="Current trip summary">
       <div class="trip-strip-cell">
         <svg class="trip-strip-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -1001,14 +1054,15 @@
   <main>
     <section class="hero" id="concierge">
       <div class="hero-inner">
-        <div>
-          <p class="eyebrow">British chalet holidays reimagined by AI</p>
-          <h1>European ski trips, made effortless <em>by AI</em></h1>
+        <div class="hero-panel">
+          <div class="hero-title-block">
+            <p class="eyebrow">British chalet holidays reimagined by AI</p>
+            <h1>European ski trips, made effortless <em>by AI</em></h1>
+          </div>
           <p class="lede">Short on time, big on adventure. Tell the concierge your dates, group, and budget so AI gets it ready for a human travel booking specialist to confirm the best-fit chalet options.</p>
           <div class="hero-actions">
             <button class="primary voice-button" type="button" id="start-button">Click to Talk</button>
             <button class="danger voice-button" type="button" id="stop-button" disabled>Stop Talking</button>
-            <button class="button secondary reset-button" type="button" id="reset-trip-button">Start New Trip</button>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
@@ -1018,6 +1072,54 @@
 
     <section class="trip-workspace" aria-label="Live trip workspace">
       <div class="trip-workspace-inner">
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Name</p>
+            <h3>Who is planning?</h3>
+          </div>
+          <label>
+            Customer name
+            <input id="lead-name" autocomplete="name" placeholder="Name" title="Customer name, once provided.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-name">Edit</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
+            <p class="eyebrow">Party Details</p>
+            <h3>Who is travelling?</h3>
+          </div>
+          <label>
+            Group details
+            <input id="lead-group" placeholder="2 adults, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="I want to update the group details: number of people, ages, ski levels, lessons, and rooming needs.">Update Group</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-group">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the group details.">Talk Group</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div class="trip-card-header">
+            <div>
+              <p class="eyebrow">Dates</p>
+              <h3>When should the trip happen?</h3>
+            </div>
+          </div>
+          <label>
+            Travel window
+            <input id="lead-dates" placeholder="Friday to Sunday in March" title="Enter the preferred travel window, such as Friday to Sunday in March.">
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Use Example</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-dates">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
+          </div>
+        </article>
+
         <article class="trip-card">
           <div>
             <p class="eyebrow">Country</p>
@@ -1159,24 +1261,6 @@
         </article>
 
         <article class="trip-card">
-          <div class="trip-card-header">
-            <div>
-              <p class="eyebrow">Travel Dates</p>
-              <h3>When should the trip happen?</h3>
-            </div>
-          </div>
-          <label>
-            Travel window
-            <input id="lead-dates" placeholder="Friday to Sunday in March" title="Enter the preferred travel window, such as Friday to Sunday in March.">
-          </label>
-          <div class="trip-actions">
-            <button class="button secondary prompt-chip" type="button" data-prompt="I want to go to Avoriaz for a ski weekend, Friday to Sunday, 2 people.">Use Example</button>
-            <button class="button secondary edit-topic" type="button" data-focus="#lead-dates">Edit</button>
-            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
-          </div>
-        </article>
-
-        <article class="trip-card">
           <div>
             <p class="eyebrow">Travel</p>
             <h3>Where are you leaving from?</h3>
@@ -1189,22 +1273,6 @@
             <button class="button secondary prompt-chip" type="button" data-prompt="We are a family of 5 from Boston, mixed ski levels, looking for a catered chalet in Europe under $4,000 per person.">Family Example</button>
             <button class="button secondary edit-topic" type="button" data-focus="#lead-city">Edit</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my departure city and transfer preferences.">Talk Travel</button>
-          </div>
-        </article>
-
-        <article class="trip-card">
-          <div>
-            <p class="eyebrow">Group</p>
-            <h3>Who is travelling?</h3>
-          </div>
-          <label>
-            Group details
-            <input id="lead-group" placeholder="2 adults, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
-          </label>
-          <div class="trip-actions">
-            <button class="button secondary prompt-chip" type="button" data-prompt="I want to update the group details: number of people, ages, ski levels, lessons, and rooming needs.">Update Group</button>
-            <button class="button secondary edit-topic" type="button" data-focus="#lead-group">Edit</button>
-            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the group details.">Talk Group</button>
           </div>
         </article>
 
@@ -1333,10 +1401,6 @@
           <h3>Trip summary for a human travel booking specialist</h3>
           <form class="lead-form" id="lead-form">
             <div class="lead-grid">
-              <label>
-                Customer name
-                <input id="lead-name" autocomplete="name" placeholder="Name" title="Customer name, once provided.">
-              </label>
               <label>
                 Email
                 <input id="lead-email" type="email" autocomplete="email" placeholder="name@example.com" title="Email address for the trip confirmation.">
@@ -1641,6 +1705,8 @@
       bannerDates.textContent = bookingDetails.dates || leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
+      const hasFirstDetails = Boolean(customerName && leadGroup.value.trim() && leadDates.value.trim());
+      document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
