@@ -1066,6 +1066,32 @@
 
         <article class="trip-card">
           <div>
+            <p class="eyebrow">Country</p>
+            <h3>Which ski country?</h3>
+          </div>
+          <label>
+            Country / region
+            <select id="lead-country" title="Choose the country or region for this ski trip.">
+              <option value="">Select a country</option>
+              <option>France</option>
+              <option>Austria</option>
+              <option>Switzerland</option>
+              <option>Italy</option>
+              <option>Andorra</option>
+              <option>French Pyrenees</option>
+              <option>Spain</option>
+              <option>Scandinavia</option>
+            </select>
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary prompt-chip" type="button" data-prompt="Compare France, Austria, Switzerland, Italy, Andorra, Spain, and Scandinavia for a short ski trip.">Compare Countries</button>
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-country">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the ski country or region.">Talk Country</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
             <p class="eyebrow">Resort</p>
             <h3>Where should we focus?</h3>
           </div>
@@ -1427,6 +1453,7 @@
     const leadCity = document.querySelector("#lead-city");
     const leadDates = document.querySelector("#lead-dates");
     const leadChalet = document.querySelector("#lead-chalet");
+    const leadCountry = document.querySelector("#lead-country");
     const leadDestination = document.querySelector("#lead-destination");
     const leadGroup = document.querySelector("#lead-group");
     const leadBookingDates = document.querySelector("#lead-booking-dates");
@@ -1465,6 +1492,7 @@
     let currentAudioUrl = null;
     let speakingAbort = null;
     const bookingFieldMap = {
+      country: leadCountry,
       dates: leadBookingDates,
       destination: leadBookingDestination,
       flights: leadFlights,
@@ -1490,6 +1518,12 @@
       select.value = clean;
     }
 
+    function getSelectedResortCountry() {
+      const selected = leadDestination?.selectedOptions?.[0];
+      const group = selected?.closest?.("optgroup");
+      return group?.label || "";
+    }
+
     function escapeRegExp(value) {
       return String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     }
@@ -1511,8 +1545,25 @@
       return options.find((resort) => new RegExp(`\\b${escapeRegExp(resort)}\\b`, "i").test(text)) || "";
     }
 
+    function findCountryInText(text) {
+      if (!leadCountry) return "";
+      const options = Array.from(leadCountry.options)
+        .map((option) => option.value.trim())
+        .filter(Boolean);
+      const lower = String(text || "").toLowerCase();
+      const aliases = {
+        pyrenees: "French Pyrenees",
+        norway: "Scandinavia",
+        sweden: "Scandinavia"
+      };
+      const alias = Object.entries(aliases).find(([key]) => lower.includes(key));
+      if (alias) return alias[1];
+      return options.find((country) => new RegExp(`\\b${escapeRegExp(country)}\\b`, "i").test(text)) || "";
+    }
+
     function getBookingDetails() {
       const details = Object.fromEntries(Object.entries(bookingFieldMap).map(([key, field]) => [key, fieldValue(field)]));
+      details.country ||= fieldValue(leadCountry);
       details.dates ||= fieldValue(leadDates);
       details.destination ||= fieldValue(leadDestination);
       details.groupDetails ||= fieldValue(leadGroup);
@@ -1599,7 +1650,8 @@
       const bookingDetails = getBookingDetails();
       const destination = bookingDetails.destination || leadDestination.value.trim();
       bannerDestination.textContent = destination || "Destination not set";
-      bannerTripName.textContent = destination ? `${destination} ski trip` : "Trip";
+      const country = bookingDetails.country || leadCountry.value.trim();
+      bannerTripName.textContent = destination ? `${destination} ski trip` : country ? `${country} ski trip` : "Trip";
       bannerChalet.textContent = bookingDetails.chaletNames || leadChalet.value.trim() || "Chalet not set";
       bannerDates.textContent = bookingDetails.dates || leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
@@ -1615,6 +1667,7 @@
     function getTopicState() {
       return {
         chaletStyle: leadChalet.value,
+        country: leadCountry.value,
         resort: leadDestination.value,
         group: leadGroup.value,
         bookingDetails: getBookingDetails()
@@ -1644,6 +1697,7 @@
         email: leadEmail.value,
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
+        country: leadCountry.value,
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
         groupDetails: leadGroup.value,
@@ -1751,10 +1805,12 @@
       leadEmail.value = trip.email || "";
       leadCity.value = trip.departureCity || "";
       leadDates.value = trip.travelWindow || "";
-      ensureSelectOption(leadDestination, trip.destination || trip.topicState?.resort || "");
+      applyBookingDetails(trip.bookingDetails || trip.topicState?.bookingDetails || {});
+      ensureSelectOption(leadCountry, trip.country || trip.bookingDetails?.country || trip.topicState?.country || "");
+      ensureSelectOption(leadDestination, trip.destination || trip.bookingDetails?.destination || trip.topicState?.resort || "");
+      if (!leadCountry.value && leadDestination.value) ensureSelectOption(leadCountry, getSelectedResortCountry());
       leadChalet.value = trip.chaletPreference || trip.topicState?.chaletStyle || "";
       leadGroup.value = trip.groupDetails || trip.topicState?.group || "";
-      applyBookingDetails(trip.bookingDetails || trip.topicState?.bookingDetails || {});
       leadNotes.value = trip.notes || "";
       transcript = Array.isArray(trip.transcript) ? trip.transcript : [];
       renderTranscript();
@@ -1824,11 +1880,16 @@
           if (leadBookingDates) leadBookingDates.value = leadBookingDates.value || leadDates.value;
         }
       }
+      if (!leadCountry.value.trim()) {
+        const country = findCountryInText(text);
+        if (country) ensureSelectOption(leadCountry, country);
+      }
       if (!leadDestination.value.trim()) {
         const resort = findResortInText(text);
         if (resort) ensureSelectOption(leadDestination, resort);
         if (leadBookingDestination) leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
       }
+      if (!leadCountry.value.trim() && leadDestination.value.trim()) ensureSelectOption(leadCountry, getSelectedResortCountry());
       if (!leadChalet.value.trim()) {
         if (lower.includes("ski-in") || lower.includes("ski in")) leadChalet.value = "Ski-in / ski-out";
         else if (lower.includes("village")) leadChalet.value = "Village location";
@@ -1871,6 +1932,7 @@
       leadEmail.value = "";
       leadCity.value = "";
       leadDates.value = "";
+      leadCountry.value = "";
       leadDestination.value = "";
       leadChalet.value = "";
       leadGroup.value = "";
@@ -1891,6 +1953,7 @@
         leadCity.value = leadCity.value || "New York / Boston";
         leadDates.value = leadDates.value || "Friday to Sunday";
         if (!leadDestination.value) ensureSelectOption(leadDestination, "Avoriaz");
+        if (!leadCountry.value) ensureSelectOption(leadCountry, getSelectedResortCountry() || "France");
         if (leadBookingDates) leadBookingDates.value = leadBookingDates.value || leadDates.value;
         if (leadBookingDestination) leadBookingDestination.value = leadBookingDestination.value || leadDestination.value;
         return "Perfect. For Avoriaz, I would prepare a short-break brief around ski-in / ski-out chalet options, Geneva transfers, lift passes, rentals, and a human check on live availability before quoting.";
@@ -2146,6 +2209,7 @@
         email: document.querySelector("#lead-email").value,
         departureCity: leadCity.value,
         travelWindow: leadDates.value,
+        country: leadCountry.value,
         destination: leadDestination.value,
         chaletPreference: leadChalet.value,
         groupDetails: leadGroup.value,
@@ -2204,8 +2268,11 @@
       });
     });
 
-    [leadCity, leadDates, leadDestination, leadChalet, leadGroup, ...Object.values(bookingFieldMap), leadNotes].filter(Boolean).forEach((field) => {
+    Array.from(new Set([leadCity, leadDates, leadCountry, leadDestination, leadChalet, leadGroup, ...Object.values(bookingFieldMap), leadNotes].filter(Boolean))).forEach((field) => {
       const handleFieldUpdate = () => {
+        if (field === leadDestination && leadDestination.value && !leadCountry.value) {
+          ensureSelectOption(leadCountry, getSelectedResortCountry());
+        }
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
       };

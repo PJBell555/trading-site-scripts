@@ -2611,6 +2611,7 @@ function normalizeSkiTripRow(row = {}) {
     email: row.customer_email || "",
     departureCity: row.departure_city || "",
     travelWindow: row.travel_window || "",
+    country: payload.country || payload.bookingDetails?.country || topicState.country || "",
     destination: payload.destination || topicState.resort || "",
     chaletPreference: payload.chaletPreference || topicState.chaletStyle || "",
     groupDetails: payload.groupDetails || topicState.group || "",
@@ -2640,6 +2641,7 @@ function buildTripConfirmationEmail(trip) {
   const booking = trip.bookingDetails || {};
   const bookingRows = [
     ["Travel window", booking.dates || trip.travelWindow || "Not set yet"],
+    ["Country / region", booking.country || trip.country || "Not set yet"],
     ["Destination", booking.destination || trip.destination || "Not set yet"],
     ["Departure city", trip.departureCity || "Not set yet"],
     ["Flights", booking.flights || "Not set yet"],
@@ -2835,10 +2837,12 @@ async function handleSkiTrips(env, request, origin) {
     source: skiJson(body.source, "ski-voice-agent-web").slice(0, 120),
     userAgent: skiJson(request.headers.get("User-Agent")).slice(0, 300),
     lastSaveReason: skiJson(body.reason).slice(0, 80),
+    country: skiJson(body.country || body.bookingDetails?.country || topicState.country).slice(0, 120),
     destination: skiJson(body.destination).slice(0, 160),
     chaletPreference: skiJson(body.chaletPreference).slice(0, 220),
     groupDetails: skiJson(body.groupDetails).slice(0, 500),
     bookingDetails: body.bookingDetails && typeof body.bookingDetails === "object" ? {
+      country: skiJson(body.bookingDetails.country || body.country).slice(0, 120),
       dates: skiJson(body.bookingDetails.dates).slice(0, 220),
       destination: skiJson(body.bookingDetails.destination).slice(0, 160),
       flights: skiJson(body.bookingDetails.flights).slice(0, 500),
