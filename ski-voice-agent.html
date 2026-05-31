@@ -714,6 +714,27 @@
       color: var(--red);
     }
 
+    .handoff-confirmation {
+      background: #eefaf4;
+      border: 1px solid rgba(36, 115, 77, 0.25);
+      color: var(--green);
+      display: none;
+      font-weight: 900;
+      line-height: 1.35;
+      padding: 12px 14px;
+    }
+
+    .handoff-confirmation[data-visible="true"] {
+      display: block;
+    }
+
+    .handoff-confirmation small {
+      color: var(--muted);
+      display: block;
+      font-weight: 800;
+      margin-top: 3px;
+    }
+
     .transcript {
       border: 1px solid var(--line);
       max-height: 390px;
@@ -1092,6 +1113,7 @@
               <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff." title="Summary sent to the human travel booking specialist."></textarea>
             </label>
             <button class="button dark" type="submit">Send Human Review Brief</button>
+            <div class="handoff-confirmation" id="handoff-confirmation" data-visible="false" role="status" aria-live="polite"></div>
           </form>
         </aside>
       </div>
@@ -1200,6 +1222,7 @@
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
+    const handoffConfirmation = document.querySelector("#handoff-confirmation");
     const leadName = document.querySelector("#lead-name");
     const leadEmail = document.querySelector("#lead-email");
     const leadNotes = document.querySelector("#lead-notes");
@@ -1260,6 +1283,13 @@
     function setStatus(message, state = "idle") {
       statusEl.textContent = message;
       statusEl.dataset.state = state;
+    }
+
+    function showHandoffConfirmation(email) {
+      const tripLink = `${window.location.origin}${window.location.pathname}?trip=${encodeURIComponent(cloudTripId)}#concierge`;
+      handoffConfirmation.innerHTML = `Email sent. Trip handoff closed.<small>Use trip ID ${cloudTripId} or <a href="${tripLink}">revisit the trip</a> to continue refining later.</small>`;
+      handoffConfirmation.dataset.visible = "true";
+      leadForm.dataset.closed = "true";
     }
 
     function hasTripData() {
@@ -1829,8 +1859,10 @@
         source: "ski-voice-agent-web"
       };
       try {
-        await saveCloudTripNow("human-review-submit");
-        await sendTripConfirmation({ force: true, quiet: false });
+        const savedTrip = await saveCloudTripNow("human-review-submit", { quiet: false });
+        if (!savedTrip && !cloudTripId) throw new Error("Trip could not be saved before sending email.");
+        const confirmation = await sendTripConfirmation({ force: true, quiet: false });
+        if (!confirmation?.ok) throw new Error("Confirmation email was not sent.");
         const response = await fetch(`${API_BASE}/ski/leads`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1841,9 +1873,13 @@
           throw new Error(error.error || "Lead save failed");
         }
         const saved = await response.json();
-        setStatus(`Human review brief saved: ${saved.leadId}`, "ready");
+        stopSession({ resetStatus: false });
+        showHandoffConfirmation(confirmation.email || leadEmail.value);
+        setStatus(`Email sent and human review brief saved: ${saved.leadId}`, "ready");
       } catch (error) {
         setStatus(error.message, "error");
+        handoffConfirmation.textContent = `Email was not sent: ${error.message}`;
+        handoffConfirmation.dataset.visible = "true";
       }
     });
 

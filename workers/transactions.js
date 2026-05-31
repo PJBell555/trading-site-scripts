@@ -2634,6 +2634,7 @@ function escapeHtml(value) {
 
 function buildTripConfirmationEmail(trip) {
   const name = trip.name || "there";
+  const revisitUrl = `https://pjbell555.github.io/trading-site-scripts/ski-voice-agent.html?trip=${encodeURIComponent(trip.tripId)}#concierge`;
   const lines = [
     `Hi ${name},`,
     "",
@@ -2646,6 +2647,8 @@ function buildTripConfirmationEmail(trip) {
     trip.notes || "No specialist notes have been captured yet.",
     "",
     "A human travel booking specialist will verify availability, pricing, transfers, package rules, and booking terms before anything is quoted or booked.",
+    "",
+    `Revisit the trip: ${revisitUrl}`,
     "",
     "Ski in Europe"
   ];
@@ -2661,6 +2664,9 @@ function buildTripConfirmationEmail(trip) {
       </table>
       <h3 style="color:#08233d">Specialist notes</h3>
       <pre style="white-space:pre-wrap;background:#f5f7fb;border:1px solid #d9e2ec;padding:12px">${escapeHtml(trip.notes || "No specialist notes have been captured yet.")}</pre>
+      <p>
+        <a href="${escapeHtml(revisitUrl)}" style="background:#08233d;border-radius:999px;color:#fff;display:inline-block;font-weight:bold;padding:12px 18px;text-decoration:none">Revisit the trip</a>
+      </p>
       <p>A human travel booking specialist will verify availability, pricing, transfers, package rules, and booking terms before anything is quoted or booked.</p>
       <p>Ski in Europe</p>
     </div>
