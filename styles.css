@@ -4747,7 +4747,8 @@ ol {
   border-right: 1px solid var(--line);
   display: grid;
   grid-template-rows: auto 1fr;
-  min-height: 100vh;
+  height: 100vh;
+  min-height: 0;
   position: sticky;
   top: 0;
 }
@@ -4808,7 +4809,11 @@ ol {
   flex-wrap: nowrap;
   gap: 10px;
   margin: 0;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   padding: 30px 16px 24px;
+  scrollbar-gutter: stable;
 }
 
 .menu-group {
@@ -5123,13 +5128,16 @@ textarea::placeholder {
   }
 
   .side-nav {
+    height: auto;
     min-height: auto;
+    overflow: visible;
     position: static;
   }
 
   .side-nav .app-menu {
     flex-direction: row;
     flex-wrap: wrap;
+    overflow: visible;
     padding: 12px;
   }
 
