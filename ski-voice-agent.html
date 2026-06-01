@@ -1920,6 +1920,41 @@
       leadChaletNames.value = current || "";
     }
 
+    function getAccommodationNames() {
+      return skiweekendsAccommodation.map((item) => item.name);
+    }
+
+    function findAccommodationInText(text) {
+      const lower = String(text || "").toLowerCase();
+      return getAccommodationNames().find((name) => lower.includes(name.toLowerCase())) || "";
+    }
+
+    function setAccommodationFromText(text) {
+      const accommodation = findAccommodationInText(text);
+      if (!accommodation || !leadChaletNames) return false;
+      const match = skiweekendsAccommodation.find((item) => item.name === accommodation);
+      if (match) {
+        addSelectionChoice("destinations", match.resort, { quiet: true });
+        addSelectionChoice("chalets", match.type, { quiet: true });
+      }
+      populateAccommodationOptions();
+      ensureSelectOption(leadChaletNames, accommodation);
+      leadChaletNames.value = accommodation;
+      return true;
+    }
+
+    function setFieldIfUseful(field, value, { replace = false } = {}) {
+      const clean = String(value || "").replace(/\s+/g, " ").replace(/[,.]\s*$/, "").trim();
+      if (!field || !clean) return false;
+      if (!replace && field.value.trim()) return false;
+      field.value = clean;
+      return true;
+    }
+
+    function sentenceWith(text, pattern) {
+      return String(text || "").split(/[.!?]\s+/).find((part) => pattern.test(part)) || "";
+    }
+
     function partySummary() {
       const childLabel = partyState.children === 1 ? "child" : "children";
       const roomLabel = partyState.rooms === 1 ? "room" : "rooms";
@@ -2294,7 +2329,7 @@
       const clean = String(text || "").trim();
       if (!clean) return;
       transcript.push({ role, text: clean, at: new Date().toISOString() });
-      if (role === "Customer") updateTripFieldsFromText(clean);
+      updateTripFieldsFromText(clean, { role });
       const item = document.createElement("div");
       item.className = "message";
       const label = document.createElement("strong");
@@ -2309,30 +2344,36 @@
       scheduleCloudTripSave("chat");
     }
 
-    function updateTripFieldsFromText(text) {
+    function updateTripFieldsFromText(text, { role = "Customer" } = {}) {
       const lower = text.toLowerCase();
-      if (!leadCity.value.trim()) {
-        const departure = text.match(/\b(?:from|leaving from|departing from|fly(?:ing)? from)\s+([A-Z][A-Za-z .'-]{2,36}|[A-Z]{3})/i);
-        if (departure) {
-          leadCity.value = departure[1].replace(/\s+(?:for|to|on|in)\b.*$/i, "").replace(/[,.]$/, "").trim();
-        } else if (/\bSMF\b/i.test(text)) {
-          leadCity.value = "SMF";
-        } else if (lower.includes("boston")) {
-          leadCity.value = "Boston";
-        } else if (lower.includes("new york")) {
-          leadCity.value = "New York";
-        } else if (lower.includes("chicago")) {
-          leadCity.value = "Chicago";
-        } else if (lower.includes("los angeles")) {
-          leadCity.value = "Los Angeles";
+      const isCustomer = role === "Customer";
+      if (isCustomer && !leadName.value.trim()) {
+        const name = text.match(/\b(?:my name is|this is)\s+([A-Za-z][A-Za-z'-]+(?:\s+[A-Za-z][A-Za-z'-]+){0,2})/i);
+        if (name) {
+          const formattedName = name[1].split(/\s+/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+          setFieldIfUseful(leadName, formattedName);
         }
       }
-      if (!leadDates.value.trim()) {
-        const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
-        if (travel) {
-          leadDates.value = travel[0].trim();
-          if (leadBookingDates) leadBookingDates.value = leadBookingDates.value || leadDates.value;
+      const departure = text.match(/\b(?:from|leaving from|departing from|fly(?:ing)? from)\s+([A-Z][A-Za-z .'-]{2,36}|[A-Z]{3})/i);
+      if (departure) {
+        setFieldIfUseful(leadCity, departure[1].replace(/\s+(?:for|to|on|in)\b.*$/i, "").replace(/[,.]$/, "").trim(), { replace: isCustomer });
+      } else if (!leadCity.value.trim() || isCustomer) {
+        if (/\bSMF\b/i.test(text)) {
+          setFieldIfUseful(leadCity, "SMF", { replace: isCustomer });
+        } else if (lower.includes("boston")) {
+          setFieldIfUseful(leadCity, "Boston", { replace: isCustomer });
+        } else if (lower.includes("new york")) {
+          setFieldIfUseful(leadCity, "New York", { replace: isCustomer });
+        } else if (lower.includes("chicago")) {
+          setFieldIfUseful(leadCity, "Chicago", { replace: isCustomer });
+        } else if (lower.includes("los angeles")) {
+          setFieldIfUseful(leadCity, "Los Angeles", { replace: isCustomer });
         }
+      }
+      const travel = text.match(/\b(?:friday\s+to\s+sunday|fri(?:day)?\s*[-/]\s*sun(?:day)?|[2-9]\s+nights?|weekend|january|february|march|april)\b[^,.]*/i);
+      if (travel) {
+        setFieldIfUseful(leadDates, travel[0].trim(), { replace: isCustomer });
+        if (leadBookingDates) setFieldIfUseful(leadBookingDates, leadDates.value, { replace: isCustomer });
       }
       const country = findCountryInText(text);
       if (country) addSelectionChoice("countries", country, { quiet: true });
@@ -2344,34 +2385,51 @@
       else if (lower.includes("half board") || lower.includes("half-board")) addSelectionChoice("chalets", "Half-board hotel", { quiet: true });
       else if (lower.includes("hotel")) addSelectionChoice("chalets", "Hotel", { quiet: true });
       else if (lower.includes("accommodation only")) addSelectionChoice("chalets", "Accommodation only", { quiet: true });
-      if (!leadGroup.value.trim()) {
-        const people = text.match(/(\d+)\s*(people|guests|persons?|travellers?|travelers?)/i);
-        const adults = text.match(/(\d+)\s*adults?/i);
-        const children = text.match(/(\d+)\s*children?/i);
-        const rooms = text.match(/(\d+)\s*rooms?/i);
+      setAccommodationFromText(text);
+      const people = text.match(/(\d+)\s*(people|guests|persons?|travellers?|travelers?)/i);
+      const adults = text.match(/(\d+)\s*adults?/i);
+      const children = text.match(/(\d+)\s*(?:children|kids?)/i);
+      const rooms = text.match(/(\d+)\s*rooms?/i);
+      if (adults || children || rooms || people) {
         if (adults || children || rooms) {
-          leadGroup.value = `${adults?.[1] || 0} adults, ${children?.[1] || 0} children, ${rooms?.[1] || 1} room`;
+          setFieldIfUseful(leadGroup, `${adults?.[1] || 0} adults, ${children?.[1] || 0} children, ${rooms?.[1] || 1} room`, { replace: isCustomer });
         } else if (people) {
-          leadGroup.value = `${people[1]} people`;
+          setFieldIfUseful(leadGroup, `${people[1]} people`, { replace: isCustomer });
         }
         applyPartySummary(leadGroup.value);
-        if (leadBookingGroup) leadBookingGroup.value = leadBookingGroup.value || leadGroup.value;
+        if (leadBookingGroup) setFieldIfUseful(leadBookingGroup, leadGroup.value, { replace: isCustomer });
       }
-      if (!leadTransfers.value.trim() && lower.includes("transfer")) {
-        leadTransfers.value = text.match(/[^.]*transfer[^.]*/i)?.[0]?.trim() || "Transfer needed";
+      const flightSentence = sentenceWith(text, /\b(flight|airport|fly|flying|booked separately)\b/i);
+      if (flightSentence) {
+        setFieldIfUseful(leadFlights, flightSentence || "Flights needed");
+      } else if (!leadFlights.value.trim() && /\b(no flights|without flights|flights booked separately)\b/i.test(text)) {
+        leadFlights.value = lower.includes("no flights") || lower.includes("without flights") ? "No flights needed" : "Flights booked separately";
       }
-      if (!leadSkiRental.value.trim() && (lower.includes("rental") || lower.includes("rentals"))) {
-        leadSkiRental.value = text.match(/[^.]*rental[^.]*/i)?.[0]?.trim() || "Ski rentals needed";
+      const transferSentence = sentenceWith(text, /\b(transfer|taxi|shuttle|car hire|rental car|geneva)\b/i);
+      if (transferSentence) {
+        setFieldIfUseful(leadTransfers, transferSentence || "Transfer needed");
       }
-      if (!leadBoots.value.trim() && lower.includes("boots")) {
-        leadBoots.value = text.match(/[^.]*boots?[^.]*/i)?.[0]?.trim() || "Boots needed";
+      const rentalSentence = sentenceWith(text, /\b(rental|rentals|equipment|skis?|boots?|helmet|poles)\b/i);
+      if (rentalSentence) {
+        setFieldIfUseful(leadSkiRental, rentalSentence || "Ski rentals needed");
       }
-      if (!leadHelmet.value.trim() && lower.includes("helmet")) {
-        leadHelmet.value = text.match(/[^.]*helmet[^.]*/i)?.[0]?.trim() || "Helmet needed";
+      const bootsSentence = sentenceWith(text, /\bboots?\b/i);
+      if (bootsSentence) {
+        setFieldIfUseful(leadBoots, bootsSentence || "Boots needed");
       }
-      if (!leadSkiPasses.value.trim() && (lower.includes("ski pass") || lower.includes("lift pass"))) {
-        leadSkiPasses.value = text.match(/[^.]*(?:ski|lift) pass[^.]*/i)?.[0]?.trim() || "Ski passes needed";
+      const skisSentence = sentenceWith(text, /\bskis?\b/i);
+      if (skisSentence) {
+        setFieldIfUseful(leadSkis, skisSentence || "Skis needed");
       }
+      const helmetSentence = sentenceWith(text, /\bhelmets?\b/i);
+      if (helmetSentence) {
+        setFieldIfUseful(leadHelmet, helmetSentence || "Helmet needed");
+      }
+      const passSentence = sentenceWith(text, /\b(ski pass|lift pass|passes)\b/i);
+      if (passSentence) {
+        setFieldIfUseful(leadSkiPasses, passSentence || "Ski passes needed");
+      }
+      populateAccommodationOptions();
     }
 
     function resetTrip({ keepStatus = false } = {}) {
