@@ -17,6 +17,7 @@ const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
 const PAPER_MARTINGALE_RECOVERY_MIN_PROFIT = 1;
 const PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET = 0.03;
+const PAPER_MARTINGALE_RECOVERY_CAPITAL_TARGET_OFFSET = 0.01;
 const PAPER_SCHEDULER_LOCK_KEY = "paper-trading-scheduler";
 const PAPER_SCHEDULER_LOCK_TTL_MS = 4 * 60 * 1000;
 const COINBASE_FETCH_TIMEOUT_MS = 7000;
@@ -3903,6 +3904,10 @@ function getServerStrategySettings(user = {}) {
     profitLockTrailingStop: strategy.profitLockTrailingStop !== false,
     missedOpportunityLearner: strategy.missedOpportunityLearner !== false,
     missedOpportunityReentry: isPeterMissedOpportunityReentryUser(user),
+    martingaleRecoveryMode: String(strategy.martingaleRecoveryMode || "predict").toLowerCase(),
+    martingaleRecoveryMinProfit: Math.max(0, Number(strategy.martingaleRecoveryMinProfit) || PAPER_MARTINGALE_RECOVERY_MIN_PROFIT),
+    martingaleRecoveryMaxTargetOffset: clamp(Number(strategy.martingaleRecoveryMaxTargetOffset) || PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET, 0.01, 0.2),
+    martingaleRecoveryCapitalTargetOffset: clamp(Number(strategy.martingaleRecoveryCapitalTargetOffset) || PAPER_MARTINGALE_RECOVERY_CAPITAL_TARGET_OFFSET, 0.006, 0.02),
     noChaseMoveBps: clamp(Number(strategy.noChaseMoveBps) || 18, 0, 100),
     pullbackMinRetraceBps: clamp(Number(strategy.pullbackMinRetraceBps) || 2, 0, 30),
     profitLockMinMoveBps: clamp(Number(strategy.profitLockMinMoveBps) || 10, 0, 100),
@@ -6460,37 +6465,89 @@ function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, stra
   const baseTargetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
   const stopPrice = side === "short" ? price * (1 + stopOffset) : price * (1 - stopOffset);
   const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1)) * clamp(Number(sizeMultiplier) || 1, 0.1, 1);
-  const contracts = Math.max(1, Math.min(PAPER_SCHEDULER_MAX_CONTRACTS, Math.floor(plannedCapital / marginRequirement) || 1));
+  let contracts = Math.max(1, Math.min(PAPER_SCHEDULER_MAX_CONTRACTS, Math.floor(plannedCapital / marginRequirement) || 1));
   const feePerContractSide = Number(config.feePerContractSide) >= 0 ? Number(config.feePerContractSide) : 0;
-  const openFee = feePerContractSide * contracts;
-  const estimatedExitFee = feePerContractSide * contracts;
-  const totalEstimatedFees = openFee + estimatedExitFee;
-  const baseTargetGross = Math.abs(baseTargetPrice - price) * contractMultiplier * contracts;
-  const baseTargetNet = baseTargetGross - totalEstimatedFees;
+  let openFee = feePerContractSide * contracts;
+  let estimatedExitFee = feePerContractSide * contracts;
+  let totalEstimatedFees = openFee + estimatedExitFee;
+  let baseTargetGross = Math.abs(baseTargetPrice - price) * contractMultiplier * contracts;
+  let baseTargetNet = baseTargetGross - totalEstimatedFees;
   const recoveryLoss = Math.max(0, Number(recovery?.loss) || 0);
   const recoveryCount = Math.max(0, Math.round(Number(recovery?.count) || 0));
   const recoveryMinProfit = Math.max(0, Number(strategy.martingaleRecoveryMinProfit) || PAPER_MARTINGALE_RECOVERY_MIN_PROFIT);
   const recoveryMaxTargetOffset = clamp(Number(strategy.martingaleRecoveryMaxTargetOffset) || PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET, targetOffset, 0.2);
+  const recoveryCapitalTargetOffset = clamp(Number(strategy.martingaleRecoveryCapitalTargetOffset) || PAPER_MARTINGALE_RECOVERY_CAPITAL_TARGET_OFFSET, 0.006, 0.02);
+  const recoveryMode = ["capital", "widen", "predict"].includes(String(strategy.martingaleRecoveryMode || "").toLowerCase())
+    ? String(strategy.martingaleRecoveryMode || "").toLowerCase()
+    : "predict";
   let targetPrice = baseTargetPrice;
   let martingaleRecoveryApplied = false;
   let martingaleRecoverySkipped = false;
   let martingaleRecoveryRequiredNet = null;
   let martingaleRecoveryRequiredOffset = null;
+  let martingaleRecoveryMethod = "normal";
+  let martingaleRecoveryCapitalContracts = null;
+  let martingaleRecoveryWidenOffset = null;
   let martingaleRecoveryReason = "";
 
   if (recoveryLoss > 0 && recoveryCount > 0) {
     martingaleRecoveryRequiredNet = Math.max(baseTargetNet, recoveryLoss + recoveryMinProfit);
-    const requiredGross = martingaleRecoveryRequiredNet + totalEstimatedFees;
-    const requiredMove = requiredGross / Math.max(1, contractMultiplier * contracts);
-    martingaleRecoveryRequiredOffset = price > 0 ? requiredMove / price : null;
-    if (Number.isFinite(martingaleRecoveryRequiredOffset) && martingaleRecoveryRequiredOffset > recoveryMaxTargetOffset) {
+    const sameSideTrend = side === "short"
+      ? Boolean(directionalContext?.shortContinuationConfirmed || directionalContext?.isBearishTrend)
+      : Boolean(directionalContext?.longContinuationConfirmed || directionalContext?.isBullishTrend);
+    const volatility = Number(directionalContext?.volatility) || 0;
+    const trendMove = Math.max(Math.abs(Number(directionalContext?.ret60) || 0), Math.abs(Number(directionalContext?.ret180) || 0), Math.abs(Number(directionalContext?.recentMove) || 0));
+    const trendSupportsWiderGap = sameSideTrend && (volatility >= Math.max(1.2, Number(strategy.trendingMinVolatilityBps) || 0) || trendMove >= 12);
+    const perContractCapitalTargetNet = (price * recoveryCapitalTargetOffset * contractMultiplier) - (feePerContractSide * 2);
+    const requiredCapitalContracts = perContractCapitalTargetNet > 0
+      ? Math.ceil(martingaleRecoveryRequiredNet / perContractCapitalTargetNet)
+      : Infinity;
+    const capitalPlan = {
+      viable: Number.isFinite(requiredCapitalContracts) && requiredCapitalContracts >= contracts && requiredCapitalContracts <= PAPER_SCHEDULER_MAX_CONTRACTS,
+      contracts: requiredCapitalContracts,
+      offset: recoveryCapitalTargetOffset
+    };
+    const widenRequiredGross = martingaleRecoveryRequiredNet + totalEstimatedFees;
+    const widenRequiredMove = widenRequiredGross / Math.max(1, contractMultiplier * contracts);
+    const widenRequiredOffset = price > 0 ? widenRequiredMove / price : null;
+    const widenPlan = {
+      viable: Number.isFinite(widenRequiredOffset) && widenRequiredOffset <= recoveryMaxTargetOffset,
+      offset: widenRequiredOffset,
+      move: widenRequiredMove
+    };
+    const preferredMethod = recoveryMode === "predict"
+      ? (trendSupportsWiderGap ? "widen" : "capital")
+      : recoveryMode;
+    const selectedMethod = preferredMethod === "capital"
+      ? (capitalPlan.viable ? "capital" : widenPlan.viable ? "widen" : "skip")
+      : (widenPlan.viable ? "widen" : capitalPlan.viable ? "capital" : "skip");
+    martingaleRecoveryRequiredOffset = selectedMethod === "capital" ? recoveryCapitalTargetOffset : widenRequiredOffset;
+    martingaleRecoveryCapitalContracts = Number.isFinite(requiredCapitalContracts) ? requiredCapitalContracts : null;
+    martingaleRecoveryWidenOffset = widenRequiredOffset;
+
+    if (selectedMethod === "skip") {
       martingaleRecoverySkipped = true;
-      martingaleRecoveryReason = `Recovery target needs ${(martingaleRecoveryRequiredOffset * 100).toFixed(2)}%, above cap ${(recoveryMaxTargetOffset * 100).toFixed(2)}%.`;
-    } else if (Number.isFinite(requiredMove) && requiredMove > 0) {
-      targetPrice = side === "short" ? price - requiredMove : price + requiredMove;
+      martingaleRecoveryMethod = "skip";
+      const capitalText = Number.isFinite(requiredCapitalContracts) ? `${requiredCapitalContracts} contracts` : "unavailable capital sizing";
+      const widenText = Number.isFinite(widenRequiredOffset) ? `${(widenRequiredOffset * 100).toFixed(2)}% target` : "unavailable target";
+      martingaleRecoveryReason = `Recovery needs ${capitalText} near ${(recoveryCapitalTargetOffset * 100).toFixed(2)}% or ${widenText}; both exceed limits.`;
+    } else if (selectedMethod === "capital") {
+      contracts = Math.max(contracts, requiredCapitalContracts);
+      openFee = feePerContractSide * contracts;
+      estimatedExitFee = feePerContractSide * contracts;
+      totalEstimatedFees = openFee + estimatedExitFee;
+      targetPrice = side === "short" ? price * (1 - recoveryCapitalTargetOffset) : price * (1 + recoveryCapitalTargetOffset);
+      baseTargetGross = Math.abs(baseTargetPrice - price) * contractMultiplier * contracts;
+      baseTargetNet = baseTargetGross - totalEstimatedFees;
+      martingaleRecoveryApplied = true;
+      martingaleRecoveryMethod = "capital";
+      martingaleRecoveryReason = `Recovery predictor chose more capital: ${contracts} contracts near ${(recoveryCapitalTargetOffset * 100).toFixed(2)}% target in ${trendSupportsWiderGap ? "trend" : "sideways/flat"} tape to recover ${recoveryCount} loss${recoveryCount === 1 ? "" : "es"} totaling $${recoveryLoss.toFixed(2)}.`;
+    } else if (Number.isFinite(widenPlan.move) && widenPlan.move > 0) {
+      targetPrice = side === "short" ? price - widenPlan.move : price + widenPlan.move;
       martingaleRecoveryApplied = Math.abs(targetPrice - baseTargetPrice) > 0.0000001;
+      martingaleRecoveryMethod = "widen";
       if (martingaleRecoveryApplied) {
-        martingaleRecoveryReason = `Target widened to recover ${recoveryCount} loss${recoveryCount === 1 ? "" : "es"} totaling $${recoveryLoss.toFixed(2)}.`;
+        martingaleRecoveryReason = `Recovery predictor chose wider gap: ${(widenPlan.offset * 100).toFixed(2)}% target in ${trendSupportsWiderGap ? "directional/trending" : "fallback"} tape to recover ${recoveryCount} loss${recoveryCount === 1 ? "" : "es"} totaling $${recoveryLoss.toFixed(2)}.`;
       }
     }
   }
@@ -6515,6 +6572,9 @@ function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, stra
     martingaleRecoveryCount: recoveryCount,
     martingaleRecoveryRequiredNet,
     martingaleRecoveryRequiredOffset,
+    martingaleRecoveryMethod,
+    martingaleRecoveryCapitalContracts,
+    martingaleRecoveryWidenOffset,
     martingaleRecoveryMaxTargetOffset: recoveryMaxTargetOffset,
     martingaleRecoveryReason
   };
@@ -7351,7 +7411,10 @@ async function runPaperTradingScheduler(env, options = {}) {
         const step = exclusiveMartingale
           ? getNextServerMartingaleStep(transactions, email, strategySettings.martingaleSteps, commodity)
           : 1;
-        if (!directionalOverrideSignal && regime.enabled && step > regime.maxMartingaleStep) {
+        const recovery = exclusiveMartingale && step > 1
+          ? getServerMartingaleRecovery(transactions, email, commodity)
+          : null;
+        if (!directionalOverrideSignal && regime.enabled && step > regime.maxMartingaleStep && !recovery?.active) {
           lastDecision = `${commodity}: ${regime.regime} regime capped step ${step}/${regime.maxMartingaleStep}`;
           setDecisionAudit("regime-step-cap", lastDecision, { markov: markovAudit, priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null, price: { commodity, value: price.price, source: price.source }, signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold } });
           run.skippedTrades += 1;
@@ -7368,9 +7431,6 @@ async function runPaperTradingScheduler(env, options = {}) {
           : directionalOverrideSignal
             ? strategySettings.flatSizeMultiplier
             : (regime.enabled ? regime.sizeMultiplier : 1) * (markovMethod.enabled ? markovMethod.sizeMultiplier : 1);
-        const recovery = exclusiveMartingale && step > 1
-          ? getServerMartingaleRecovery(transactions, email, commodity)
-          : null;
         const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext, recovery);
         if (terms.martingaleRecoverySkipped) {
           lastDecision = `${commodity}: martingale recovery skipped - ${terms.martingaleRecoveryReason}`;
@@ -7383,7 +7443,10 @@ async function runPaperTradingScheduler(env, options = {}) {
               count: terms.martingaleRecoveryCount,
               requiredNet: terms.martingaleRecoveryRequiredNet,
               requiredOffset: terms.martingaleRecoveryRequiredOffset,
-              maxOffset: terms.martingaleRecoveryMaxTargetOffset
+              maxOffset: terms.martingaleRecoveryMaxTargetOffset,
+              method: terms.martingaleRecoveryMethod,
+              capitalContracts: terms.martingaleRecoveryCapitalContracts,
+              widenOffset: terms.martingaleRecoveryWidenOffset
             }
           });
           run.skippedTrades += 1;
@@ -7423,6 +7486,9 @@ async function runPaperTradingScheduler(env, options = {}) {
           martingaleRecoveryCount: terms.martingaleRecoveryCount,
           martingaleRecoveryRequiredNet: terms.martingaleRecoveryRequiredNet,
           martingaleRecoveryRequiredOffset: terms.martingaleRecoveryRequiredOffset,
+          martingaleRecoveryMethod: terms.martingaleRecoveryMethod,
+          martingaleRecoveryCapitalContracts: terms.martingaleRecoveryCapitalContracts,
+          martingaleRecoveryWidenOffset: terms.martingaleRecoveryWidenOffset,
           markovMethodEnabled: Boolean(markovMethod.enabled),
           markovState: markovMethod.state,
           markovExpectedSide: markovMethod.expectedSide,
@@ -7492,7 +7558,8 @@ async function runPaperTradingScheduler(env, options = {}) {
               count: terms.martingaleRecoveryCount,
               targetPrice: terms.targetPrice,
               baseTargetPrice: terms.baseTargetPrice,
-              requiredNet: terms.martingaleRecoveryRequiredNet
+              requiredNet: terms.martingaleRecoveryRequiredNet,
+              method: terms.martingaleRecoveryMethod
             }
             : null
         });

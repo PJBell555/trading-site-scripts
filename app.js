@@ -549,6 +549,10 @@ const DEFAULT_USER_STRATEGY = {
   flatThresholdBoost: 4,
   flatMinEdgePercent: 56,
   flatMinVolatilityBps: 0.8,
+  martingaleRecoveryMode: "predict",
+  martingaleRecoveryMinProfit: 1,
+  martingaleRecoveryMaxTargetOffset: 0.03,
+  martingaleRecoveryCapitalTargetOffset: 0.01,
   trendingMinEdgePercent: 58,
   trendingMinVolatilityBps: 1.2,
   breakoutParticipation: true,
@@ -3621,6 +3625,10 @@ function normalizeUserStrategy(strategy = {}) {
     flatThresholdBoost: clamp(Math.round(Number(merged.flatThresholdBoost) || DEFAULT_USER_STRATEGY.flatThresholdBoost), 0, 30),
     flatMinEdgePercent: clamp(Math.round(Number(merged.flatMinEdgePercent) || DEFAULT_USER_STRATEGY.flatMinEdgePercent), 50, 80),
     flatMinVolatilityBps: clamp(Number(merged.flatMinVolatilityBps) || DEFAULT_USER_STRATEGY.flatMinVolatilityBps, 0, 20),
+    martingaleRecoveryMode: ["predict", "capital", "widen"].includes(String(merged.martingaleRecoveryMode || "").toLowerCase()) ? String(merged.martingaleRecoveryMode).toLowerCase() : DEFAULT_USER_STRATEGY.martingaleRecoveryMode,
+    martingaleRecoveryMinProfit: Math.max(0, Number(merged.martingaleRecoveryMinProfit) || DEFAULT_USER_STRATEGY.martingaleRecoveryMinProfit),
+    martingaleRecoveryMaxTargetOffset: clamp(Number(merged.martingaleRecoveryMaxTargetOffset) || DEFAULT_USER_STRATEGY.martingaleRecoveryMaxTargetOffset, 0.01, 0.2),
+    martingaleRecoveryCapitalTargetOffset: clamp(Number(merged.martingaleRecoveryCapitalTargetOffset) || DEFAULT_USER_STRATEGY.martingaleRecoveryCapitalTargetOffset, 0.006, 0.02),
     trendingMinEdgePercent: clamp(Math.round(Number(merged.trendingMinEdgePercent) || DEFAULT_USER_STRATEGY.trendingMinEdgePercent), 50, 85),
     trendingMinVolatilityBps: clamp(Number(merged.trendingMinVolatilityBps) || DEFAULT_USER_STRATEGY.trendingMinVolatilityBps, 0, 20),
     breakoutParticipation: merged.breakoutParticipation !== false,
@@ -9719,6 +9727,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
   const regime = getRegimeAssessment(signal, userStrategy);
   regime.blocksWeakSetup = regime.regime !== "trending" && setupGrade === "C" && !regime.highEdgeVolatilitySetup;
   const markovMethod = getMarkovMethodAssessment(signal, userStrategy);
+  const recoveryBypassesRegimeStepCap = Boolean(martingaleStep > 1 && regime.enabled && martingaleStep > regime.maxMartingaleStep);
   const riskPct = `${paperRiskPct.toFixed(2).replace(/\.?0+$/, "")}%`;
   const status = waitBias ? "Stand by" : "Armed";
   const learnedThreshold = getKarpathyLoop(getSignalSide(signal)).threshold;
@@ -9809,6 +9818,7 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
     coachThresholdBoost,
     secondOpinionConsensus,
     regime,
+    recoveryBypassesRegimeStepCap,
     markovMethod,
     entryThreshold,
     setupGrade,
@@ -9823,9 +9833,10 @@ function buildTradePlan(commodity, signal, baseSignals = readBaseSignals()) {
       `Regime is ${regime.regime}: edge ${regime.edgePercent}%, volatility ${regime.volatility.toFixed(2)} bps, ${regime.momentumAligned ? "momentum aligned" : "confirmation incomplete"}.`,
       markovMethod.enabled ? `${markovMethod.detail} ${markovMethod.counterState ? "Counter-state entries need reversal or breakdown confirmation." : "State agrees with the current trade filter."}` : "Markov Hedge Fund Method is off for this user.",
       `Commit Martingale step ${effectiveStep} of ${regime.enabled ? regime.maxMartingaleStep : maxMartingaleStep}, currently ${formatMoney(nextCapital)}, for ${Number.isFinite(plannedContracts) ? plannedContracts : UNAVAILABLE_TEXT} contract${plannedContracts === 1 ? "" : "s"} of ${contractMultiplier} units each${minimumContractFloorApplied ? `; the strategy multiplier asked for ${formatMoney(adjustedNextCapital)}, but the one-contract minimum floor applies` : ""}.`,
+      recoveryBypassesRegimeStepCap ? `Cloudflare recovery predictor can override the flat step cap: sideways tape favors more contracts near a ${(Number(userStrategy.martingaleRecoveryCapitalTargetOffset) * 100).toFixed(2)}% target; directional tape can widen the gap up to ${(Number(userStrategy.martingaleRecoveryMaxTargetOffset) * 100).toFixed(2)}%.` : null,
       `Model ${formatMoney(notionalValue)} notional exposure, subtract about ${formatMoney(estimatedRoundTripFees)} estimated round-trip fees, and use ${marginSource.toLowerCase()} for long/short minimums.`,
       `Close at ${formatPrice(targetPrice)} target or ${formatPrice(stopLoss)} stop, then let the ${loopName} adjust the next trade.${skillText}${memoryText}`
-    ]
+    ].filter(Boolean)
   };
 }
 
@@ -14081,6 +14092,7 @@ function executePaperTrading(commodity, commodityMeta, signal, tradePlan, option
 
   const allowOpen = options.allowOpen !== false;
   const regimeAllowsOpen = !tradePlan.regime?.enabled
+    || tradePlan.recoveryBypassesRegimeStepCap
     || (
       martingaleStep <= tradePlan.regime.maxMartingaleStep
       && !tradePlan.regime.blocksWeakSetup
@@ -14181,10 +14193,19 @@ function getPaperDecision(signal, tradePlan, openTrade) {
     };
   }
 
-  if (tradePlan.regime?.enabled && martingaleStep > tradePlan.regime.maxMartingaleStep) {
+  if (tradePlan.regime?.enabled && martingaleStep > tradePlan.regime.maxMartingaleStep && !tradePlan.recoveryBypassesRegimeStepCap) {
     return {
       title: `No trade: ${tradePlan.regime.regime} regime step cap`,
       detail: `The current Martingale step is ${martingaleStep}, but this regime caps recovery steps at ${tradePlan.regime.maxMartingaleStep}.`
+    };
+  }
+
+  if (tradePlan.recoveryBypassesRegimeStepCap) {
+    const capitalOffset = Number(getCurrentUserStrategy().martingaleRecoveryCapitalTargetOffset || DEFAULT_USER_STRATEGY.martingaleRecoveryCapitalTargetOffset) * 100;
+    const maxGap = Number(getCurrentUserStrategy().martingaleRecoveryMaxTargetOffset || DEFAULT_USER_STRATEGY.martingaleRecoveryMaxTargetOffset) * 100;
+    return {
+      title: `Cloudflare recovery predictor ready for ${signalSide}`,
+      detail: `Step ${martingaleStep} is above the ${tradePlan.regime.regime} cap, so the Worker will choose the recovery method from price trend: sideways/flat tape can add contracts around a ${capitalOffset.toFixed(2)}% target, while directional tape can widen the target up to ${maxGap.toFixed(2)}%. Current price is ${priceText}.${karpathyText}`
     };
   }
 
