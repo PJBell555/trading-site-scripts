@@ -9526,6 +9526,10 @@ function requiresFreshCloudState() {
   return Boolean(hasHistoryBackend() && CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED && !isLocalMockBackendEnabled());
 }
 
+function hasCloudRuntimeLedgerRows() {
+  return Boolean(transactionHistoryLoadedFromBackend && transactionHistory.some(isPaperTradeEntry));
+}
+
 function hasFreshCloudTradingState() {
   return !requiresFreshCloudState() || (sharedSettingsLoadedFromBackend && transactionHistoryLoadedFromBackend);
 }
@@ -13478,8 +13482,10 @@ async function loadSharedTransactionHistory(manual = false) {
   }
   if (!manual && isBackendBackoffActive(nextBackendTransactionSyncAt)) {
     if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) {
-      clearCloudRuntimeLedgerState();
-      sharedHistoryStatusEl.textContent = `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+      if (!hasCloudRuntimeLedgerRows()) clearCloudRuntimeLedgerState();
+      sharedHistoryStatusEl.textContent = hasCloudRuntimeLedgerRows()
+        ? `Showing last Cloudflare ledger; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`
+        : `Cloudflare ledger unavailable; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
       renderLeaderBoard();
     }
     return false;
@@ -13503,8 +13509,11 @@ async function loadSharedTransactionHistory(manual = false) {
     const data = await response.json();
     const entries = Array.isArray(data?.transactions) ? data.transactions : [];
     const summaryRows = Array.isArray(data?.summary?.rows) ? data.summary.rows : [];
+    const totalRows = Number(data?.totalTransactions);
     applyCloudflarePriceSnapshots(data?.prices || {}, "Cloudflare paper ledger");
-    replaceTransactionHistory(entries, { preserveOpenTrades: false });
+    if (entries.length || !Number.isFinite(totalRows) || totalRows <= 0 || !hasCloudRuntimeLedgerRows()) {
+      replaceTransactionHistory(entries, { preserveOpenTrades: false });
+    }
     paperLedgerSummaryRows = summaryRows;
     paperLedgerSummaryLoadedAt = summaryRows.length ? Date.now() : 0;
     if (!summaryRows.length) {
@@ -13517,9 +13526,9 @@ async function loadSharedTransactionHistory(manual = false) {
     reconcilePaperStateFromHistory();
     backendHistoryReady = true;
     transactionHistoryLoadedFromBackend = true;
-    const totalRows = Number(data?.totalTransactions);
+    const displayedRows = entries.length || transactionHistory.filter(isPaperTradeEntry).length;
     sharedHistoryStatusEl.textContent = data?.compact && Number.isFinite(totalRows)
-      ? `Cloudflare ledger loaded ${totalRows} server rows; showing ${entries.length} recent row${entries.length === 1 ? "" : "s"}`
+      ? `Cloudflare ledger loaded ${totalRows} server rows; showing ${displayedRows} recent row${displayedRows === 1 ? "" : "s"}`
       : `Backend synced ${entries.length} row${entries.length === 1 ? "" : "s"}`;
     nextBackendTransactionSyncAt = 0;
     calculateSignal();
@@ -13529,10 +13538,12 @@ async function loadSharedTransactionHistory(manual = false) {
     backendHistoryReady = true;
     nextBackendTransactionSyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     if (CLOUDFLARE_SOURCE_OF_TRUTH_REQUIRED) {
-      clearCloudRuntimeLedgerState();
-      sharedHistoryStatusEl.textContent = manual
-        ? "Cloudflare ledger sync failed; stale browser ledger disabled"
-        : `Cloudflare ledger unavailable; stale browser ledger disabled. ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
+      if (!hasCloudRuntimeLedgerRows()) clearCloudRuntimeLedgerState();
+      sharedHistoryStatusEl.textContent = hasCloudRuntimeLedgerRows()
+        ? `Showing last Cloudflare ledger; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`
+        : manual
+        ? "Cloudflare ledger sync failed"
+        : `Cloudflare ledger unavailable; ${getBackendBackoffText(nextBackendTransactionSyncAt)}`;
       window.setTimeout(() => {
         if (activeSection === "trading" || activeSection === "actual-trades") {
           nextBackendTransactionSyncAt = 0;
