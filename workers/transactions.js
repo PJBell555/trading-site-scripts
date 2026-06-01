@@ -15,6 +15,8 @@ const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
 const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
 const PAPER_SCHEDULER_MAX_CONTRACTS = 20;
+const PAPER_MARTINGALE_RECOVERY_MIN_PROFIT = 1;
+const PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET = 0.03;
 const PAPER_SCHEDULER_LOCK_KEY = "paper-trading-scheduler";
 const PAPER_SCHEDULER_LOCK_TTL_MS = 4 * 60 * 1000;
 const COINBASE_FETCH_TIMEOUT_MS = 7000;
@@ -3929,6 +3931,32 @@ function getNextServerMartingaleStep(transactions = [], userEmail, maxStep = 4, 
   return latestStep >= maxStep ? 1 : Math.min(maxStep, latestStep + 1);
 }
 
+function getServerMartingaleRecovery(transactions = [], userEmail, commodity = "") {
+  const normalizedCommodity = normalizeServerCommodityId(commodity);
+  const closed = getClosedPaperTradesForUser(transactions, userEmail)
+    .filter((entry) => {
+      if (!normalizedCommodity) return true;
+      return normalizeServerCommodityId(entry.commodity || inferServerCommodityFromContract(entry.contract)) === normalizedCommodity;
+    });
+  let loss = 0;
+  let count = 0;
+  let latestLossAt = "";
+  for (const entry of closed) {
+    const pnl = Number(entry.netPnl ?? entry.pnl);
+    if (!Number.isFinite(pnl)) continue;
+    if (pnl >= 0) break;
+    loss += Math.abs(pnl);
+    count += 1;
+    latestLossAt ||= entry.time || entry.closedAt || "";
+  }
+  return {
+    active: loss > 0,
+    loss,
+    count,
+    latestLossAt
+  };
+}
+
 function getServerLossStreak(closed = []) {
   let streak = 0;
   for (const entry of closed) {
@@ -6415,7 +6443,7 @@ function getServerRegimeAssessment(signal, micro, strategy) {
   };
 }
 
-function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, strategy = {}, micro = null, directionalContext = null) {
+function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, strategy = {}, micro = null, directionalContext = null, recovery = null) {
   const contractMultiplier = Number(config.contractMultiplier) > 0 ? Number(config.contractMultiplier) : 1;
   const marginRate = side === "short"
     ? Number(config.marginRateShort) || 1
@@ -6429,13 +6457,43 @@ function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, stra
     const trendFloorBps = directionalContext?.side === side ? 110 : 75;
     stopOffset = Math.max(stopOffset, Math.max(volatilityStopBps, trendFloorBps) / 10000);
   }
-  const targetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
+  const baseTargetPrice = side === "short" ? price * (1 - targetOffset) : price * (1 + targetOffset);
   const stopPrice = side === "short" ? price * (1 + stopOffset) : price * (1 - stopOffset);
   const plannedCapital = marginRequirement * (2 ** Math.max(0, step - 1)) * clamp(Number(sizeMultiplier) || 1, 0.1, 1);
   const contracts = Math.max(1, Math.min(PAPER_SCHEDULER_MAX_CONTRACTS, Math.floor(plannedCapital / marginRequirement) || 1));
   const feePerContractSide = Number(config.feePerContractSide) >= 0 ? Number(config.feePerContractSide) : 0;
   const openFee = feePerContractSide * contracts;
   const estimatedExitFee = feePerContractSide * contracts;
+  const totalEstimatedFees = openFee + estimatedExitFee;
+  const baseTargetGross = Math.abs(baseTargetPrice - price) * contractMultiplier * contracts;
+  const baseTargetNet = baseTargetGross - totalEstimatedFees;
+  const recoveryLoss = Math.max(0, Number(recovery?.loss) || 0);
+  const recoveryCount = Math.max(0, Math.round(Number(recovery?.count) || 0));
+  const recoveryMinProfit = Math.max(0, Number(strategy.martingaleRecoveryMinProfit) || PAPER_MARTINGALE_RECOVERY_MIN_PROFIT);
+  const recoveryMaxTargetOffset = clamp(Number(strategy.martingaleRecoveryMaxTargetOffset) || PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET, targetOffset, 0.2);
+  let targetPrice = baseTargetPrice;
+  let martingaleRecoveryApplied = false;
+  let martingaleRecoverySkipped = false;
+  let martingaleRecoveryRequiredNet = null;
+  let martingaleRecoveryRequiredOffset = null;
+  let martingaleRecoveryReason = "";
+
+  if (recoveryLoss > 0 && recoveryCount > 0) {
+    martingaleRecoveryRequiredNet = Math.max(baseTargetNet, recoveryLoss + recoveryMinProfit);
+    const requiredGross = martingaleRecoveryRequiredNet + totalEstimatedFees;
+    const requiredMove = requiredGross / Math.max(1, contractMultiplier * contracts);
+    martingaleRecoveryRequiredOffset = price > 0 ? requiredMove / price : null;
+    if (Number.isFinite(martingaleRecoveryRequiredOffset) && martingaleRecoveryRequiredOffset > recoveryMaxTargetOffset) {
+      martingaleRecoverySkipped = true;
+      martingaleRecoveryReason = `Recovery target needs ${(martingaleRecoveryRequiredOffset * 100).toFixed(2)}%, above cap ${(recoveryMaxTargetOffset * 100).toFixed(2)}%.`;
+    } else if (Number.isFinite(requiredMove) && requiredMove > 0) {
+      targetPrice = side === "short" ? price - requiredMove : price + requiredMove;
+      martingaleRecoveryApplied = Math.abs(targetPrice - baseTargetPrice) > 0.0000001;
+      if (martingaleRecoveryApplied) {
+        martingaleRecoveryReason = `Target widened to recover ${recoveryCount} loss${recoveryCount === 1 ? "" : "es"} totaling $${recoveryLoss.toFixed(2)}.`;
+      }
+    }
+  }
 
   return {
     contractMultiplier,
@@ -6448,7 +6506,17 @@ function getServerTradeTerms(config, side, price, step, sizeMultiplier = 1, stra
     feePerContractSide,
     openFee,
     estimatedExitFee,
-    totalEstimatedFees: openFee + estimatedExitFee
+    totalEstimatedFees,
+    baseTargetPrice,
+    baseTargetNet,
+    martingaleRecoveryApplied,
+    martingaleRecoverySkipped,
+    martingaleRecoveryLoss: recoveryLoss,
+    martingaleRecoveryCount: recoveryCount,
+    martingaleRecoveryRequiredNet,
+    martingaleRecoveryRequiredOffset,
+    martingaleRecoveryMaxTargetOffset: recoveryMaxTargetOffset,
+    martingaleRecoveryReason
   };
 }
 
@@ -7300,7 +7368,28 @@ async function runPaperTradingScheduler(env, options = {}) {
           : directionalOverrideSignal
             ? strategySettings.flatSizeMultiplier
             : (regime.enabled ? regime.sizeMultiplier : 1) * (markovMethod.enabled ? markovMethod.sizeMultiplier : 1);
-        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext);
+        const recovery = exclusiveMartingale && step > 1
+          ? getServerMartingaleRecovery(transactions, email, commodity)
+          : null;
+        const terms = getServerTradeTerms(config, activeSignal.side, price.price, step, sizeMultiplier, strategySettings, micro, directionalContext, recovery);
+        if (terms.martingaleRecoverySkipped) {
+          lastDecision = `${commodity}: martingale recovery skipped - ${terms.martingaleRecoveryReason}`;
+          setDecisionAudit("martingale-recovery-target", lastDecision, {
+            price: { commodity, value: price.price, source: price.source },
+            signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
+            step,
+            recovery: {
+              loss: terms.martingaleRecoveryLoss,
+              count: terms.martingaleRecoveryCount,
+              requiredNet: terms.martingaleRecoveryRequiredNet,
+              requiredOffset: terms.martingaleRecoveryRequiredOffset,
+              maxOffset: terms.martingaleRecoveryMaxTargetOffset
+            }
+          });
+          run.skippedTrades += 1;
+          continue;
+        }
+        const recoveryNote = terms.martingaleRecoveryApplied ? `; ${terms.martingaleRecoveryReason}` : "";
         const open = makeServerTransaction({
           id: `srv-open-${Date.now()}-${Math.random().toString(16).slice(2)}`,
           tradeId: `srv-${email.replace(/[^a-z0-9]/g, "").slice(0, 12)}-${Date.now()}`,
@@ -7318,6 +7407,7 @@ async function runPaperTradingScheduler(env, options = {}) {
           entryPrice: price.price,
           targetEntryPrice: price.price,
           targetPrice: terms.targetPrice,
+          baseTargetPrice: terms.baseTargetPrice,
           stopPrice: terms.stopPrice,
           originalStopPrice: terms.stopPrice,
           contractMultiplier: terms.contractMultiplier,
@@ -7328,6 +7418,11 @@ async function runPaperTradingScheduler(env, options = {}) {
           estimatedExitFee: terms.estimatedExitFee,
           totalEstimatedFees: terms.totalEstimatedFees,
           feePerContractSide: terms.feePerContractSide,
+          martingaleRecoveryApplied: Boolean(terms.martingaleRecoveryApplied),
+          martingaleRecoveryLoss: terms.martingaleRecoveryLoss,
+          martingaleRecoveryCount: terms.martingaleRecoveryCount,
+          martingaleRecoveryRequiredNet: terms.martingaleRecoveryRequiredNet,
+          martingaleRecoveryRequiredOffset: terms.martingaleRecoveryRequiredOffset,
           markovMethodEnabled: Boolean(markovMethod.enabled),
           markovState: markovMethod.state,
           markovExpectedSide: markovMethod.expectedSide,
@@ -7339,16 +7434,16 @@ async function runPaperTradingScheduler(env, options = {}) {
           pnl: 0,
           openedAt: new Date().toISOString(),
           note: trendCaptureSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${trendCaptureSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}${recoveryNote}`
             : reentrySignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${reentrySignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}${recoveryNote}`
             : breakoutSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${breakoutSignal.detail}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}${recoveryNote}`
             : missedOpportunityReentrySignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${missedOpportunityReentrySignal.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${missedOpportunityReentrySignal.detail}${recoveryNote}`
             : markovSignal
-            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${markovSignal.detail}`
-            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}; ${secondOpinionConsensus.detail}`
+            ? `Server scheduler opened ${config.name} ${activeSignal.side} step ${step} via ${price.source}; ${markovSignal.detail}${recoveryNote}`
+            : `Server scheduler opened ${config.name} ${activeSignal.side} at ${activeSignal.conviction} conviction via ${price.source}; regime ${regime.regime}, edge ${regime.edgePercent}%, vol ${regime.volatility.toFixed(2)} bps${regime.highEdgeVolatilitySetup ? ", high-edge override" : ""}; ${markovMethod.enabled ? markovMethod.reason : "Markov method off"}; ${secondOpinionConsensus.detail}${recoveryNote}`
         });
         transactions.push(open);
         await recordOpenBrainServerEvent(
@@ -7390,7 +7485,16 @@ async function runPaperTradingScheduler(env, options = {}) {
           priceTrend: directionalContext.priceTrend?.ready ? directionalContext.priceTrend : null,
           price: { commodity, value: price.price, source: price.source },
           signal: { label: activeSignal.label, side: activeSignal.side, conviction: activeSignal.conviction, effectiveThreshold },
-          action: "opened"
+          action: "opened",
+          recovery: terms.martingaleRecoveryApplied
+            ? {
+              loss: terms.martingaleRecoveryLoss,
+              count: terms.martingaleRecoveryCount,
+              targetPrice: terms.targetPrice,
+              baseTargetPrice: terms.baseTargetPrice,
+              requiredNet: terms.martingaleRecoveryRequiredNet
+            }
+            : null
         });
       }
 
