@@ -415,6 +415,12 @@
       width: 100%;
     }
 
+    .handoff-jump-button {
+      grid-column: 1;
+      min-width: 455px;
+      width: 100%;
+    }
+
     .hero-panel {
       align-items: center;
       display: grid;
@@ -1155,6 +1161,10 @@
         min-width: 0;
       }
 
+      .handoff-jump-button {
+        min-width: 0;
+      }
+
       .talk-hero-mic.mic-status {
         height: 36px;
         width: 36px;
@@ -1305,6 +1315,7 @@
             </button>
             <span class="talk-helper">Click the microphone button, then wait for the agent to start talking.</span>
             <button class="danger voice-button" type="button" id="stop-button" disabled>Click to Stop the Voice Concierge</button>
+            <a class="button secondary handoff-jump-button" href="#human-handoff">Review and send trip details</a>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
@@ -1648,7 +1659,7 @@
           </div>
         </article>
 
-        <aside class="brief-card handoff-envelope trip-card large" aria-label="Human review brief">
+        <aside class="brief-card handoff-envelope trip-card large" id="human-handoff" aria-label="Human review brief">
           <div class="handoff-label"><span>@</span> Human handoff email</div>
           <h3>Trip summary for a human travel booking specialist</h3>
           <form class="lead-form" id="lead-form">
@@ -1662,7 +1673,7 @@
               Specialist notes
               <textarea id="lead-notes" placeholder="This email-style summary fills as the customer talks. It is the human-in-the-loop handoff." title="Summary sent to the human travel booking specialist."></textarea>
             </label>
-            <button class="button dark" type="submit">Send Human Review Brief</button>
+            <button class="button dark" type="submit">Confirm and E-mail trip details to Human Travel Specialist for final review</button>
             <div class="handoff-confirmation" id="handoff-confirmation" data-visible="false" role="status" aria-live="polite"></div>
           </form>
         </aside>
