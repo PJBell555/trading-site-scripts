@@ -743,6 +743,97 @@
       grid-column: span 2;
     }
 
+    .accommodation-preview {
+      display: none;
+      gap: 0;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .accommodation-preview[data-visible="true"] {
+      display: grid;
+      grid-template-rows: minmax(150px, 1fr) auto;
+    }
+
+    .accommodation-preview-main {
+      background: #08233d;
+      min-height: 174px;
+      position: relative;
+    }
+
+    .accommodation-preview-main img {
+      display: block;
+      height: 100%;
+      object-fit: cover;
+      width: 100%;
+    }
+
+    .accommodation-preview-title {
+      background: linear-gradient(180deg, rgba(6, 27, 48, 0), rgba(6, 27, 48, 0.76));
+      bottom: 0;
+      color: #fff;
+      font-size: 0.92rem;
+      font-weight: 900;
+      left: 0;
+      padding: 34px 14px 12px;
+      position: absolute;
+      right: 0;
+    }
+
+    .accommodation-arrow {
+      background: rgba(6, 27, 48, 0.68);
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      color: #fff;
+      height: 38px;
+      min-height: 38px;
+      padding: 0;
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 38px;
+      z-index: 2;
+    }
+
+    .accommodation-arrow:hover {
+      transform: translateY(-50%);
+    }
+
+    .accommodation-arrow[data-direction="prev"] {
+      left: 10px;
+    }
+
+    .accommodation-arrow[data-direction="next"] {
+      right: 10px;
+    }
+
+    .accommodation-thumbs {
+      background: rgba(0, 83, 83, 0.9);
+      display: grid;
+      gap: 8px;
+      grid-auto-columns: minmax(58px, 1fr);
+      grid-auto-flow: column;
+      padding: 10px;
+    }
+
+    .accommodation-thumb {
+      border: 2px solid transparent;
+      border-radius: 0;
+      min-height: 48px;
+      overflow: hidden;
+      padding: 0;
+    }
+
+    .accommodation-thumb[aria-current="true"] {
+      border-color: #fff;
+    }
+
+    .accommodation-thumb img {
+      display: block;
+      height: 48px;
+      object-fit: cover;
+      width: 100%;
+    }
+
     .trip-card-header {
       align-items: start;
       display: flex;
@@ -1556,6 +1647,16 @@
           </div>
         </article>
 
+        <article class="trip-card accommodation-preview" id="accommodation-preview" data-visible="false" aria-label="Accommodation image review">
+          <div class="accommodation-preview-main">
+            <button class="accommodation-arrow" type="button" data-direction="prev" aria-label="Previous accommodation image">&#8249;</button>
+            <img id="accommodation-preview-image" alt="">
+            <div class="accommodation-preview-title" id="accommodation-preview-title"></div>
+            <button class="accommodation-arrow" type="button" data-direction="next" aria-label="Next accommodation image">&#8250;</button>
+          </div>
+          <div class="accommodation-thumbs" id="accommodation-thumbs" aria-label="Accommodation image thumbnails"></div>
+        </article>
+
         <article class="trip-card">
           <div>
             <p class="eyebrow">Travel</p>
@@ -1740,6 +1841,10 @@
     const selectedCountries = document.querySelector("#selected-countries");
     const selectedDestinations = document.querySelector("#selected-destinations");
     const selectedChalets = document.querySelector("#selected-chalets");
+    const accommodationPreview = document.querySelector("#accommodation-preview");
+    const accommodationPreviewImage = document.querySelector("#accommodation-preview-image");
+    const accommodationPreviewTitle = document.querySelector("#accommodation-preview-title");
+    const accommodationThumbs = document.querySelector("#accommodation-thumbs");
     const partyPicker = document.querySelector("#party-picker");
     const partyDoneButton = document.querySelector("#party-done-button");
     const childAgeList = document.querySelector("#child-age-list");
@@ -1770,6 +1875,7 @@
     let ttsAudioElement = null;
     let currentAudioUrl = null;
     let speakingAbort = null;
+    let accommodationImageIndex = 0;
     const selectedChoices = {
       countries: [],
       destinations: [],
@@ -1797,6 +1903,38 @@
       { resort: "Morzine", type: "Fully catered chalet", name: "Chalet Tavernier" },
       { resort: "Morzine", type: "Hotel", name: "Hotel Le Petit Dru" }
     ];
+    const defaultChaletImages = [
+      "https://www.flexiski.com/media/3dcdml2z/chalet-poudreuse-avoriaz-lounge-1.jpg?center=0.47666666666666668,0.5377777777777778&mode=crop&width=1080&height=540&rnd=133725117544970000",
+      "https://www.flexiski.com/media/sy2bdc5p/chalet-poudreuse-avoriaz-lounge-2.jpg?center=0.53166666666666662,0.66&mode=crop&width=1080&height=540&rnd=133725117688400000",
+      "https://www.flexiski.com/media/dkifveqt/chalet-poudreuse-avoriaz-dining-table.jpg?center=0.41833333333333333,0.52222222222222225&mode=crop&width=1080&height=540&rnd=133725117661230000",
+      "https://www.flexiski.com/media/gdpfldu1/chalet-poudreuse-avoriaz-exterior.jpg?center=0.41,0.50666666666666671&mode=crop&width=1080&height=540&rnd=133725117710770000",
+      "https://www.flexiski.com/media/yf1hsakv/chalet-poudreuse-avoriaz-bedroom-1.jpg?center=0.47666666666666668,0.50222222222222224&mode=crop&width=1080&height=540&rnd=133725117638100000"
+    ];
+    const accommodationImages = {
+      "Chalet Poudreuse": defaultChaletImages,
+      "Chalet Perce Neige": defaultChaletImages,
+      "Chalet Jean-France": defaultChaletImages,
+      "Chalet Lauzes": defaultChaletImages,
+      "Chalet Violetta": defaultChaletImages,
+      "Chalet Tavernier": defaultChaletImages,
+      "Hotel Des Dromonts": [
+        "https://www.flexiski.com/media/siynzty4/hotel_des_dromonts_avoriaz_bedroom-1.jpg?center=0.49666666666666665,0.43416370106761565&mode=crop&width=1080&height=540&rnd=133724989078930000",
+        "https://www.flexiski.com/media/42cplfmn/hotel_des_dromonts_avoriaz_bedroom-2.jpg?center=0.49166666666666664,0.5231316725978648&mode=crop&width=1080&height=540&rnd=133724988725330000",
+        "https://www.flexiski.com/media/5u0fbvvz/hotel_des_dromonts_avoriaz_exterior.jpg?center=0.54833333333333334,0.5124555160142349&mode=crop&width=1080&height=540&rnd=133724989054070000",
+        "https://www.flexiski.com/media/hucprrwt/hotel_des_dromonts_avoriaz_lounging.jpg?center=0.45333333333333331,0.35587188612099646&mode=crop&width=1080&height=540&rnd=133724988794530000",
+        "https://www.flexiski.com/media/jngd1x1g/hotel_des_dromonts_avoriaz_bar.jpg?center=0.625,0.5142348754448398&mode=crop&width=1080&height=540&rnd=133724988860170000"
+      ],
+      "Hotel Le Petit Dru": [
+        "https://www.flexiski.com/media/v0almhly/hotel_le_petit_dru_exterior.jpg?center=0.23333333333333334,0.58666666666666667&mode=crop&width=1080&height=540&rnd=133723171282330000",
+        "https://www.flexiski.com/media/zwanwqp3/hotel_le_petit_dru_bedroom.jpg?center=0.55166666666666664,0.52&mode=crop&width=1080&height=540&rnd=133723171103370000",
+        "https://www.flexiski.com/media/hvvgqswu/hotel_le_petit_dru_lounge.jpg?center=0.51333333333333331,0.64&mode=crop&width=1080&height=540&rnd=133723171181700000",
+        "https://www.flexiski.com/media/5i0f1ewg/hotel_le_petit_dru_restaurant.jpg?center=0.43666666666666665,0.41555555555555557&mode=crop&width=1080&height=540&rnd=133723171227470000"
+      ],
+      "Hotel Les Fleurs": [
+        "https://www.flexiski.com/media/v0almhly/hotel_le_petit_dru_exterior.jpg?center=0.23333333333333334,0.58666666666666667&mode=crop&width=1080&height=540&rnd=133723171282330000",
+        "https://www.flexiski.com/media/hvvgqswu/hotel_le_petit_dru_lounge.jpg?center=0.51333333333333331,0.64&mode=crop&width=1080&height=540&rnd=133723171181700000"
+      ]
+    };
     const bookingFieldMap = {
       dates: leadBookingDates,
       destination: leadBookingDestination,
@@ -1924,6 +2062,39 @@
       return skiweekendsAccommodation.map((item) => item.name);
     }
 
+    function getAccommodationImageSet(name) {
+      return accommodationImages[name] || defaultChaletImages;
+    }
+
+    function showAccommodationImage(index = accommodationImageIndex) {
+      if (!leadChaletNames || !accommodationPreview || !accommodationPreviewImage || !accommodationThumbs) return;
+      const selected = leadChaletNames.value;
+      if (!selected) {
+        accommodationPreview.dataset.visible = "false";
+        return;
+      }
+      const images = getAccommodationImageSet(selected);
+      accommodationImageIndex = ((index % images.length) + images.length) % images.length;
+      accommodationPreview.dataset.visible = "true";
+      accommodationPreviewImage.src = images[accommodationImageIndex];
+      accommodationPreviewImage.alt = `${selected} image ${accommodationImageIndex + 1}`;
+      accommodationPreviewTitle.textContent = selected;
+      accommodationThumbs.innerHTML = "";
+      images.forEach((src, imageIndex) => {
+        const thumb = document.createElement("button");
+        thumb.type = "button";
+        thumb.className = "accommodation-thumb";
+        thumb.dataset.imageIndex = String(imageIndex);
+        thumb.setAttribute("aria-label", `Show ${selected} image ${imageIndex + 1}`);
+        thumb.setAttribute("aria-current", imageIndex === accommodationImageIndex ? "true" : "false");
+        const img = document.createElement("img");
+        img.src = src;
+        img.alt = "";
+        thumb.append(img);
+        accommodationThumbs.append(thumb);
+      });
+    }
+
     function findAccommodationInText(text) {
       const lower = String(text || "").toLowerCase();
       return getAccommodationNames().find((name) => lower.includes(name.toLowerCase())) || "";
@@ -1940,6 +2111,7 @@
       populateAccommodationOptions();
       ensureSelectOption(leadChaletNames, accommodation);
       leadChaletNames.value = accommodation;
+      showAccommodationImage(0);
       return true;
     }
 
@@ -2073,6 +2245,7 @@
         ensureSelectOption(leadChaletNames, details.chaletNames);
         leadChaletNames.value = details.chaletNames;
       }
+      showAccommodationImage(0);
     }
 
     function micIconMarkup() {
@@ -2841,6 +3014,19 @@
       setStatus("Party details updated.", "ready");
     });
 
+    document.querySelectorAll(".accommodation-arrow").forEach((button) => {
+      button.addEventListener("click", () => {
+        const delta = button.dataset.direction === "next" ? 1 : -1;
+        showAccommodationImage(accommodationImageIndex + delta);
+      });
+    });
+
+    accommodationThumbs?.addEventListener("click", (event) => {
+      const thumb = event.target.closest("[data-image-index]");
+      if (!thumb) return;
+      showAccommodationImage(Number(thumb.dataset.imageIndex));
+    });
+
     document.addEventListener("click", (event) => {
       const remove = event.target.closest("[data-selection-remove]");
       if (!remove) return;
@@ -2858,6 +3044,10 @@
         }
         if (field === leadGroup && event.type === "change") applyPartySummary(leadGroup.value);
         if (field === leadDestination || field === leadChalet) populateAccommodationOptions();
+        if (field === leadChaletNames) {
+          accommodationImageIndex = 0;
+          showAccommodationImage(0);
+        }
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
       };
