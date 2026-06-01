@@ -2546,6 +2546,43 @@ async function handleSkiPartnerSearch(_env, request, origin) {
   }, 200, origin);
 }
 
+async function handleSkiPartnerImage(_env, request, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const url = new URL(request.url);
+  const rawImageUrl = url.searchParams.get("url") || "";
+  let imageUrl;
+  try {
+    imageUrl = new URL(rawImageUrl);
+  } catch {
+    return jsonResponse({ error: "Invalid image URL" }, 400, origin);
+  }
+
+  const allowedHosts = new Set(["www.flexiski.com", "flexiski.com", "www.skiweekends.com", "skiweekends.com"]);
+  if (imageUrl.protocol !== "https:" || !allowedHosts.has(imageUrl.hostname)) {
+    return jsonResponse({ error: "Image host is not allowed" }, 403, origin);
+  }
+
+  const response = await fetch(imageUrl.toString(), {
+    headers: {
+      "User-Agent": "ComHedge Ski Voice Agent Prototype/1.0",
+      "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+      "Referer": `${imageUrl.origin}/`
+    }
+  });
+  if (!response.ok) {
+    return jsonResponse({ error: "Partner image could not be loaded", status: response.status }, 502, origin);
+  }
+
+  const headers = new Headers(response.headers);
+  headers.set("Access-Control-Allow-Origin", origin || "*");
+  headers.set("Cache-Control", "public, max-age=86400");
+  headers.delete("set-cookie");
+  return new Response(response.body, { status: 200, headers });
+}
+
 async function ensureSkiLeadSchemaD1(env) {
   if (!hasRuntimeStore(env)) return false;
   await safeD1Run(env, `
@@ -8342,6 +8379,10 @@ export default {
 
       if (url.pathname === "/ski/partner-search") {
         return handleSkiPartnerSearch(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/image") {
+        return handleSkiPartnerImage(env, request, origin);
       }
 
       if (url.pathname === "/ski/leads") {

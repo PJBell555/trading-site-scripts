@@ -1641,6 +1641,7 @@
               <option value="">Select accommodation</option>
             </select>
           </label>
+          <div class="selection-list" id="selected-accommodations" aria-label="Selected accommodations"></div>
           <div class="trip-actions">
             <button class="button secondary" type="button" id="select-accommodation-button">Select</button>
             <button class="button secondary edit-topic" type="button" data-focus="#lead-chalet-names">Edit</button>
@@ -1842,6 +1843,7 @@
     const selectedCountries = document.querySelector("#selected-countries");
     const selectedDestinations = document.querySelector("#selected-destinations");
     const selectedChalets = document.querySelector("#selected-chalets");
+    const selectedAccommodations = document.querySelector("#selected-accommodations");
     const accommodationPreview = document.querySelector("#accommodation-preview");
     const accommodationPreviewImage = document.querySelector("#accommodation-preview-image");
     const accommodationPreviewTitle = document.querySelector("#accommodation-preview-title");
@@ -1881,7 +1883,8 @@
     const selectedChoices = {
       countries: [],
       destinations: [],
-      chalets: []
+      chalets: [],
+      accommodations: []
     };
     const partyState = {
       adults: 2,
@@ -1892,7 +1895,8 @@
     const selectionConfigs = {
       countries: { select: leadCountry, list: selectedCountries },
       destinations: { select: leadDestination, list: selectedDestinations },
-      chalets: { select: leadChalet, list: selectedChalets }
+      chalets: { select: leadChalet, list: selectedChalets },
+      accommodations: { select: leadChaletNames, list: selectedAccommodations }
     };
     const skiweekendsAccommodation = [
       { resort: "Avoriaz", type: "Hotel", name: "Hotel Des Dromonts" },
@@ -1906,9 +1910,11 @@
       { resort: "Morzine", type: "Hotel", name: "Hotel Le Petit Dru" }
     ];
     const defaultChaletImages = [
-      "./assets/chalet-poudreuse-interior.png",
-      "./assets/chalet-poudreuse-exterior.jpg",
-      "./assets/skiweekends-ai-avoriaz.png"
+      skiPartnerImageUrl("https://www.flexiski.com/media/3dcdml2z/chalet-poudreuse-avoriaz-lounge-1.jpg?center=0.47666666666666668,0.5377777777777778&mode=crop&width=1080&height=540&rnd=133725117544970000"),
+      skiPartnerImageUrl("https://www.flexiski.com/media/sy2bdc5p/chalet-poudreuse-avoriaz-lounge-2.jpg?center=0.53166666666666662,0.66&mode=crop&width=1080&height=540&rnd=133725117688400000"),
+      skiPartnerImageUrl("https://www.flexiski.com/media/dkifveqt/chalet-poudreuse-avoriaz-dining-table.jpg?center=0.41833333333333333,0.52222222222222225&mode=crop&width=1080&height=540&rnd=133725117661230000"),
+      skiPartnerImageUrl("https://www.flexiski.com/media/gdpfldu1/chalet-poudreuse-avoriaz-exterior.jpg?center=0.41,0.50666666666666671&mode=crop&width=1080&height=540&rnd=133725117710770000"),
+      skiPartnerImageUrl("https://www.flexiski.com/media/yf1hsakv/chalet-poudreuse-avoriaz-bedroom-1.jpg?center=0.47666666666666668,0.50222222222222224&mode=crop&width=1080&height=540&rnd=133725117638100000")
     ];
     const accommodationImages = {
       "Chalet Poudreuse": defaultChaletImages,
@@ -1918,19 +1924,19 @@
       "Chalet Violetta": defaultChaletImages,
       "Chalet Tavernier": defaultChaletImages,
       "Hotel Des Dromonts": [
-        "./assets/skiweekends-ai-avoriaz.png",
-        "./assets/chalet-poudreuse-exterior.jpg",
-        "./assets/chalet-poudreuse-interior.png"
+        skiPartnerImageUrl("https://www.flexiski.com/media/siynzty4/hotel_des_dromonts_avoriaz_bedroom-1.jpg?center=0.49666666666666665,0.43416370106761565&mode=crop&width=1080&height=540&rnd=133724989078930000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/42cplfmn/hotel_des_dromonts_avoriaz_bedroom-2.jpg?center=0.49166666666666664,0.5231316725978648&mode=crop&width=1080&height=540&rnd=133724988725330000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/5u0fbvvz/hotel_des_dromonts_avoriaz_exterior.jpg?center=0.54833333333333334,0.5124555160142349&mode=crop&width=1080&height=540&rnd=133724989054070000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/hucprrwt/hotel_des_dromonts_avoriaz_lounging.jpg?center=0.45333333333333331,0.35587188612099646&mode=crop&width=1080&height=540&rnd=133724988794530000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/jngd1x1g/hotel_des_dromonts_avoriaz_bar.jpg?center=0.625,0.5142348754448398&mode=crop&width=1080&height=540&rnd=133724988860170000")
       ],
       "Hotel Le Petit Dru": [
-        "./assets/chalet-poudreuse-exterior.jpg",
-        "./assets/chalet-poudreuse-interior.png",
-        "./assets/skiweekends-ai-avoriaz.png"
+        skiPartnerImageUrl("https://www.flexiski.com/media/v0almhly/hotel_le_petit_dru_exterior.jpg?center=0.23333333333333334,0.58666666666666667&mode=crop&width=1080&height=540&rnd=133723171282330000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/zwanwqp3/hotel_le_petit_dru_bedroom.jpg?center=0.55166666666666664,0.52&mode=crop&width=1080&height=540&rnd=133723171103370000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/hvvgqswu/hotel_le_petit_dru_lounge.jpg?center=0.51333333333333331,0.64&mode=crop&width=1080&height=540&rnd=133723171181700000"),
+        skiPartnerImageUrl("https://www.flexiski.com/media/5i0f1ewg/hotel_le_petit_dru_restaurant.jpg?center=0.43666666666666665,0.41555555555555557&mode=crop&width=1080&height=540&rnd=133723171227470000")
       ],
-      "Hotel Les Fleurs": [
-        "./assets/chalet-poudreuse-exterior.jpg",
-        "./assets/chalet-poudreuse-interior.png"
-      ]
+      "Hotel Les Fleurs": defaultChaletImages
     };
     const bookingFieldMap = {
       dates: leadBookingDates,
@@ -1957,6 +1963,10 @@
 
     function getLeadEmailValue() {
       return leadEmail.dataset.actualEmail || TEST_CONFIRMATION_EMAIL;
+    }
+
+    function skiPartnerImageUrl(url) {
+      return `${API_BASE}/ski/image?url=${encodeURIComponent(url)}`;
     }
 
     function ensureSelectOption(select, value) {
@@ -2108,6 +2118,7 @@
       populateAccommodationOptions();
       ensureSelectOption(leadChaletNames, accommodation);
       leadChaletNames.value = accommodation;
+      addSelectionChoice("accommodations", accommodation, { quiet: true });
       showAccommodationImage(0);
       return true;
     }
@@ -2227,6 +2238,8 @@
       details.destination = getSelectionSummary("destinations");
       details.groupDetails ||= fieldValue(leadGroup);
       details.chaletTypes = getSelectionSummary("chalets");
+      details.chaletNames = getSelectionSummary("accommodations") || details.chaletNames;
+      details.accommodations = getSelectionSummary("accommodations");
       return details;
     }
 
@@ -2238,9 +2251,10 @@
       setSelectionChoices("destinations", details.destinations || details.destination);
       setSelectionChoices("chalets", details.chaletTypes || details.chalets);
       populateAccommodationOptions();
-      if (leadChaletNames && details.chaletNames) {
-        ensureSelectOption(leadChaletNames, details.chaletNames);
-        leadChaletNames.value = details.chaletNames;
+      setSelectionChoices("accommodations", details.accommodations || details.chaletNames);
+      if (leadChaletNames && selectedChoices.accommodations[0]) {
+        ensureSelectOption(leadChaletNames, selectedChoices.accommodations[0]);
+        leadChaletNames.value = selectedChoices.accommodations[0];
       }
       showAccommodationImage(0);
     }
@@ -3029,6 +3043,7 @@
         setStatus("Choose an accommodation option first.", "ready");
         return;
       }
+      addSelectionChoice("accommodations", leadChaletNames.value, { quiet: true });
       showAccommodationImage(accommodationImageIndex);
       updateTripSummary();
       scheduleCloudTripSave("accommodation-selected");
