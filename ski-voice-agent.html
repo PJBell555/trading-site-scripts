@@ -952,6 +952,173 @@
       margin-top: 2px;
     }
 
+    .date-picker {
+      position: relative;
+    }
+
+    .date-range-control {
+      border: 2px solid #f6b600;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      min-height: 58px;
+    }
+
+    .date-range-button {
+      align-items: center;
+      background: #fff;
+      border: 0;
+      border-radius: 0;
+      color: var(--navy);
+      display: grid;
+      gap: 2px;
+      justify-items: start;
+      min-height: 56px;
+      padding: 10px 14px;
+      text-align: left;
+    }
+
+    .date-range-button + .date-range-button {
+      border-left: 1px solid #f6b600;
+    }
+
+    .date-range-button small {
+      color: #5d6977;
+      font-size: 0.68rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .date-range-button strong {
+      font-size: 0.92rem;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      width: 100%;
+    }
+
+    .date-popover {
+      background: #fff;
+      border: 1px solid var(--line);
+      box-shadow: 0 18px 48px rgba(8, 35, 61, 0.18);
+      display: none;
+      left: 0;
+      min-width: min(720px, calc(100vw - 48px));
+      padding: 14px;
+      position: absolute;
+      top: calc(100% + 8px);
+      z-index: 8;
+    }
+
+    .date-popover[data-open="true"] {
+      display: grid;
+      gap: 14px;
+    }
+
+    .date-tabs {
+      border-bottom: 1px solid var(--line);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .date-tabs button {
+      background: transparent;
+      border: 0;
+      border-bottom: 3px solid transparent;
+      border-radius: 0;
+      color: var(--muted);
+      min-height: 42px;
+    }
+
+    .date-tabs button[aria-selected="true"] {
+      border-color: #1a73e8;
+      color: #1a73e8;
+    }
+
+    .calendar-nav {
+      align-items: center;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .calendar-nav button {
+      background: transparent;
+      border: 0;
+      color: var(--navy);
+      font-size: 1.45rem;
+      min-height: 36px;
+      padding: 0 8px;
+    }
+
+    .calendar-months {
+      display: grid;
+      gap: 24px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .calendar-month h4 {
+      font-size: 1rem;
+      margin-bottom: 12px;
+      text-align: center;
+    }
+
+    .calendar-grid {
+      display: grid;
+      gap: 4px;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+    }
+
+    .calendar-weekday {
+      color: var(--muted);
+      font-size: 0.8rem;
+      text-align: center;
+    }
+
+    .calendar-day {
+      background: transparent;
+      border: 0;
+      border-radius: 999px;
+      color: var(--navy);
+      min-height: 34px;
+      padding: 0;
+    }
+
+    .calendar-day[data-empty="true"] {
+      pointer-events: none;
+      visibility: hidden;
+    }
+
+    .calendar-day[aria-pressed="true"] {
+      background: #0a2a47;
+      color: #fff;
+    }
+
+    .calendar-day[data-in-range="true"] {
+      background: #eaf6ff;
+      color: var(--navy);
+    }
+
+    .date-flex-options {
+      border-top: 1px solid var(--line);
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding-top: 12px;
+    }
+
+    .date-flex-options button {
+      background: #fff;
+      border: 1px solid #aeb8c3;
+      color: var(--navy);
+      min-height: 34px;
+      padding: 6px 12px;
+    }
+
+    .date-flex-options button[aria-pressed="true"] {
+      border-color: #1a73e8;
+      color: #1a73e8;
+    }
+
     .controls,
     .prompt-grid,
     .lead-grid {
@@ -1121,6 +1288,12 @@
       background: #eef3f8;
       color: #596675;
       cursor: not-allowed;
+    }
+
+    #lead-dates[readonly] {
+      background: #fff;
+      color: var(--ink);
+      cursor: pointer;
     }
 
     textarea {
@@ -1306,6 +1479,22 @@
         padding-top: 10px;
       }
 
+      .date-range-control,
+      .calendar-months {
+        grid-template-columns: 1fr;
+      }
+
+      .date-range-button + .date-range-button {
+        border-left: 0;
+        border-top: 1px solid #f6b600;
+      }
+
+      .date-popover {
+        left: 50%;
+        min-width: min(340px, calc(100vw - 32px));
+        transform: translateX(-50%);
+      }
+
       .footer-inner {
         flex-direction: column;
       }
@@ -1482,8 +1671,39 @@
           </div>
           <label>
             Travel window
-            <input id="lead-dates" placeholder="Friday to Sunday in March" title="Enter the preferred travel window, such as Friday to Sunday in March.">
+            <input id="lead-dates" placeholder="Check-in date - Check-out date" title="Pick exact dates in the calendar, or use voice to describe a flexible travel window." readonly>
           </label>
+          <div class="date-picker" id="date-picker">
+            <div class="date-range-control" aria-label="Trip dates">
+              <button class="date-range-button" type="button" data-date-open="checkin">
+                <small>Check-in</small>
+                <strong id="checkin-display">Check-in date</strong>
+              </button>
+              <button class="date-range-button" type="button" data-date-open="checkout">
+                <small>Check-out</small>
+                <strong id="checkout-display">Check-out date</strong>
+              </button>
+            </div>
+            <div class="date-popover" id="date-popover" data-open="false">
+              <div class="date-tabs" role="tablist" aria-label="Date mode">
+                <button type="button" role="tab" aria-selected="true" data-date-mode="exact">Calendar</button>
+                <button type="button" role="tab" aria-selected="false" data-date-mode="flexible">I'm flexible</button>
+              </div>
+              <div class="calendar-nav">
+                <button type="button" data-calendar-nav="prev" aria-label="Previous months">&#8249;</button>
+                <span id="calendar-range-label"></span>
+                <button type="button" data-calendar-nav="next" aria-label="Next months">&#8250;</button>
+              </div>
+              <div class="calendar-months" id="calendar-months"></div>
+              <div class="date-flex-options" aria-label="Flexible date options">
+                <button type="button" data-flex-days="0" aria-pressed="true">Exact dates</button>
+                <button type="button" data-flex-days="1" aria-pressed="false">+/- 1 day</button>
+                <button type="button" data-flex-days="2" aria-pressed="false">+/- 2 days</button>
+                <button type="button" data-flex-days="3" aria-pressed="false">+/- 3 days</button>
+                <button type="button" data-flex-days="7" aria-pressed="false">+/- 7 days</button>
+              </div>
+            </div>
+          </div>
           <div class="trip-actions">
             <button class="button secondary edit-topic" type="button" data-focus="#lead-dates">Edit</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only my travel dates.">Talk Dates</button>
@@ -1863,6 +2083,12 @@
     const bannerCustomerName = document.querySelector("#banner-customer-name");
     const bannerDates = document.querySelector("#banner-dates");
     const bannerParty = document.querySelector("#banner-party");
+    const datePicker = document.querySelector("#date-picker");
+    const datePopover = document.querySelector("#date-popover");
+    const calendarMonths = document.querySelector("#calendar-months");
+    const calendarRangeLabel = document.querySelector("#calendar-range-label");
+    const checkinDisplay = document.querySelector("#checkin-display");
+    const checkoutDisplay = document.querySelector("#checkout-display");
 
     const urlParams = new URLSearchParams(window.location.search);
     let cloudTripId = urlParams.get("trip") || "";
@@ -1891,6 +2117,14 @@
       children: 0,
       rooms: 1,
       childAges: []
+    };
+    const today = new Date();
+    const dateState = {
+      active: "checkin",
+      visibleMonth: new Date(today.getFullYear(), today.getMonth(), 1),
+      checkIn: null,
+      checkOut: null,
+      flexDays: 0
     };
     const selectionConfigs = {
       countries: { select: leadCountry, list: selectedCountries },
@@ -2173,6 +2407,118 @@
       }
     }
 
+    function dateKey(date) {
+      if (!date) return "";
+      return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    }
+
+    function sameDay(a, b) {
+      return Boolean(a && b && dateKey(a) === dateKey(b));
+    }
+
+    function parseDateKey(value) {
+      const match = String(value || "").match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (!match) return null;
+      return new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+    }
+
+    function monthLabel(date) {
+      return date.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+    }
+
+    function tripDateLabel(date) {
+      return date ? date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) : "";
+    }
+
+    function currentFlexText() {
+      return dateState.flexDays ? ` (+/- ${dateState.flexDays} day${dateState.flexDays === 1 ? "" : "s"})` : "";
+    }
+
+    function renderDateSummary() {
+      if (checkinDisplay) checkinDisplay.textContent = tripDateLabel(dateState.checkIn) || "Check-in date";
+      if (checkoutDisplay) checkoutDisplay.textContent = tripDateLabel(dateState.checkOut) || "Check-out date";
+      const summary = dateState.checkIn && dateState.checkOut
+        ? `${tripDateLabel(dateState.checkIn)} - ${tripDateLabel(dateState.checkOut)}${currentFlexText()}`
+        : "";
+      if (summary) {
+        leadDates.value = summary;
+        if (leadBookingDates) leadBookingDates.value = summary;
+      }
+    }
+
+    function renderCalendar() {
+      if (!calendarMonths) return;
+      calendarMonths.innerHTML = "";
+      const first = new Date(dateState.visibleMonth.getFullYear(), dateState.visibleMonth.getMonth(), 1);
+      const second = new Date(first.getFullYear(), first.getMonth() + 1, 1);
+      if (calendarRangeLabel) calendarRangeLabel.textContent = `${monthLabel(first)} - ${monthLabel(second)}`;
+      [first, second].forEach((month) => {
+        const monthNode = document.createElement("section");
+        monthNode.className = "calendar-month";
+        const heading = document.createElement("h4");
+        heading.textContent = monthLabel(month);
+        monthNode.append(heading);
+        const grid = document.createElement("div");
+        grid.className = "calendar-grid";
+        ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"].forEach((day) => {
+          const label = document.createElement("span");
+          label.className = "calendar-weekday";
+          label.textContent = day;
+          grid.append(label);
+        });
+        for (let blank = 0; blank < month.getDay(); blank += 1) {
+          const spacer = document.createElement("button");
+          spacer.type = "button";
+          spacer.className = "calendar-day";
+          spacer.dataset.empty = "true";
+          grid.append(spacer);
+        }
+        const daysInMonth = new Date(month.getFullYear(), month.getMonth() + 1, 0).getDate();
+        for (let day = 1; day <= daysInMonth; day += 1) {
+          const current = new Date(month.getFullYear(), month.getMonth(), day);
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "calendar-day";
+          button.dataset.date = dateKey(current);
+          button.textContent = String(day);
+          const isSelected = sameDay(current, dateState.checkIn) || sameDay(current, dateState.checkOut);
+          const inRange = dateState.checkIn && dateState.checkOut && current > dateState.checkIn && current < dateState.checkOut;
+          button.setAttribute("aria-pressed", isSelected ? "true" : "false");
+          if (inRange) button.dataset.inRange = "true";
+          grid.append(button);
+        }
+        monthNode.append(grid);
+        calendarMonths.append(monthNode);
+      });
+    }
+
+    function setDatePopoverOpen(open, active = dateState.active) {
+      if (!datePopover) return;
+      dateState.active = active;
+      datePopover.dataset.open = open ? "true" : "false";
+      if (open) renderCalendar();
+    }
+
+    function chooseTripDate(date) {
+      if (!dateState.checkIn || dateState.active === "checkin" || (dateState.checkIn && dateState.checkOut)) {
+        dateState.checkIn = date;
+        dateState.checkOut = null;
+        dateState.active = "checkout";
+      } else if (date <= dateState.checkIn) {
+        dateState.checkIn = date;
+        dateState.checkOut = null;
+        dateState.active = "checkout";
+      } else {
+        dateState.checkOut = date;
+        dateState.active = "checkin";
+        setDatePopoverOpen(false);
+      }
+      renderDateSummary();
+      renderCalendar();
+      updateTripSummary();
+      scheduleCloudTripSave("dates");
+    }
+
     function applyPartySummary(value) {
       const text = String(value || "");
       const adults = text.match(/(\d+)\s*adults?/i);
@@ -2240,6 +2586,9 @@
       details.chaletTypes = getSelectionSummary("chalets");
       details.chaletNames = getSelectionSummary("accommodations") || details.chaletNames;
       details.accommodations = getSelectionSummary("accommodations");
+      details.checkInDate = dateKey(dateState.checkIn);
+      details.checkOutDate = dateKey(dateState.checkOut);
+      details.dateFlexDays = dateState.flexDays;
       return details;
     }
 
@@ -2247,6 +2596,11 @@
       Object.entries(bookingFieldMap).forEach(([key, field]) => {
         if (field) field.value = details[key] || "";
       });
+      dateState.checkIn = parseDateKey(details.checkInDate);
+      dateState.checkOut = parseDateKey(details.checkOutDate);
+      dateState.flexDays = Number(details.dateFlexDays || 0);
+      renderDateSummary();
+      renderCalendar();
       setSelectionChoices("countries", details.countries || details.country);
       setSelectionChoices("destinations", details.destinations || details.destination);
       setSelectionChoices("chalets", details.chaletTypes || details.chalets);
@@ -2967,6 +3321,7 @@
         const target = document.querySelector(button.dataset.focus);
         if (!target) return;
         if (target === leadGroup) setPartyPickerExpanded(true);
+        if (target === leadDates) setDatePopoverOpen(true, "checkin");
         target.focus();
         target.select?.();
         setStatus("Edit this trip detail directly, or use Talk to update it by voice.", "ready");
@@ -3025,6 +3380,52 @@
       setStatus("Party details updated.", "ready");
     });
 
+    document.querySelectorAll("[data-date-open]").forEach((button) => {
+      button.addEventListener("click", () => setDatePopoverOpen(true, button.dataset.dateOpen));
+    });
+
+    leadDates?.addEventListener("click", () => setDatePopoverOpen(true, "checkin"));
+
+    calendarMonths?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-date]");
+      if (!button) return;
+      const date = parseDateKey(button.dataset.date);
+      if (date) chooseTripDate(date);
+    });
+
+    document.querySelectorAll("[data-calendar-nav]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const delta = button.dataset.calendarNav === "next" ? 1 : -1;
+        dateState.visibleMonth = new Date(dateState.visibleMonth.getFullYear(), dateState.visibleMonth.getMonth() + delta, 1);
+        renderCalendar();
+      });
+    });
+
+    document.querySelectorAll("[data-date-mode]").forEach((button) => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll("[data-date-mode]").forEach((tab) => {
+          tab.setAttribute("aria-selected", tab === button ? "true" : "false");
+        });
+      });
+    });
+
+    document.querySelectorAll("[data-flex-days]").forEach((button) => {
+      button.addEventListener("click", () => {
+        dateState.flexDays = Number(button.dataset.flexDays || 0);
+        document.querySelectorAll("[data-flex-days]").forEach((option) => {
+          option.setAttribute("aria-pressed", option === button ? "true" : "false");
+        });
+        renderDateSummary();
+        updateTripSummary();
+        scheduleCloudTripSave("dates-flexibility");
+      });
+    });
+
+    document.addEventListener("click", (event) => {
+      if (!datePicker || datePopover?.dataset.open !== "true") return;
+      if (!datePicker.contains(event.target)) setDatePopoverOpen(false);
+    });
+
     document.querySelectorAll(".accommodation-arrow").forEach((button) => {
       button.addEventListener("click", () => {
         const delta = button.dataset.direction === "next" ? 1 : -1;
@@ -3079,6 +3480,7 @@
     });
     populateAccommodationOptions();
     renderPartyPicker({ updateSummary: false });
+    renderCalendar();
     [leadName, leadEmail].forEach((field) => {
       field.addEventListener("input", () => {
         leadForm.dataset.closed = "false";
