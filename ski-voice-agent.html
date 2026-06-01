@@ -1541,6 +1541,23 @@
 
         <article class="trip-card">
           <div>
+            <p class="eyebrow">Accommodation</p>
+            <h3>Which places should we shortlist?</h3>
+          </div>
+          <label>
+            Available accommodation
+            <select id="lead-chalet-names" title="Choose a chalet or hotel that matches the selected resort and accommodation type.">
+              <option value="">Select accommodation</option>
+            </select>
+          </label>
+          <div class="trip-actions">
+            <button class="button secondary edit-topic" type="button" data-focus="#lead-chalet-names">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the specific accommodation shortlist.">Talk Accommodation</button>
+          </div>
+        </article>
+
+        <article class="trip-card">
+          <div>
             <p class="eyebrow">Travel</p>
             <h3>Where are you leaving from?</h3>
           </div>
@@ -1769,6 +1786,17 @@
       destinations: { select: leadDestination, list: selectedDestinations },
       chalets: { select: leadChalet, list: selectedChalets }
     };
+    const skiweekendsAccommodation = [
+      { resort: "Avoriaz", type: "Hotel", name: "Hotel Des Dromonts" },
+      { resort: "Avoriaz", type: "Fully catered chalet", name: "Chalet Perce Neige" },
+      { resort: "Avoriaz", type: "Fully catered chalet", name: "Chalet Jean-France" },
+      { resort: "Avoriaz", type: "Fully catered chalet", name: "Chalet Lauzes" },
+      { resort: "Avoriaz", type: "Fully catered chalet", name: "Chalet Poudreuse" },
+      { resort: "Avoriaz", type: "Fully catered chalet", name: "Chalet Violetta" },
+      { resort: "Morzine", type: "Hotel", name: "Hotel Les Fleurs" },
+      { resort: "Morzine", type: "Fully catered chalet", name: "Chalet Tavernier" },
+      { resort: "Morzine", type: "Hotel", name: "Hotel Le Petit Dru" }
+    ];
     const bookingFieldMap = {
       dates: leadBookingDates,
       destination: leadBookingDestination,
@@ -1846,6 +1874,7 @@
       ensureSelectOption(config.select, clean);
       if (!selectedChoices[type].includes(clean)) selectedChoices[type].push(clean);
       renderSelectionList(type);
+      if (type === "destinations" || type === "chalets") populateAccommodationOptions();
       if (!quiet) {
         updateTripSummary();
         scheduleCloudTripSave("selection");
@@ -1855,6 +1884,40 @@
     function getSelectionSummary(type) {
       const config = selectionConfigs[type];
       return selectedChoices[type]?.join(", ") || fieldValue(config?.select);
+    }
+
+    function accommodationTypeMatches(optionType, selectedTypesText) {
+      const selected = String(selectedTypesText || "").toLowerCase();
+      if (!selected) return true;
+      const option = String(optionType || "").toLowerCase();
+      if (selected.includes("hotel")) return option.includes("hotel");
+      if (selected.includes("chalet") || selected.includes("catered")) return option.includes("chalet");
+      if (selected.includes("accommodation only")) return true;
+      return true;
+    }
+
+    function populateAccommodationOptions() {
+      if (!leadChaletNames) return;
+      const current = leadChaletNames.value;
+      const resortSummary = getSelectionSummary("destinations");
+      const typeSummary = getSelectionSummary("chalets");
+      const resortChoices = parseSelectionValue(resortSummary);
+      const resortSet = new Set(resortChoices);
+      const matches = skiweekendsAccommodation.filter((item) => {
+        const resortOk = !resortSet.size || resortSet.has(item.resort);
+        return resortOk && accommodationTypeMatches(item.type, typeSummary);
+      });
+      const options = matches.length ? matches : skiweekendsAccommodation.filter((item) => accommodationTypeMatches(item.type, typeSummary));
+      leadChaletNames.innerHTML = "";
+      leadChaletNames.add(new Option("Select accommodation", ""));
+      options.forEach((item) => {
+        const label = `${item.name} - ${item.resort} (${item.type})`;
+        leadChaletNames.add(new Option(label, item.name));
+      });
+      if (current && !Array.from(leadChaletNames.options).some((option) => option.value === current)) {
+        leadChaletNames.add(new Option(current, current));
+      }
+      leadChaletNames.value = current || "";
     }
 
     function partySummary() {
@@ -1970,6 +2033,11 @@
       setSelectionChoices("countries", details.countries || details.country);
       setSelectionChoices("destinations", details.destinations || details.destination);
       setSelectionChoices("chalets", details.chaletTypes || details.chalets);
+      populateAccommodationOptions();
+      if (leadChaletNames && details.chaletNames) {
+        ensureSelectOption(leadChaletNames, details.chaletNames);
+        leadChaletNames.value = details.chaletNames;
+      }
     }
 
     function micIconMarkup() {
@@ -2731,12 +2799,14 @@
           ensureSelectOption(leadCountry, getSelectedResortCountry());
         }
         if (field === leadGroup && event.type === "change") applyPartySummary(leadGroup.value);
+        if (field === leadDestination || field === leadChalet) populateAccommodationOptions();
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
       };
       field.addEventListener("input", handleFieldUpdate);
       field.addEventListener("change", handleFieldUpdate);
     });
+    populateAccommodationOptions();
     renderPartyPicker({ updateSummary: false });
     [leadName, leadEmail].forEach((field) => {
       field.addEventListener("input", () => {
