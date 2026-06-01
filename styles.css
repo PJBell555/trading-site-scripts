@@ -4813,7 +4813,11 @@ ol {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: 30px 16px 24px;
-  scrollbar-gutter: stable;
+  scrollbar-width: none;
+}
+
+.side-nav .app-menu::-webkit-scrollbar {
+  display: none;
 }
 
 .menu-group {
