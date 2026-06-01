@@ -12851,6 +12851,29 @@ function getHomeMarketChange(samples) {
   };
 }
 
+function getHomeMarketDayTicks(minTime, maxTime) {
+  const ticks = [];
+  const cursor = new Date(minTime);
+  cursor.setMinutes(0, 0, 0);
+  cursor.setHours(Math.floor(cursor.getHours() / 6) * 6);
+  while (cursor.getTime() < minTime) {
+    cursor.setHours(cursor.getHours() + 6);
+  }
+  while (cursor.getTime() <= maxTime) {
+    ticks.push(cursor.getTime());
+    cursor.setHours(cursor.getHours() + 6);
+  }
+  return ticks;
+}
+
+function formatHomeMarketTickTime(time) {
+  const date = new Date(time);
+  const hour = date.getHours();
+  if (hour === 0) return "Midnight";
+  if (hour === 12) return "Noon";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }).replace(":00", "");
+}
+
 function getHomeMarketGapThresholdMs() {
   if (homeMarketPeriod === "hour") return 3 * 60 * 1000;
   if (homeMarketPeriod === "day") return 20 * 60 * 1000;
@@ -12957,6 +12980,26 @@ function drawHomeMarketChart(samples) {
   const xFor = (time) => padding.left + ((time - minTime) / Math.max(maxTime - minTime, 1)) * plotWidth;
   const yFor = (price) => padding.top + (1 - ((price - minY) / yRange)) * plotHeight;
   const zeroY = yFor(prices[0]);
+  const plotBottom = padding.top + plotHeight;
+
+  if (homeMarketPeriod === "day") {
+    const dayTicks = getHomeMarketDayTicks(minTime, maxTime);
+    context.save();
+    context.strokeStyle = "rgba(148, 163, 184, 0.22)";
+    context.fillStyle = "#64748b";
+    context.font = `700 ${12 * scale}px Aptos, Segoe UI, sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "top";
+    dayTicks.forEach((tick) => {
+      const x = xFor(tick);
+      context.beginPath();
+      context.moveTo(x, padding.top);
+      context.lineTo(x, plotBottom);
+      context.stroke();
+      context.fillText(formatHomeMarketTickTime(tick), x, plotBottom + 12 * scale);
+    });
+    context.restore();
+  }
 
   context.strokeStyle = "rgba(15, 23, 42, 0.36)";
   context.setLineDash([2 * scale, 8 * scale]);
