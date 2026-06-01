@@ -1559,6 +1559,21 @@ async function sweepBreachedOpenPaperTradesD1(env, settings = null) {
   const usersByEmail = new Map((Array.isArray(activeSettings.users) ? activeSettings.users : [])
     .map((user) => [normalizeEmail(user.email), user]));
   const openRows = await getD1OpenPaperTradeRows(env);
+  if (!openRows.length) {
+    const openRowKeys = new Set();
+    const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
+    const transactions = payload.transactions || [];
+    for (const [email, user] of usersByEmail.entries()) {
+      if (!shouldEvaluatePaperSchedulerUser(user, env)) continue;
+      const openTrades = getOpenPaperTradesForUser(transactions, email);
+      openTrades.forEach((trade) => {
+        const key = getTradeIdentityKey(trade) || `${email}|${getPaperTradeId(trade)}`;
+        if (!key || openRowKeys.has(key)) return;
+        openRowKeys.add(key);
+        openRows.push({ userEmail: email, trade });
+      });
+    }
+  }
   const closes = [];
   const decisions = [];
 
@@ -1610,7 +1625,7 @@ async function sweepBreachedOpenPaperTradesD1(env, settings = null) {
   if (closes.length) {
     await upsertUnifiedTransactionRows(env, closes, PAPER_TRADE_MODE);
   }
-  return { closedTrades: closes.length, decisions };
+  return { closedTrades: closes.length, scannedOpenTrades: openRows.length, decisions };
 }
 
 async function seedUnifiedTransactionsFromLegacyTable(env, tradeMode) {
@@ -4514,8 +4529,20 @@ async function handlePriceSnapshotsRoute(env, request, origin) {
   const url = new URL(request.url);
   const forceRefresh = url.searchParams.get("refresh") === "1" || url.searchParams.get("refresh") === "true";
   const lite = url.searchParams.get("lite") === "1" || url.searchParams.get("lite") === "true";
+  const debug = url.searchParams.get("debug") === "1" || url.searchParams.get("debug") === "true";
   const payload = await getPriceSnapshots(env, forceRefresh);
-  return cachedJsonResponse(lite ? toLitePriceSnapshotsPayload(payload) : payload, 200, origin);
+  const protectiveSweep = hasRuntimeStore(env)
+    ? await sweepBreachedOpenPaperTradesD1(env).catch((error) => ({
+      closedTrades: 0,
+      scannedOpenTrades: 0,
+      decisions: [],
+      error: error.message || "protective sweep failed"
+    }))
+    : null;
+  const responsePayload = protectiveSweep?.closedTrades || debug || protectiveSweep?.error
+    ? { ...payload, protectiveSweep }
+    : payload;
+  return cachedJsonResponse(lite ? toLitePriceSnapshotsPayload(responsePayload) : responsePayload, 200, origin);
 }
 
 function getPriceHistoryCutoff(period = "day") {
