@@ -1760,7 +1760,7 @@
           <label>
             Country / region
             <select id="lead-country" title="Choose the country or region for this ski trip.">
-              <option value="">Select a country</option>
+              <option selected>All</option>
               <option>France</option>
               <option>Austria</option>
               <option>Switzerland</option>
@@ -1786,7 +1786,7 @@
           <label>
             Destination
             <select id="lead-destination" title="Choose the destination or resort the trip should focus on.">
-              <option value="">Select a resort</option>
+              <option selected>All</option>
               <optgroup label="France">
                 <option>Alpe d'Huez</option>
                 <option>Avoriaz</option>
@@ -2264,7 +2264,7 @@
     }
 
     function getCountryChoices() {
-      return Array.from(new Set(parseSelectionValue(getSelectionSummary("countries"))));
+      return Array.from(new Set(parseSelectionValue(getSelectionSummary("countries")).filter((choice) => choice.toLowerCase() !== "all")));
     }
 
     function getResortCountry(resort) {
@@ -2282,7 +2282,7 @@
 
     function accommodationAllowed(item) {
       const countryChoices = getCountryChoices();
-      const resortChoices = parseSelectionValue(getSelectionSummary("destinations"));
+      const resortChoices = parseSelectionValue(getSelectionSummary("destinations")).filter((choice) => choice.toLowerCase() !== "all");
       const countryOk = !countryChoices.length || countryChoices.includes(getAccommodationCountry(item));
       const resortOk = !resortChoices.length || resortChoices.includes(item.resort);
       return countryOk && resortOk;
@@ -2293,7 +2293,7 @@
       const current = leadDestination.value;
       const countryChoices = getCountryChoices();
       leadDestination.innerHTML = "";
-      leadDestination.add(new Option("Select a resort", ""));
+      leadDestination.add(new Option("All", "All"));
       resortGroups
         .filter((group) => !countryChoices.length || countryChoices.includes(group.country))
         .forEach((group) => {
@@ -2302,7 +2302,7 @@
           group.resorts.forEach((resort) => optgroup.append(new Option(resort, resort)));
           leadDestination.append(optgroup);
         });
-      leadDestination.value = current && resortAllowedByCountries(current, countryChoices) ? current : "";
+      leadDestination.value = current && (current === "All" || resortAllowedByCountries(current, countryChoices)) ? current : "All";
     }
 
     function pruneDependentSelections(type) {
@@ -2345,12 +2345,15 @@
       const config = selectionConfigs[type];
       if (!config) return;
       selectedChoices[type] = Array.from(new Set(parseSelectionValue(value)));
+      if ((type === "countries" || type === "destinations") && selectedChoices[type].some((choice) => choice.toLowerCase() === "all")) {
+        selectedChoices[type] = [];
+      }
       if (type === "destinations") {
         selectedChoices[type] = selectedChoices[type].filter((resort) => resortAllowedByCountries(resort));
       }
       selectedChoices[type].forEach((choice) => ensureSelectOption(config.select, choice));
       if (selectedChoices[type][0]) config.select.value = selectedChoices[type][0];
-      else if (config.select) config.select.value = type === "chalets" ? "All" : "";
+      else if (config.select) config.select.value = (type === "chalets" || type === "countries" || type === "destinations") ? "All" : "";
       renderSelectionList(type);
       if (type === "countries") populateResortOptions();
       if (type === "countries" || type === "destinations" || type === "chalets") pruneDependentSelections(type);
@@ -2361,6 +2364,17 @@
       if (!config) return;
       const clean = String(value || config.select?.value || "").trim();
       if (!clean) return;
+      if ((type === "countries" || type === "destinations") && clean.toLowerCase() === "all") {
+        selectedChoices[type] = [];
+        renderSelectionList(type);
+        if (type === "countries") populateResortOptions();
+        pruneDependentSelections(type);
+        if (!quiet) {
+          updateTripSummary();
+          scheduleCloudTripSave("selection");
+        }
+        return;
+      }
       if (type === "destinations") {
         const resortCountry = getResortCountry(clean);
         const countryChoices = getCountryChoices();
