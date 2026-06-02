@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Skier avatar">
+  <circle cx="32" cy="32" r="30" fill="#111827"/>
+  <circle cx="32" cy="32" r="21" fill="#10a7d8"/>
+  <path d="M13 42l12-14 7 8 7-12 13 18H13Z" fill="#fff"/>
+  <path d="M16 43l12-12 6 7 6-11 12 16H16Z" fill="#10223a"/>
+  <path d="M26 20c1-5 8-6 12-2l-1 8-10-1-1-5Z" fill="#b91c1c"/>
+  <path d="M35 25l4 9 8 2" stroke="#7f1d1d" stroke-width="4" stroke-linecap="round"/>
+  <path d="M31 26l-4 12 7 8" stroke="#f6d3b2" stroke-width="5" stroke-linecap="round"/>
+  <path d="M27 38l-2 13M34 46l7 7" stroke="#6b3f24" stroke-width="5" stroke-linecap="round"/>
+  <path d="M18 55c9 2 27 1 37-4" stroke="#6b3f24" stroke-width="4" stroke-linecap="round"/>
+</svg>

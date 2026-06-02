@@ -72,6 +72,12 @@
       transform: none;
     }
 
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
+    }
+
     .primary {
       background: #a8dcff;
       box-shadow: 0 14px 30px rgba(91, 183, 236, 0.28);
@@ -372,6 +378,25 @@
       width: 44px;
     }
 
+    .voice-spinner {
+      border: 3px solid rgba(7, 28, 49, 0.2);
+      border-top-color: #071c31;
+      border-radius: 999px;
+      display: none;
+      flex: 0 0 auto;
+      height: 28px;
+      width: 28px;
+    }
+
+    body[data-voice-connecting="true"] .voice-spinner {
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+    }
+
+    body[data-voice-connecting="true"] .talk-mic-wire {
+      display: none;
+    }
+
     .talk-concierge {
       border: 3px solid #fff;
       border-radius: 999px;
@@ -384,6 +409,10 @@
     .talk-hero-button:hover .talk-mic-wire,
     .talk-hero-button:focus-visible .talk-mic-wire {
       transform: scale(1.04);
+    }
+
+    .talk-hero-button > .mic-status {
+      display: none;
     }
 
     .talk-hero-mic.mic-status {
@@ -579,9 +608,18 @@
       color: #24734d;
     }
 
+    body[data-voice-connecting="true"] .voice-button .mic-status {
+      color: #071c31;
+    }
+
     body[data-voice-live="true"] .talk-hero-button {
       background: rgba(174, 202, 222, 0.82);
       box-shadow: none;
+    }
+
+    body[data-voice-connecting="true"] .talk-hero-button {
+      background: #c4e8ff;
+      box-shadow: 0 18px 44px rgba(91, 183, 236, 0.42);
     }
 
     body[data-voice-live="true"] .talk-concierge,
@@ -794,6 +832,7 @@
     }
 
     body[data-workspace-unlocked="false"] .header-trip-strip,
+    body[data-workspace-unlocked="false"] .reset-button,
     body[data-workspace-unlocked="false"] .trip-workspace,
     body[data-workspace-unlocked="false"] .handoff-jump-button {
       display: none;
@@ -1658,7 +1697,8 @@
             <button class="primary voice-button talk-hero-button" type="button" id="start-button">
               <span class="talk-concierge-stage" aria-hidden="true">
                 <img class="talk-mic-wire" src="./assets/microphone-wire.svg" alt="">
-                <img class="talk-concierge" src="./assets/british-concierge.svg" alt="">
+                <span class="voice-spinner"></span>
+                <img class="talk-concierge" src="./assets/skier-avatar.svg" alt="">
               </span>
               <span class="talk-hero-copy">
                 <strong>Click to Start the Voice Concierge</strong>
@@ -2810,6 +2850,10 @@
       document.body.dataset.voiceLive = isLive ? "true" : "false";
     }
 
+    function setVoiceConnecting(isConnecting) {
+      document.body.dataset.voiceConnecting = isConnecting ? "true" : "false";
+    }
+
     function setStatus(message, state = "idle") {
       statusEl.textContent = message;
       statusEl.dataset.state = state;
@@ -3280,6 +3324,49 @@
       }
     }
 
+    function buildFocusedTopicPrompt(topic = "") {
+      const details = getBookingDetails();
+      const currentState = {
+        tripId: cloudTripId || "new trip",
+        name: leadName.value.trim() || "not set",
+        party: leadGroup.value.trim() || "not set",
+        dates: leadDates.value.trim() || "not set",
+        country: details.country || "not set",
+        resort: details.destination || "not set",
+        accommodationType: details.chaletTypes || "not set",
+        accommodationShortlist: details.accommodations || "not set",
+        departureCity: leadCity.value.trim() || "not set",
+        flights: leadFlights.value.trim() || "not set",
+        transfers: leadTransfers.value.trim() || "not set",
+        skiRental: leadSkiRental.value.trim() || "not set",
+        boots: leadBoots.value.trim() || "not set",
+        skis: leadSkis.value.trim() || "not set",
+        helmets: leadHelmet.value.trim() || "not set",
+        skiPasses: leadSkiPasses.value.trim() || "not set"
+      };
+      return [
+        topic || "Please greet me and start qualifying my European ski chalet trip.",
+        "Continue the existing ski trip planning flow from this topic only.",
+        "Use the current trip state below so you do not ask for details already captured.",
+        "Ask concise spoken questions for the selected topic, confirm the answer, and then pause.",
+        "When the customer answers, update only the relevant trip detail and keep the rest of the itinerary unchanged.",
+        `Current trip state: ${JSON.stringify(currentState)}`
+      ].join("\n");
+    }
+
+    function sendFocusedTopicPrompt(topic = "") {
+      const prompt = buildFocusedTopicPrompt(topic);
+      sendEvent({
+        type: "conversation.item.create",
+        item: {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text: prompt }]
+        }
+      });
+      sendEvent({ type: "response.create" });
+    }
+
     function extractDelta(event) {
       const type = event.type || "";
       if (/output_text|audio_transcript|transcript/i.test(type) && typeof event.delta === "string") return event.delta;
@@ -3375,8 +3462,9 @@
       }
     }
 
-    async function startSession() {
+    async function startSession(topic = "") {
       startButton.disabled = true;
+      setVoiceConnecting(true);
       setStatus("Requesting microphone access.");
       try {
         mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -3407,17 +3495,10 @@
         });
         dataChannel = peerConnection.createDataChannel("oai-events");
         dataChannel.addEventListener("open", () => {
+          setVoiceConnecting(false);
           setVoiceLive(true);
           setStatus("Connected. Ask about a ski trip.", "ready");
-          sendEvent({
-            type: "conversation.item.create",
-            item: {
-              type: "message",
-              role: "user",
-              content: [{ type: "input_text", text: "Please greet me and start qualifying my European ski chalet trip." }]
-            }
-          });
-          sendEvent({ type: "response.create" });
+          sendFocusedTopicPrompt(topic);
         });
         dataChannel.addEventListener("message", (message) => {
           try {
@@ -3441,6 +3522,7 @@
         await peerConnection.setRemoteDescription({ type: "answer", sdp: await sdpResponse.text() });
         stopButton.disabled = false;
       } catch (error) {
+        setVoiceConnecting(false);
         setStatus(error.message, "error");
         startButton.disabled = false;
         stopSession({ resetStatus: false });
@@ -3448,6 +3530,7 @@
     }
 
     function stopSession(options = {}) {
+      setVoiceConnecting(false);
       stopCurrentAudio();
       if (dataChannel) dataChannel.close();
       if (peerConnection) peerConnection.close();
@@ -3537,11 +3620,15 @@
 
     document.querySelectorAll(".talk-topic").forEach((button) => {
       button.addEventListener("click", () => {
-        if (conciergeInput) conciergeInput.value = button.dataset.topic || "";
+        const topic = button.dataset.topic || "";
+        if (conciergeInput) conciergeInput.value = topic;
         document.querySelector("#concierge").scrollIntoView({ behavior: "smooth", block: "start" });
         setStatus("Topic loaded. Start voice or send the text prompt to update this part only.", "ready");
-        if (!dataChannel || dataChannel.readyState !== "open") {
-          startSession();
+        if (dataChannel && dataChannel.readyState === "open") {
+          sendFocusedTopicPrompt(topic);
+          setStatus("Topic sent to the voice concierge.", "ready");
+        } else {
+          startSession(topic);
         }
       });
     });
@@ -3725,7 +3812,7 @@
     installMicIcons();
     setVoiceLive(false);
 
-    startButton.addEventListener("click", startSession);
+    startButton.addEventListener("click", () => startSession());
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
     loadCloudTripFromUrl().then((loaded) => {
