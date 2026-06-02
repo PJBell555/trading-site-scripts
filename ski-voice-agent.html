@@ -793,6 +793,21 @@
       padding: 10px clamp(18px, 4vw, 42px) 54px;
     }
 
+    body[data-workspace-unlocked="false"] .header-trip-strip,
+    body[data-workspace-unlocked="false"] .trip-workspace,
+    body[data-workspace-unlocked="false"] .handoff-jump-button {
+      display: none;
+    }
+
+    body[data-workspace-unlocked="false"] .hero {
+      height: calc(100vh - 78px);
+      min-height: 620px;
+    }
+
+    body[data-workspace-unlocked="false"] .hero-inner {
+      align-items: center;
+    }
+
     .trip-workspace-inner {
       display: grid;
       gap: 16px;
@@ -1574,7 +1589,7 @@
     }
   </style>
 </head>
-<body>
+<body data-workspace-unlocked="false">
   <header class="topbar">
     <a class="brand" href="#concierge" aria-label="Ski in Europe home">
       <span class="brand-mark" aria-hidden="true">
@@ -2821,6 +2836,39 @@
       );
     }
 
+    function hasMeaningfulSelection(type) {
+      const config = selectionConfigs[type];
+      const values = [
+        ...(selectedChoices[type] || []),
+        fieldValue(config?.select)
+      ].map((value) => String(value || "").trim()).filter(Boolean);
+      return values.some((value) => value.toLowerCase() !== "all" && !value.toLowerCase().startsWith("select "));
+    }
+
+    function hasWorkspaceTripDetails() {
+      return Boolean(
+        leadName.value.trim()
+        || leadCity.value.trim()
+        || leadDates.value.trim()
+        || leadGroup.value.trim()
+        || leadFlights.value.trim()
+        || leadTransfers.value.trim()
+        || leadSkiRental.value.trim()
+        || leadBoots.value.trim()
+        || leadSkis.value.trim()
+        || leadHelmet.value.trim()
+        || leadSkiPasses.value.trim()
+        || leadNotes.value.trim()
+        || dateState.checkIn
+        || dateState.checkOut
+        || transcript.length
+        || hasMeaningfulSelection("countries")
+        || hasMeaningfulSelection("destinations")
+        || hasMeaningfulSelection("chalets")
+        || hasMeaningfulSelection("accommodations")
+      );
+    }
+
     function extractParty(notes) {
       const lower = notes.toLowerCase();
       const adults = lower.match(/(\d+)\s*adults?/);
@@ -2845,6 +2893,7 @@
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       const hasFirstDetails = Boolean(customerName && leadGroup.value.trim() && leadDates.value.trim());
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
+      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
