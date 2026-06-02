@@ -254,7 +254,7 @@
       background:
         linear-gradient(90deg, rgba(7, 30, 52, 0.9) 0%, rgba(7, 30, 52, 0.78) 36%, rgba(7, 30, 52, 0.28) 65%, rgba(7, 30, 52, 0.64) 100%),
         linear-gradient(180deg, rgba(7, 30, 52, 0.42) 0%, rgba(7, 30, 52, 0.1) 64%, rgba(245, 247, 251, 1) 100%),
-        url("./assets/chalet-poudreuse-exterior.jpg") center/cover;
+        url("./assets/alps-hero.jpg") center/cover;
       color: #fff;
       height: calc(100vh - 78px);
       min-height: 560px;
@@ -344,42 +344,59 @@
     .talk-hero-button {
       border: 2px solid rgba(255, 255, 255, 0.88);
       box-shadow: 0 18px 40px rgba(91, 183, 236, 0.34);
-      gap: 10px;
+      gap: 14px;
       min-height: 72px;
-      min-width: 455px;
-      padding: 8px 22px 8px 14px;
+      min-width: 560px;
+      padding: 8px 24px 8px 12px;
     }
 
-    .talk-hero-mic.mic-status {
-      background: rgba(255, 255, 255, 0.48);
-      border: 2px solid rgba(7, 28, 49, 0.12);
+    .talk-concierge-stage {
+      align-items: center;
+      background: rgba(255, 255, 255, 0.28);
       border-radius: 999px;
-      color: #08233d;
+      display: inline-flex;
       flex: 0 0 auto;
-      height: 42px;
-      width: 42px;
+      gap: 6px;
+      padding: 4px 7px 4px 5px;
+      position: relative;
     }
 
-    .talk-hero-mic.mic-status svg {
-      height: 22px;
-      margin: auto;
-      width: 22px;
+    .talk-mic-wire,
+    .talk-concierge {
+      display: block;
+      transition: filter 0.18s ease, opacity 0.18s ease, transform 0.18s ease;
     }
 
-    .talk-avatar {
-      background: #111827;
+    .talk-mic-wire {
+      height: 44px;
+      width: 44px;
+    }
+
+    .talk-concierge {
       border: 3px solid #fff;
       border-radius: 999px;
       box-shadow: inset 0 0 0 3px #1aaee4;
-      flex: 0 0 auto;
       height: 56px;
       overflow: hidden;
       width: 56px;
     }
 
-    .talk-avatar svg {
-      height: 56px;
-      width: 56px;
+    .talk-hero-button:hover .talk-mic-wire,
+    .talk-hero-button:focus-visible .talk-mic-wire {
+      transform: scale(1.04);
+    }
+
+    .talk-hero-mic.mic-status {
+      color: currentColor;
+      flex: 0 0 auto;
+      height: 18px;
+      width: 18px;
+    }
+
+    .talk-hero-mic.mic-status svg {
+      height: 18px;
+      margin: auto;
+      width: 18px;
     }
 
     .talk-hero-copy {
@@ -411,13 +428,13 @@
 
     .hero-actions .danger {
       grid-column: 1;
-      min-width: 455px;
+      min-width: 560px;
       width: 100%;
     }
 
     .handoff-jump-button {
       grid-column: 1;
-      min-width: 455px;
+      min-width: 560px;
       width: 100%;
     }
 
@@ -498,29 +515,29 @@
       padding: 8px 20px 8px 12px;
     }
 
-    body[data-trip-compact="true"] .talk-hero-button .button-copy {
+    body[data-trip-compact="true"] .talk-hero-button .talk-hero-copy {
       font-size: 0.95rem;
       line-height: 1.05;
     }
 
     body[data-trip-compact="true"] .talk-hero-mic.mic-status {
-      height: 42px;
-      width: 42px;
+      height: 18px;
+      width: 18px;
     }
 
     body[data-trip-compact="true"] .talk-hero-mic.mic-status svg {
-      height: 22px;
-      width: 22px;
+      height: 18px;
+      width: 18px;
     }
 
-    body[data-trip-compact="true"] .talk-avatar {
+    body[data-trip-compact="true"] .talk-concierge {
       height: 54px;
       width: 54px;
     }
 
-    body[data-trip-compact="true"] .talk-avatar svg {
-      height: 54px;
-      width: 54px;
+    body[data-trip-compact="true"] .talk-mic-wire {
+      height: 42px;
+      width: 42px;
     }
 
     body[data-trip-compact="true"] .hero-actions .danger,
@@ -549,11 +566,6 @@
       width: 15px;
     }
 
-    .talk-avatar svg {
-      height: 56px;
-      width: 56px;
-    }
-
     .mic-status .mic-slash {
       opacity: 1;
       transition: opacity 0.18s ease;
@@ -565,6 +577,24 @@
 
     body[data-voice-live="true"] .voice-button .mic-status {
       color: #24734d;
+    }
+
+    body[data-voice-live="true"] .talk-hero-button {
+      background: rgba(174, 202, 222, 0.82);
+      box-shadow: none;
+    }
+
+    body[data-voice-live="true"] .talk-concierge,
+    body[data-voice-live="true"] .talk-mic-wire {
+      filter: grayscale(1);
+      opacity: 0.42;
+    }
+
+    body[data-voice-live="true"] .hero-actions .danger {
+      background: #ffe1e1;
+      border-color: #ff9c9c;
+      box-shadow: 0 14px 34px rgba(138, 43, 45, 0.28);
+      color: #7d1f22;
     }
 
     .feature-band {
@@ -1461,6 +1491,7 @@
         min-height: 64px;
         min-width: 0;
         padding: 7px 14px 7px 8px;
+        width: 100%;
       }
 
       .hero-actions .danger {
@@ -1472,16 +1503,16 @@
       }
 
       .talk-hero-mic.mic-status {
-        height: 36px;
-        width: 36px;
+        height: 18px;
+        width: 18px;
       }
 
-      .talk-avatar svg {
-        height: 48px;
-        width: 48px;
+      .talk-mic-wire {
+        height: 38px;
+        width: 38px;
       }
 
-      .talk-avatar {
+      .talk-concierge {
         height: 48px;
         width: 48px;
       }
@@ -1610,6 +1641,16 @@
           </div>
           <div class="hero-actions">
             <button class="primary voice-button talk-hero-button" type="button" id="start-button">
+              <span class="talk-concierge-stage" aria-hidden="true">
+                <img class="talk-mic-wire" src="./assets/microphone-wire.svg" alt="">
+                <img class="talk-concierge" src="./assets/british-concierge.svg" alt="">
+              </span>
+              <span class="talk-hero-copy">
+                <strong>Click to Start the Voice Concierge</strong>
+              </span>
+            </button>
+            <span class="talk-helper">Click the microphone button, then wait for the agent to start talking.</span>
+            <button class="danger voice-button" type="button" id="stop-button" disabled>
               <span class="talk-hero-mic mic-status" aria-hidden="true">
                 <svg viewBox="0 0 24 24" fill="none">
                   <path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
@@ -1618,25 +1659,8 @@
                   <path class="mic-slash" d="M4 4l16 16" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/>
                 </svg>
               </span>
-              <span class="talk-avatar" aria-hidden="true">
-                <svg viewBox="0 0 64 64" fill="none">
-                  <circle cx="32" cy="32" r="30" fill="#111827"/>
-                  <circle cx="32" cy="32" r="21" fill="#10a7d8"/>
-                  <path d="M13 42l12-14 7 8 7-12 13 18H13Z" fill="#fff"/>
-                  <path d="M16 43l12-12 6 7 6-11 12 16H16Z" fill="#10223a"/>
-                  <path d="M26 20c1-5 8-6 12-2l-1 8-10-1-1-5Z" fill="#b91c1c"/>
-                  <path d="M35 25l4 9 8 2" stroke="#7f1d1d" stroke-width="4" stroke-linecap="round"/>
-                  <path d="M31 26l-4 12 7 8" stroke="#f6d3b2" stroke-width="5" stroke-linecap="round"/>
-                  <path d="M27 38l-2 13M34 46l7 7" stroke="#6b3f24" stroke-width="5" stroke-linecap="round"/>
-                  <path d="M18 55c9 2 27 1 37-4" stroke="#6b3f24" stroke-width="4" stroke-linecap="round"/>
-                </svg>
-              </span>
-              <span class="talk-hero-copy">
-                <strong>Click to Start the Voice Concierge</strong>
-              </span>
+              Click to Stop the Voice Concierge
             </button>
-            <span class="talk-helper">Click the microphone button, then wait for the agent to start talking.</span>
-            <button class="danger voice-button" type="button" id="stop-button" disabled>Click to Stop the Voice Concierge</button>
             <a class="button secondary handoff-jump-button" href="#human-handoff">Review and send trip details</a>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>

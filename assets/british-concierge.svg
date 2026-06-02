@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 160" role="img" aria-label="British ski concierge">
+  <defs>
+    <linearGradient id="bg" x1="24" x2="136" y1="20" y2="144" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#18aee7"/>
+      <stop offset="1" stop-color="#07406a"/>
+    </linearGradient>
+    <linearGradient id="jacket" x1="56" x2="116" y1="86" y2="148" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10294a"/>
+      <stop offset="1" stop-color="#071c31"/>
+    </linearGradient>
+  </defs>
+  <circle cx="80" cy="80" r="76" fill="#0b1a2e"/>
+  <circle cx="80" cy="80" r="66" fill="url(#bg)" stroke="#fff" stroke-width="5"/>
+  <path d="M22 118h116l-21-28-16 15-19-31-24 36-12-16-24 24Z" fill="#fff"/>
+  <path d="M28 118h104l-20-24-14 14-17-27-22 33-12-14-19 18Z" fill="#143353"/>
+  <path d="M55 149c5-28 20-43 42-43s35 15 42 43H55Z" fill="url(#jacket)"/>
+  <path d="M70 112l10 20 10-20h-20Z" fill="#fff"/>
+  <path d="M80 132l-8-20h16l-8 20Z" fill="#d9142a"/>
+  <path d="M61 78c2-18 12-29 29-29 15 0 26 11 27 29 1 22-10 38-28 38-17 0-30-16-28-38Z" fill="#f3c79f"/>
+  <path d="M61 81c7-8 14-14 22-24 9 11 21 14 35 17-2-21-14-35-32-35-21 0-35 14-35 36 0 8 2 14 6 18 1-5 2-9 4-12Z" fill="#412817"/>
+  <path d="M62 58c7-17 20-25 40-18 8 3 15 9 20 18-14-1-27-2-40-2-8 0-15 1-20 2Z" fill="#182338"/>
+  <path d="M58 58c15-7 31-9 49-5 7 2 14 4 21 8-4 4-8 6-14 6-17-3-34-3-51 0-4-1-6-3-5-9Z" fill="#0d1727"/>
+  <path d="M72 86c4 4 9 6 16 6s12-2 16-6" fill="none" stroke="#6b351e" stroke-width="4" stroke-linecap="round"/>
+  <circle cx="72" cy="75" r="3" fill="#12223a"/>
+  <circle cx="99" cy="75" r="3" fill="#12223a"/>
+  <path d="M126 119c10 10 17 21 21 34H98l28-34Z" fill="#0b223b" opacity=".94"/>
+  <path d="M55 119c-10 10-17 21-21 34h49L55 119Z" fill="#0b223b" opacity=".94"/>
+</svg>
