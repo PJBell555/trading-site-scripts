@@ -1878,7 +1878,7 @@
           <label>
             Accommodation preference
             <select id="lead-chalet" title="Choose the accommodation or board basis for this ski trip.">
-              <option value="">Select accommodation type</option>
+              <option selected>All</option>
               <option>Fully catered chalet</option>
               <option>Half-board hotel</option>
               <option>Hotel</option>
@@ -2350,7 +2350,7 @@
       }
       selectedChoices[type].forEach((choice) => ensureSelectOption(config.select, choice));
       if (selectedChoices[type][0]) config.select.value = selectedChoices[type][0];
-      else if (config.select) config.select.value = "";
+      else if (config.select) config.select.value = type === "chalets" ? "All" : "";
       renderSelectionList(type);
       if (type === "countries") populateResortOptions();
       if (type === "countries" || type === "destinations" || type === "chalets") pruneDependentSelections(type);
@@ -2389,7 +2389,7 @@
 
     function accommodationTypeMatches(optionType, selectedTypesText) {
       const selected = String(selectedTypesText || "").toLowerCase();
-      if (!selected) return true;
+      if (!selected || selected === "all" || selected.includes("all")) return true;
       const option = String(optionType || "").toLowerCase();
       if (selected.includes("hotel")) return option.includes("hotel");
       if (selected.includes("chalet") || selected.includes("catered")) return option.includes("chalet");
