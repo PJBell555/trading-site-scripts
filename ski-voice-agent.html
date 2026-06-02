@@ -2267,6 +2267,10 @@
       return Array.from(new Set(parseSelectionValue(getSelectionSummary("countries")).filter((choice) => choice.toLowerCase() !== "all")));
     }
 
+    function getResortChoices() {
+      return Array.from(new Set(parseSelectionValue(getSelectionSummary("destinations")).filter((choice) => choice.toLowerCase() !== "all")));
+    }
+
     function getResortCountry(resort) {
       return resortCountryMap.get(String(resort || "").trim()) || "";
     }
@@ -2282,7 +2286,7 @@
 
     function accommodationAllowed(item) {
       const countryChoices = getCountryChoices();
-      const resortChoices = parseSelectionValue(getSelectionSummary("destinations")).filter((choice) => choice.toLowerCase() !== "all");
+      const resortChoices = getResortChoices();
       const countryOk = !countryChoices.length || countryChoices.includes(getAccommodationCountry(item));
       const resortOk = !resortChoices.length || resortChoices.includes(item.resort);
       return countryOk && resortOk;
@@ -2345,8 +2349,9 @@
       const config = selectionConfigs[type];
       if (!config) return;
       selectedChoices[type] = Array.from(new Set(parseSelectionValue(value)));
-      if ((type === "countries" || type === "destinations") && selectedChoices[type].some((choice) => choice.toLowerCase() === "all")) {
-        selectedChoices[type] = [];
+      if (type === "countries" || type === "destinations") {
+        const hasAll = selectedChoices[type].some((choice) => choice.toLowerCase() === "all");
+        if (hasAll) selectedChoices[type] = ["All"];
       }
       if (type === "destinations") {
         selectedChoices[type] = selectedChoices[type].filter((resort) => resortAllowedByCountries(resort));
@@ -2365,7 +2370,8 @@
       const clean = String(value || config.select?.value || "").trim();
       if (!clean) return;
       if ((type === "countries" || type === "destinations") && clean.toLowerCase() === "all") {
-        selectedChoices[type] = [];
+        selectedChoices[type] = ["All"];
+        config.select.value = "All";
         renderSelectionList(type);
         if (type === "countries") populateResortOptions();
         pruneDependentSelections(type);
