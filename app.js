@@ -3513,6 +3513,10 @@ function getPaperLedgerSummaryLabel(row = {}, displayedRows = 0) {
   return `Cloudflare summary: ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
 }
 
+function getCloudLedgerFallbackSummaryLabel(displayedRows = 0) {
+  return `Cloudflare ledger loaded; showing ${displayedRows} row${displayedRows === 1 ? "" : "s"} while the summary refreshes`;
+}
+
 function formatPossessiveName(name) {
   const cleanName = String(name || "").trim();
   if (!cleanName) return "";
@@ -14917,10 +14921,10 @@ function renderPaperTrading(commodity, signal, tradePlan) {
   const paperSummaryRawRows = Number(paperSummaryRow?.rawRowCount);
   const allTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
     ? paperSummaryClosedPnl
-    : (paperSummaryMissing ? 0 : getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries));
+    : getProfitTotal(periodEntries.length ? periodEntries : displaySourceEntries);
   const filteredTotal = usePaperSummaryTotals && Number.isFinite(paperSummaryClosedPnl)
     ? paperSummaryClosedPnl
-    : (paperSummaryMissing ? 0 : getProfitTotal(rowsToRender));
+    : getProfitTotal(rowsToRender);
   const serverTotalRows = usePaperSummaryTotals && Number.isFinite(paperSummaryRawRows)
     ? paperSummaryRawRows
     : displaySourceEntries.length;
@@ -14928,17 +14932,12 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     ? `${rowsToRender.length} display rows / ${serverTotalRows} Cloudflare audit rows`
     : `${rowsToRender.length} row${rowsToRender.length === 1 ? "" : "s"}`;
 
-  if (paperSummaryMissing) {
-    historyTotalAllEl.innerHTML = `<span class="stat-label">All P/L</span><strong>Waiting for Cloudflare summary</strong><small>Server is the source of truth.</small>`;
-    historyTotalFilteredEl.innerHTML = `<span class="stat-label">Filtered P/L</span><strong>Waiting for Cloudflare summary</strong><small>Server is the source of truth.</small>`;
-  } else {
-    renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
-    renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
-  }
+  renderPnlWithCapital(historyTotalAllEl, allTotal, getSafeHistoryStartCapital("all"));
+  renderPnlWithCapital(historyTotalFilteredEl, filteredTotal, getSafeHistoryStartCapital(historyCommodityFilter));
   historyTotalCountEl.textContent = displayCountText;
   if (sharedHistoryStatusEl && displaySourceEntries.length) {
     sharedHistoryStatusEl.textContent = paperSummaryMissing
-      ? "Waiting for Cloudflare summary; local P/L totals are disabled"
+      ? getCloudLedgerFallbackSummaryLabel(rowsToRender.length)
       : usePaperSummaryTotals
       ? getPaperLedgerSummaryLabel(paperSummaryRow, rowsToRender.length)
       : `Ledger loaded ${displaySourceEntries.length} rows; showing ${rowsToRender.length} (${historyCommodityFilter}, ${historyPeriodFilter})`;
