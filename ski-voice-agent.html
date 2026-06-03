@@ -1742,6 +1742,7 @@
           </label>
           <div class="trip-actions">
             <button class="button secondary edit-topic" type="button" data-focus="#lead-name">Edit</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the trip planner name. Ask for the customer's name. When they answer, repeat the name back exactly as you heard it and ask if the name is correct or needs to be updated. Update the customer name field only.">Talk Name</button>
           </div>
         </article>
 
@@ -2574,16 +2575,30 @@
       return true;
     }
 
-    function setFieldIfUseful(field, value, { replace = false } = {}) {
+    function setFieldIfUseful(field, value, { replace = false, notify = true } = {}) {
       const clean = String(value || "").replace(/\s+/g, " ").replace(/[,.]\s*$/, "").trim();
       if (!field || !clean) return false;
       if (!replace && field.value.trim()) return false;
       field.value = clean;
+      if (notify) field.dispatchEvent(new Event("input", { bubbles: true }));
       return true;
     }
 
     function sentenceWith(text, pattern) {
       return String(text || "").split(/[.!?]\s+/).find((part) => pattern.test(part)) || "";
+    }
+
+    function extractPlannerName(text) {
+      const patterns = [
+        /\b(?:my name is|this is|the customer name is|customer name is|the lead name is|lead name is|the trip planner name is|trip planner name is|the planner name is|planner name is|name is)\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})/i,
+        /\b(?:customer name|lead name|trip planner name|planner name)\s*:?\s+([A-Za-z][A-Za-z'-]*(?:\s+[A-Za-z][A-Za-z'-]*){0,3})/i
+      ];
+      const match = patterns.map((pattern) => text.match(pattern)).find(Boolean);
+      if (!match) return "";
+      const stopWords = new Set(["and", "for", "from", "to", "with", "please"]);
+      const parts = match[1].split(/\s+/).filter(Boolean);
+      while (parts.length && stopWords.has(parts[parts.length - 1].toLowerCase())) parts.pop();
+      return parts.map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
     }
 
     function partySummary() {
@@ -3141,12 +3156,9 @@
     function updateTripFieldsFromText(text, { role = "Customer" } = {}) {
       const lower = text.toLowerCase();
       const isCustomer = role === "Customer";
-      if (isCustomer && !leadName.value.trim()) {
-        const name = text.match(/\b(?:my name is|this is)\s+([A-Za-z][A-Za-z'-]+(?:\s+[A-Za-z][A-Za-z'-]+){0,2})/i);
-        if (name) {
-          const formattedName = name[1].split(/\s+/).map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
-          setFieldIfUseful(leadName, formattedName);
-        }
+      const plannerName = isCustomer ? extractPlannerName(text) : "";
+      if (plannerName) {
+        setFieldIfUseful(leadName, plannerName, { replace: isCustomer });
       }
       const departure = text.match(/\b(?:from|leaving from|departing from|fly(?:ing)? from)\s+([A-Z][A-Za-z .'-]{2,36}|[A-Z]{3})/i);
       if (departure) {
