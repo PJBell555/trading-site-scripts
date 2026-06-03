@@ -990,6 +990,10 @@
       padding: 6px 10px;
     }
 
+    .save-name-button[data-visible="false"] {
+      display: none;
+    }
+
     .selection-list {
       display: flex;
       flex-wrap: wrap;
@@ -1742,6 +1746,7 @@
           </label>
           <div class="trip-actions">
             <button class="button secondary edit-topic" type="button" data-focus="#lead-name">Edit</button>
+            <button class="button primary save-name-button" type="button" id="save-name-button" data-visible="false">Save Edits</button>
             <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the trip planner name. Ask for the customer's name. When they answer, repeat the name back exactly as you heard it and ask if the name is correct or needs to be updated. Update the customer name field only.">Talk Name</button>
           </div>
         </article>
@@ -2168,6 +2173,7 @@
     const leadForm = document.querySelector("#lead-form");
     const handoffConfirmation = document.querySelector("#handoff-confirmation");
     const leadName = document.querySelector("#lead-name");
+    const saveNameButton = document.querySelector("#save-name-button");
     const leadEmail = document.querySelector("#lead-email");
     const leadNotes = document.querySelector("#lead-notes");
     const leadCity = document.querySelector("#lead-city");
@@ -3041,6 +3047,10 @@
       }, 700);
     }
 
+    function setNameSaveVisible(visible) {
+      if (saveNameButton) saveNameButton.dataset.visible = visible ? "true" : "false";
+    }
+
     function renderTranscript() {
       transcriptEl.innerHTML = "";
       transcript.forEach((entry) => {
@@ -3098,6 +3108,7 @@
       setCloudTripId(trip.tripId);
       leadForm.dataset.closed = "false";
       handoffConfirmation.dataset.visible = "false";
+      setNameSaveVisible(false);
       leadName.value = trip.name || "";
       setMaskedTestEmail();
       leadCity.value = trip.departureCity || "";
@@ -3266,6 +3277,7 @@
       leadForm.dataset.closed = "false";
       handoffConfirmation.dataset.visible = "false";
       handoffConfirmation.textContent = "";
+      setNameSaveVisible(false);
       updateTripSummary();
       clearCloudTripId();
       confirmationUnavailable = false;
@@ -3803,9 +3815,17 @@
       field.addEventListener("input", () => {
         leadForm.dataset.closed = "false";
         handoffConfirmation.dataset.visible = "false";
+        if (field === leadName) setNameSaveVisible(true);
         updateTripSummary();
         scheduleCloudTripSave("field-edit");
       });
+    });
+
+    saveNameButton?.addEventListener("click", async () => {
+      saveNameButton.disabled = true;
+      const savedTrip = await saveCloudTripNow("name-edit", { quiet: false });
+      if (savedTrip) setNameSaveVisible(false);
+      saveNameButton.disabled = false;
     });
 
     document.querySelectorAll(".destination-button").forEach((button) => {
