@@ -2047,16 +2047,17 @@
 
         <article class="trip-card">
           <div>
-            <p class="eyebrow">Flights</p>
-            <h3>What flights are needed?</h3>
+            <p class="eyebrow">Self Travel</p>
+            <h3>How will you get there?</h3>
           </div>
           <label>
-            Flight details
-            <input id="lead-flights" placeholder="Needs flights, booked separately, airport preference" title="Flight requirements, airports, or existing flight details.">
+            Travel details
+            <input id="lead-flights" placeholder="Flight or self-drive details" title="Flight details, self-drive plans, airports, ferry, rail, or other travel notes." readonly>
           </label>
           <div class="trip-actions">
+            <button class="button secondary detail-topic" type="button" data-focus="#lead-flights">Details</button>
             <button class="button secondary edit-topic" type="button" data-focus="#lead-flights">Edit</button>
-            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only the flight requirements.">Talk Flights</button>
+            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only how I will travel to the ski trip, including flights, self-drive, rail, ferry, or airport details.">Talk Self Travel</button>
           </div>
         </article>
 
@@ -3235,9 +3236,9 @@
         applyPartySummary(leadGroup.value);
         if (leadBookingGroup) setFieldIfUseful(leadBookingGroup, leadGroup.value, { replace: isCustomer });
       }
-      const flightSentence = sentenceWith(text, /\b(flight|airport|fly|flying|booked separately)\b/i);
+      const flightSentence = sentenceWith(text, /\b(flight|airport|fly|flying|booked separately|self drive|self-drive|drive|driving|rail|train|ferry)\b/i);
       if (flightSentence) {
-        setFieldIfUseful(leadFlights, flightSentence || "Flights needed");
+        setFieldIfUseful(leadFlights, flightSentence || "Self travel details needed");
       } else if (!leadFlights.value.trim() && /\b(no flights|without flights|flights booked separately)\b/i.test(text)) {
         leadFlights.value = lower.includes("no flights") || lower.includes("without flights") ? "No flights needed" : "Flights booked separately";
       }
@@ -3654,10 +3655,20 @@
       button.addEventListener("click", () => applyPrompt(button.dataset.prompt));
     });
 
+    document.querySelectorAll(".detail-topic").forEach((button) => {
+      button.addEventListener("click", () => {
+        const target = document.querySelector(button.dataset.focus);
+        if (!target) return;
+        target.setAttribute("readonly", "");
+        target.focus();
+        setStatus("Self travel details are shown here. Click Edit to enter flight or self-drive details.", "ready");
+      });
+    });
     document.querySelectorAll(".edit-topic").forEach((button) => {
       button.addEventListener("click", () => {
         const target = document.querySelector(button.dataset.focus);
         if (!target) return;
+        if (target === leadFlights) target.removeAttribute("readonly");
         if (target === leadGroup) setPartyPickerExpanded(true);
         if (target === leadDates) setDatePopoverOpen(true, "checkin");
         target.focus();
