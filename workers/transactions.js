@@ -815,6 +815,58 @@ async function createOpenRouterCriticReview(env, primaryAdvisory, body = {}, cri
   };
 }
 
+async function recordOpenRouterAdvisorySnapshot(env, body = {}, primary = {}, critic = null, consolidated = {}) {
+  if (!hasRuntimeStore(env)) return { stored: false, reason: "D1 runtime store is not configured" };
+  const commodity = normalizeServerCommodityId(body.commodity || body.commodityName || "oil");
+  const context = body.context && typeof body.context === "object" ? body.context : {};
+  const config = getServerCommodityConfig({}, commodity);
+  const price = Number(context.currentPrice ?? body.price ?? primary.advisory?.price);
+  const conviction = Number(consolidated?.conviction ?? primary.advisory?.conviction);
+  if (!Number.isFinite(price) || price <= 0) return { stored: false, reason: "No usable advisory price" };
+  if (!Number.isFinite(conviction)) return { stored: false, reason: "No usable advisory conviction" };
+
+  const now = new Date().toISOString();
+  const tone = getServerAdvisoryTone(consolidated?.tone || primary.advisory?.tone);
+  const snapshot = {
+    snapshotKey: [
+      commodity,
+      config.productId || config.ticker || "product",
+      body.horizon || "intraday",
+      "llm",
+      Math.floor(new Date(now).getTime() / 60000)
+    ].join("|"),
+    time: now,
+    commodity,
+    commodityName: config.name || body.commodityName || commodity,
+    contract: config.ticker || "",
+    productId: config.productId || config.ticker || "",
+    contractMonth: config.contractMonth || "",
+    horizon: body.horizon || "intraday",
+    price,
+    priceSource: context.priceSource || context.signals?.priceSource || "Live OpenRouter advisory",
+    bounded: conviction,
+    conviction,
+    localConviction: Number(context.signals?.localScore ?? context.signals?.conviction ?? conviction),
+    llmConviction: conviction,
+    llmScore: conviction,
+    tone,
+    label: getServerAdvisoryLabel(tone, conviction),
+    action: tone === "long" ? "Long advisory" : tone === "short" ? "Short advisory" : "No trade",
+    primaryModel: primary.model || "",
+    criticModel: critic?.model || "",
+    primarySummary: primary.advisory?.summary || "",
+    criticAgreement: critic?.review?.agreementLevel ?? null,
+    consolidatedSummary: consolidated?.summary || ""
+  };
+
+  try {
+    await upsertAdvisorySnapshotsD1(env, [snapshot]);
+    return { stored: true, snapshotKey: snapshot.snapshotKey };
+  } catch (error) {
+    return { stored: false, error: error?.message || "advisory snapshot write failed" };
+  }
+}
+
 function consolidatePrimaryAndCritic(primary, criticReview) {
   const advisory = primary?.advisory || {};
   const review = criticReview?.review || {};
@@ -9662,7 +9714,14 @@ export default {
           ? getOpenRouterCriticModel(getServerModelRoute(modelSettings.criticModelId))
           : null;
         if (!criticModel) {
-          return jsonResponse({ ...primary, tokenLog: primaryTokenLog }, 200, origin);
+          const consolidated = primary.advisory;
+          const advisorySnapshotLog = await recordOpenRouterAdvisorySnapshot(env, body, primary, null, consolidated);
+          if (ctx?.waitUntil && advisorySnapshotLog.stored) {
+            ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {
+              console.error("advisory summary cache save failed", error);
+            }));
+          }
+          return jsonResponse({ ...primary, consolidated, tokenLog: primaryTokenLog, advisorySnapshotLog }, 200, origin);
         }
 
         let critic = null;
@@ -9686,6 +9745,12 @@ export default {
         }
 
         const consolidated = critic ? consolidatePrimaryAndCritic(primary, critic) : primary.advisory;
+        const advisorySnapshotLog = await recordOpenRouterAdvisorySnapshot(env, body, primary, critic, consolidated);
+        if (ctx?.waitUntil && advisorySnapshotLog.stored) {
+          ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {
+            console.error("advisory summary cache save failed", error);
+          }));
+        }
 
         return jsonResponse({
           provider: "OpenRouter",
@@ -9693,6 +9758,7 @@ export default {
           critic: critic || { model: criticModel, error: criticError },
           consolidated,
           elapsedMs: Date.now() - startedAt,
+          advisorySnapshotLog,
           tokenLog: {
             primary: primaryTokenLog,
             critic: criticTokenLog
