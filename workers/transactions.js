@@ -25,6 +25,10 @@ const PRICE_SNAPSHOT_MAX_AGE_MS = 5 * 60 * 1000;
 const PRICE_TICK_RETENTION_DAYS = 14;
 const STALE_UNCLOSED_OPEN_TRADE_MS = 7 * 24 * 60 * 60 * 1000;
 const OPEN_BRAIN_EVENT_LIMIT = 500;
+const DREAM_REFLECTION_INPUT_LIMIT = 120;
+const DREAM_REFLECTION_INSIGHT_LIMIT = 100;
+const DREAM_REFLECTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const DREAM_REFLECTION_MODEL = "openai/gpt-5-mini";
 const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime-2";
 const DEFAULT_OPENAI_REALTIME_VOICE = "marin";
 const DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_flash_v2_5";
@@ -190,6 +194,10 @@ const PETER_MISSED_REENTRY_EMAIL = "peter@pjbell.com";
 const PETER_MISSED_REENTRY_STRATEGY_CHANGE_ID = "strategy-change-0004-peter-missed-opportunity-reentry";
 const PETER_MISSED_REENTRY_STRATEGY_CHANGE_TEXT = "Refinement 5/21/2026: Peter missed-opportunity re-entry enabled";
 const PETER_MISSED_REENTRY_STRATEGY_CHANGE_DETAIL = "Peter only. If oil has already made a large intraday move, Markov favors the same side, and live tape confirms continuation after a pullback or bounce, the Cloudflare scheduler may open a small step-1 paper trade instead of waiting for the slow advisory score. D2 remains off for this rule.";
+const PETER_DREAM_REFLECTION_EMAIL = "peter@pjbell.com";
+const PETER_DREAM_REFLECTION_STRATEGY_CHANGE_ID = "strategy-change-0006-peter-dream-reflection";
+const PETER_DREAM_REFLECTION_STRATEGY_CHANGE_TEXT = "Refinement 6/7/2026: Dream reflection layer enabled";
+const PETER_DREAM_REFLECTION_STRATEGY_CHANGE_DETAIL = "Peter only. A separate Cloudflare Worker pass reviews D1 Open Brain memory events and recent D1 paper-trading sessions, then writes reviewable synthesized insights back into D1. Other traders remain off unless explicitly enabled later.";
 
 function normalizeEmail(value) {
   const email = String(value || "").trim().toLowerCase();
@@ -1768,6 +1776,487 @@ async function loadOpenBrainEventsD1(env, limit = OPEN_BRAIN_EVENT_LIMIT) {
         metadata
       };
     })
+  };
+}
+
+async function ensureDreamReflectionTables(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS dream_reflection_runs (
+      run_id TEXT PRIMARY KEY,
+      started_at TEXT NOT NULL,
+      completed_at TEXT,
+      status TEXT NOT NULL,
+      user_email TEXT,
+      source_event_count INTEGER NOT NULL DEFAULT 0,
+      trade_count INTEGER NOT NULL DEFAULT 0,
+      insight_count INTEGER NOT NULL DEFAULT 0,
+      model TEXT,
+      summary TEXT,
+      patch_json TEXT NOT NULL DEFAULT '{}',
+      error TEXT,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_reflection_runs_time ON dream_reflection_runs (started_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_reflection_runs_user ON dream_reflection_runs (user_email, started_at DESC)`).run();
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS dream_memory_insights (
+      insight_id TEXT PRIMARY KEY,
+      user_email TEXT NOT NULL,
+      category TEXT NOT NULL,
+      status TEXT NOT NULL,
+      confidence REAL,
+      content TEXT NOT NULL,
+      evidence_json TEXT NOT NULL DEFAULT '[]',
+      source_event_keys_json TEXT NOT NULL DEFAULT '[]',
+      run_id TEXT,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_memory_insights_user ON dream_memory_insights (user_email, status, updated_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_memory_insights_category ON dream_memory_insights (category, status, updated_at DESC)`).run();
+}
+
+function normalizeDreamReflectionCategory(value) {
+  const category = String(value || "general").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
+  return category || "general";
+}
+
+function makeDreamInsightId(userEmail, content, category) {
+  const basis = `${normalizeEmail(userEmail)}|${normalizeDreamReflectionCategory(category)}|${String(content || "").trim().toLowerCase()}`;
+  let hash = 0;
+  for (let i = 0; i < basis.length; i += 1) {
+    hash = ((hash << 5) - hash + basis.charCodeAt(i)) | 0;
+  }
+  return `dream-${Math.abs(hash).toString(16)}-${basis.length}`;
+}
+
+function normalizeDreamPatch(patch = {}) {
+  const add = Array.isArray(patch.add) ? patch.add : Array.isArray(patch.insights) ? patch.insights : [];
+  const safeItems = add.map((item) => {
+    const content = String(item?.content || item?.memory || item?.summary || "").trim();
+    if (!content) return null;
+    const confidence = Number(item?.confidence);
+    return {
+      category: normalizeDreamReflectionCategory(item?.category),
+      content: content.slice(0, 2000),
+      confidence: Number.isFinite(confidence) ? clamp(confidence, 0, 1) : null,
+      evidence: Array.isArray(item?.evidence) ? item.evidence.slice(0, 10) : [],
+      sourceEventKeys: Array.isArray(item?.sourceEventKeys)
+        ? item.sourceEventKeys.slice(0, 25).map((key) => String(key || "").trim()).filter(Boolean)
+        : []
+    };
+  }).filter(Boolean);
+
+  return {
+    summary: String(patch.summary || patch.runSummary || "").trim().slice(0, 2000),
+    add: safeItems.slice(0, 25),
+    update: Array.isArray(patch.update) ? patch.update.slice(0, 25) : [],
+    merge: Array.isArray(patch.merge) ? patch.merge.slice(0, 25) : [],
+    deprecate: Array.isArray(patch.deprecate) ? patch.deprecate.slice(0, 25) : [],
+    needs_review: Array.isArray(patch.needs_review) ? patch.needs_review.slice(0, 25) : []
+  };
+}
+
+async function saveDreamReflectionRunD1(env, run = {}) {
+  await ensureDreamReflectionTables(env);
+  const now = new Date().toISOString();
+  await env.DB.prepare(`
+    INSERT INTO dream_reflection_runs (
+      run_id,
+      started_at,
+      completed_at,
+      status,
+      user_email,
+      source_event_count,
+      trade_count,
+      insight_count,
+      model,
+      summary,
+      patch_json,
+      error,
+      updated_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(run_id) DO UPDATE SET
+      completed_at = excluded.completed_at,
+      status = excluded.status,
+      source_event_count = excluded.source_event_count,
+      trade_count = excluded.trade_count,
+      insight_count = excluded.insight_count,
+      model = excluded.model,
+      summary = excluded.summary,
+      patch_json = excluded.patch_json,
+      error = excluded.error,
+      updated_at = excluded.updated_at
+  `).bind(
+    run.runId,
+    run.startedAt || now,
+    run.completedAt || null,
+    run.status || "running",
+    normalizeEmail(run.userEmail || ""),
+    Number(run.sourceEventCount) || 0,
+    Number(run.tradeCount) || 0,
+    Number(run.insightCount) || 0,
+    String(run.model || "").trim(),
+    String(run.summary || "").trim().slice(0, 2000),
+    JSON.stringify(run.patch || {}),
+    run.error ? String(run.error).slice(0, 2000) : null,
+    now
+  ).run();
+}
+
+async function upsertDreamInsightsD1(env, userEmail, runId, insights = []) {
+  if (!insights.length) return 0;
+  await ensureDreamReflectionTables(env);
+  const now = new Date().toISOString();
+  let stored = 0;
+  for (const item of insights) {
+    const id = item.id || makeDreamInsightId(userEmail, item.content, item.category);
+    await env.DB.prepare(`
+      INSERT INTO dream_memory_insights (
+        insight_id,
+        user_email,
+        category,
+        status,
+        confidence,
+        content,
+        evidence_json,
+        source_event_keys_json,
+        run_id,
+        created_at,
+        updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(insight_id) DO UPDATE SET
+        category = excluded.category,
+        status = excluded.status,
+        confidence = excluded.confidence,
+        content = excluded.content,
+        evidence_json = excluded.evidence_json,
+        source_event_keys_json = excluded.source_event_keys_json,
+        run_id = excluded.run_id,
+        updated_at = excluded.updated_at
+    `).bind(
+      id,
+      normalizeEmail(userEmail),
+      normalizeDreamReflectionCategory(item.category),
+      "active",
+      item.confidence,
+      String(item.content || "").trim().slice(0, 2000),
+      JSON.stringify(item.evidence || []),
+      JSON.stringify(item.sourceEventKeys || []),
+      runId,
+      now,
+      now
+    ).run();
+    stored += 1;
+  }
+  return stored;
+}
+
+async function loadDreamReflectionStatusD1(env, limit = DREAM_REFLECTION_INSIGHT_LIMIT) {
+  await ensureDreamReflectionTables(env);
+  const boundedLimit = clamp(Math.round(Number(limit) || DREAM_REFLECTION_INSIGHT_LIMIT), 1, 500);
+  const runsResult = await env.DB.prepare(`
+    SELECT run_id, started_at, completed_at, status, user_email, source_event_count, trade_count, insight_count, model, summary, patch_json, error, updated_at
+    FROM dream_reflection_runs
+    ORDER BY started_at DESC
+    LIMIT 20
+  `).all();
+  const insightsResult = await env.DB.prepare(`
+    SELECT insight_id, user_email, category, status, confidence, content, evidence_json, source_event_keys_json, run_id, created_at, updated_at
+    FROM dream_memory_insights
+    ORDER BY updated_at DESC
+    LIMIT ?
+  `).bind(boundedLimit).all();
+
+  return {
+    generatedAt: new Date().toISOString(),
+    source: "cloudflare-d1-dream-reflection",
+    storage: "d1",
+    runs: getResults(runsResult).map((row) => ({
+      id: row.run_id,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      status: row.status,
+      userEmail: row.user_email,
+      sourceEventCount: row.source_event_count,
+      tradeCount: row.trade_count,
+      insightCount: row.insight_count,
+      model: row.model,
+      summary: row.summary,
+      patch: parseStoredJson(row.patch_json, {}),
+      error: row.error,
+      updatedAt: row.updated_at
+    })),
+    insights: getResults(insightsResult).map((row) => ({
+      id: row.insight_id,
+      userEmail: row.user_email,
+      category: row.category,
+      status: row.status,
+      confidence: row.confidence,
+      content: row.content,
+      evidence: parseStoredJson(row.evidence_json, []),
+      sourceEventKeys: parseStoredJson(row.source_event_keys_json, []),
+      runId: row.run_id,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at
+    }))
+  };
+}
+
+async function loadRecentDreamTradesD1(env, userEmail, limit = 60) {
+  await ensureTradeTransactionsTable(env);
+  const email = normalizeEmail(userEmail);
+  const boundedLimit = clamp(Math.round(Number(limit) || 60), 1, 200);
+  const result = await env.DB.prepare(`
+    SELECT payload_json
+    FROM ${TRADE_TRANSACTION_TABLE}
+    WHERE trade_mode = ?
+      AND user_email = ?
+    ORDER BY transaction_time DESC
+    LIMIT ?
+  `).bind(PAPER_TRADE_MODE, email, boundedLimit).all();
+  return getResults(result)
+    .map((row) => parseStoredJson(row.payload_json))
+    .filter(Boolean)
+    .map((entry) => ({
+      time: entry.time || entry.transactionTime || entry.openedAt || entry.closedAt || "",
+      action: entry.action || "",
+      side: entry.side || "",
+      commodity: entry.commodity || inferServerCommodityFromContract(entry.contract),
+      contract: entry.contract || "",
+      step: entry.step || null,
+      entryPrice: firstPresent(entry.entryPrice, entry.price),
+      exitPrice: entry.exitPrice || null,
+      targetPrice: entry.targetPrice || null,
+      stopPrice: entry.stopPrice || null,
+      netPnl: firstPresent(entry.netPnl, entry.netPL, entry.pnl),
+      note: String(entry.note || entry.reason || "").slice(0, 500)
+    }));
+}
+
+function compactDreamEvent(event = {}) {
+  return {
+    id: event.id || "",
+    time: event.time || "",
+    type: event.type || "",
+    summary: String(event.summary || "").slice(0, 700),
+    userEmail: normalizeEmail(event.userEmail || event.email || ""),
+    commodity: event.commodity || "",
+    source: event.source || "",
+    tags: Array.isArray(event.tags) ? event.tags.slice(0, 8) : []
+  };
+}
+
+async function getOpenRouterApiKey(env) {
+  if (!env.OPENROUTER_API_KEY) return "";
+  if (typeof env.OPENROUTER_API_KEY.get === "function") return env.OPENROUTER_API_KEY.get();
+  return String(env.OPENROUTER_API_KEY || "");
+}
+
+function buildDreamReflectionMessages(context = {}) {
+  const systemContent = [
+    "You are ComHedge Dream Reflection, a Cloudflare background memory maintenance worker.",
+    "You do not execute trades, place orders, or change strategies.",
+    "Review only the provided D1-scoped context for recurring preferences, successful workflows, repeated errors, contradictions, and durable trading/process lessons.",
+    "Return compact JSON only with keys: summary, add, update, merge, deprecate, needs_review.",
+    "Each add item must include category, content, confidence, evidence, and sourceEventKeys."
+  ].join(" ");
+  return [
+    { role: "system", content: systemContent },
+    { role: "user", content: JSON.stringify(context) }
+  ];
+}
+
+async function createOpenRouterDreamReflection(env, context = {}) {
+  const apiKey = await getOpenRouterApiKey(env);
+  if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY Secrets Store binding or value");
+  const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
+  const model = String(env.DREAM_REFLECTION_MODEL || DREAM_REFLECTION_MODEL).trim() || DREAM_REFLECTION_MODEL;
+  const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+      "HTTP-Referer": env.OPENROUTER_SITE_URL || env.ALLOWED_ORIGIN || "https://pjbell555.github.io",
+      "X-Title": env.OPENROUTER_APP_NAME || "ComHedge 2"
+    },
+    body: JSON.stringify({
+      model,
+      messages: buildDreamReflectionMessages(context),
+      temperature: 0.1,
+      max_tokens: 1600,
+      response_format: { type: "json_object" }
+    })
+  }, OPENROUTER_FETCH_TIMEOUT_MS);
+  const text = await response.text();
+  const data = text ? JSON.parse(text) : {};
+  if (!response.ok) {
+    const baseMsg = data?.error?.message || data?.message || `Dream reflection request failed: ${response.status}`;
+    throw new Error(baseMsg);
+  }
+  const content = data?.choices?.[0]?.message?.content || "{}";
+  return {
+    model,
+    patch: normalizeDreamPatch(parseAdvisoryContent(content)),
+    usage: data.usage || null
+  };
+}
+
+async function getDreamReflectionUsers(env) {
+  const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+    env,
+    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+  ));
+  const usersByEmail = new Map();
+  (Array.isArray(settings.users) ? settings.users : []).forEach((user) => {
+    const email = normalizeEmail(user.email);
+    if (email) usersByEmail.set(email, user);
+  });
+  Object.entries(settings.userProfiles && typeof settings.userProfiles === "object" ? settings.userProfiles : {}).forEach(([email, profile]) => {
+    const normalizedEmail = normalizeEmail(email);
+    if (!normalizedEmail) return;
+    usersByEmail.set(normalizedEmail, {
+      ...(usersByEmail.get(normalizedEmail) || { email: normalizedEmail }),
+      ...(profile && typeof profile === "object" ? profile : {})
+    });
+  });
+
+  return Array.from(usersByEmail.values())
+    .map((user) => {
+      const profile = settings.userProfiles?.[normalizeEmail(user.email)] || {};
+      const merged = {
+        ...user,
+        ...profile,
+        strategy: {
+          ...(user.strategy && typeof user.strategy === "object" ? user.strategy : {}),
+          ...(profile.strategy && typeof profile.strategy === "object" ? profile.strategy : {})
+        }
+      };
+      const strategy = getServerStrategySettings(merged);
+      return { ...merged, strategy };
+    })
+    .filter((user) => user.strategy?.dreamReflection === true);
+}
+
+async function shouldSkipDreamReflection(env, force) {
+  if (force) return null;
+  await ensureDreamReflectionTables(env);
+  const running = await env.DB.prepare(`
+    SELECT started_at, status
+    FROM dream_reflection_runs
+    WHERE status = 'running'
+    ORDER BY started_at DESC
+    LIMIT 1
+  `).first();
+  const runningStartedAt = running?.started_at ? new Date(running.started_at).getTime() : 0;
+  if (Number.isFinite(runningStartedAt) && runningStartedAt && Date.now() - runningStartedAt < 15 * 60 * 1000) {
+    return { skipped: true, reason: "run-in-progress", ageMs: Date.now() - runningStartedAt, latestStatus: running.status };
+  }
+  const latest = await env.DB.prepare(`
+    SELECT completed_at, status
+    FROM dream_reflection_runs
+    WHERE completed_at IS NOT NULL
+    ORDER BY completed_at DESC
+    LIMIT 1
+  `).first();
+  const completedAt = latest?.completed_at ? new Date(latest.completed_at).getTime() : 0;
+  if (!Number.isFinite(completedAt) || !completedAt) return null;
+  const ageMs = Date.now() - completedAt;
+  return ageMs < DREAM_REFLECTION_INTERVAL_MS
+    ? { skipped: true, reason: "recent-run", ageMs, latestStatus: latest.status }
+    : null;
+}
+
+async function runDreamReflection(env, options = {}) {
+  if (!hasRuntimeStore(env)) {
+    return { storage: "d1-not-configured", skipped: true, reason: "D1 runtime store is required" };
+  }
+  const force = options.force === true;
+  const skip = await shouldSkipDreamReflection(env, force);
+  if (skip) return { storage: "d1", ...skip };
+
+  const users = await getDreamReflectionUsers(env);
+  if (!users.length) {
+    return { storage: "d1", skipped: true, reason: "No users have dream reflection enabled" };
+  }
+
+  const status = await loadDreamReflectionStatusD1(env, DREAM_REFLECTION_INSIGHT_LIMIT);
+  const openBrain = await loadOpenBrainEventsD1(env, DREAM_REFLECTION_INPUT_LIMIT);
+  const runs = [];
+
+  for (const user of users) {
+    const userEmail = normalizeEmail(user.email);
+    const runId = `dream-run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const startedAt = new Date().toISOString();
+    const events = openBrain.events
+      .map(compactDreamEvent)
+      .filter((event) => !event.userEmail || event.userEmail === userEmail)
+      .slice(0, DREAM_REFLECTION_INPUT_LIMIT);
+    const trades = await loadRecentDreamTradesD1(env, userEmail, 60);
+    await saveDreamReflectionRunD1(env, {
+      runId,
+      startedAt,
+      status: "running",
+      userEmail,
+      sourceEventCount: events.length,
+      tradeCount: trades.length,
+      model: String(env.DREAM_REFLECTION_MODEL || DREAM_REFLECTION_MODEL)
+    });
+
+    try {
+      const context = {
+        generatedAt: startedAt,
+        app: "comhedge-2",
+        user: {
+          email: userEmail,
+          name: user.name || user.userName || "",
+          strategy: user.strategy
+        },
+        layers: ["raw_open_brain_events", "paper_trade_session_events", "synthesized_dream_insights"],
+        recentEvents: events,
+        recentPaperTrades: trades,
+        existingInsights: status.insights
+          .filter((insight) => normalizeEmail(insight.userEmail) === userEmail && insight.status === "active")
+          .slice(0, DREAM_REFLECTION_INSIGHT_LIMIT)
+      };
+      const reflection = await createOpenRouterDreamReflection(env, context);
+      const storedInsights = await upsertDreamInsightsD1(env, userEmail, runId, reflection.patch.add);
+      await saveDreamReflectionRunD1(env, {
+        runId,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        status: "completed",
+        userEmail,
+        sourceEventCount: events.length,
+        tradeCount: trades.length,
+        insightCount: storedInsights,
+        model: reflection.model,
+        summary: reflection.patch.summary,
+        patch: reflection.patch
+      });
+      runs.push({ runId, userEmail, status: "completed", storedInsights, model: reflection.model });
+    } catch (error) {
+      await saveDreamReflectionRunD1(env, {
+        runId,
+        startedAt,
+        completedAt: new Date().toISOString(),
+        status: "failed",
+        userEmail,
+        sourceEventCount: events.length,
+        tradeCount: trades.length,
+        error: error.message,
+        patch: {}
+      });
+      runs.push({ runId, userEmail, status: "failed", error: error.message });
+    }
+  }
+
+  return {
+    storage: "d1",
+    generatedAt: new Date().toISOString(),
+    runs
   };
 }
 
@@ -3611,6 +4100,10 @@ function hasOilSelloffCaptureHistoryEntry(history = []) {
   return (Array.isArray(history) ? history : []).some((entry) => entry?.id === OIL_SELLOFF_CAPTURE_STRATEGY_CHANGE_ID);
 }
 
+function hasPeterDreamReflectionHistoryEntry(history = []) {
+  return (Array.isArray(history) ? history : []).some((entry) => entry?.id === PETER_DREAM_REFLECTION_STRATEGY_CHANGE_ID);
+}
+
 function applyMarkovMethodSeedToRecord(record = {}, email = "") {
   const normalizedEmail = normalizeEmail(email || record.email);
   if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
@@ -3673,6 +4166,29 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
       before: { ...after, oilSelloffCaptureMode: false },
       after
     }, ...history].slice(0, 50);
+  }
+  if (normalizedEmail === PETER_DREAM_REFLECTION_EMAIL) {
+    const dreamAfter = {
+      ...after,
+      dreamReflection: strategy.dreamReflection !== false
+    };
+    if (!hasPeterDreamReflectionHistoryEntry(history)) {
+      history = [{
+        id: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_ID,
+        changedAt: "2026-06-07T00:00:00.000Z",
+        changedByName: "Peter Bell",
+        changedByEmail: "peter@pjbell.com",
+        summary: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_TEXT,
+        detail: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_DETAIL,
+        before: { ...dreamAfter, dreamReflection: false },
+        after: dreamAfter
+      }, ...history].slice(0, 50);
+    }
+    return {
+      ...record,
+      strategy: dreamAfter,
+      strategyHistory: history
+    };
   }
   return {
     ...record,
@@ -3867,6 +4383,10 @@ function isPeterMissedOpportunityReentryUser(user = {}) {
   return normalizeEmail(user.email || user.userEmail || "") === "peter@pjbell.com";
 }
 
+function isPeterDreamReflectionUser(user = {}) {
+  return normalizeEmail(user.email || user.userEmail || "") === PETER_DREAM_REFLECTION_EMAIL;
+}
+
 function getServerStrategySettings(user = {}) {
   const strategy = user.strategy && typeof user.strategy === "object" ? user.strategy : {};
   return {
@@ -3912,7 +4432,8 @@ function getServerStrategySettings(user = {}) {
     pullbackMinRetraceBps: clamp(Number(strategy.pullbackMinRetraceBps) || 2, 0, 30),
     profitLockMinMoveBps: clamp(Number(strategy.profitLockMinMoveBps) || 10, 0, 100),
     profitLockGivebackPct: clamp(Number(strategy.profitLockGivebackPct) || 35, 5, 80),
-    missedOpportunityMoveBps: clamp(Number(strategy.missedOpportunityMoveBps) || 20, 5, 200)
+    missedOpportunityMoveBps: clamp(Number(strategy.missedOpportunityMoveBps) || 20, 5, 200),
+    dreamReflection: isPeterDreamReflectionUser(user) ? strategy.dreamReflection !== false : false
   };
 }
 
@@ -8178,6 +8699,47 @@ async function handleOpenBrainRoute(env, request, origin) {
   }, 200, origin);
 }
 
+async function handleDreamReflectionRoute(env, request, origin, ctx = null) {
+  if (!hasRuntimeStore(env)) {
+    return jsonResponse({
+      generatedAt: new Date().toISOString(),
+      source: "d1-not-configured",
+      storage: "d1-not-configured",
+      runs: [],
+      insights: [],
+      error: "Dream reflection requires the Cloudflare D1 runtime store."
+    }, request.method === "GET" ? 200 : 503, origin);
+  }
+
+  const url = new URL(request.url);
+  if (request.method === "GET") {
+    const payload = await loadDreamReflectionStatusD1(env, url.searchParams.get("limit") || DREAM_REFLECTION_INSIGHT_LIMIT);
+    return jsonResponse(payload, 200, origin);
+  }
+
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const body = await request.json().catch(() => ({}));
+  const force = body.force === true || url.searchParams.get("force") === "1" || url.searchParams.get("force") === "true";
+  const sync = url.searchParams.get("sync") === "1" || url.searchParams.get("sync") === "true" || body.sync === true;
+  if (ctx?.waitUntil && !sync) {
+    ctx.waitUntil(runDreamReflection(env, { force, manual: true }).catch((error) => {
+      console.error("dream reflection queued run failed", error);
+    }));
+    return jsonResponse({
+      storage: "d1",
+      queued: true,
+      force,
+      generatedAt: new Date().toISOString()
+    }, 202, origin);
+  }
+
+  const result = await runDreamReflection(env, { force, manual: true });
+  return jsonResponse(result, 200, origin);
+}
+
 function transactionSetsMatch(existing = [], next = []) {
   const existingKeys = new Set(existing.map((transaction) => transaction?.sharedKey || JSON.stringify(transaction)));
   const nextKeys = new Set(next.map((transaction) => transaction?.sharedKey || JSON.stringify(transaction)));
@@ -8717,6 +9279,10 @@ export default {
         return handleOpenBrainRoute(env, request, origin);
       }
 
+      if (url.pathname === "/dream-reflection") {
+        return handleDreamReflectionRoute(env, request, origin, ctx);
+      }
+
       if (url.pathname === "/actual-trades") {
         return handleActualTradesRoute(env, request, origin);
       }
@@ -8752,6 +9318,12 @@ export default {
         await saveAdvisorySummaryCache(env);
       } catch (error) {
         console.error("advisory summary cache refresh failed", error);
+      }
+
+      try {
+        await runDreamReflection(env);
+      } catch (error) {
+        console.error("dream reflection failed", error);
       }
     })().catch((error) => {
       console.error("paper scheduler failed", error);

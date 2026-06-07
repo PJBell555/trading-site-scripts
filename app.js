@@ -541,6 +541,7 @@ const DEFAULT_USER_STRATEGY = {
   advisoryOutcomeLearner: true,
   skillsAccess: true,
   openBrainAccess: true,
+  dreamReflection: false,
   skillFocus: "Lessons from Paper Trades",
   openBrainMemory: "Capture trade decisions, advisory context, and outcomes before changing thresholds.",
   regimeAware: true,
@@ -621,6 +622,7 @@ const PETER_OIL_TEST_AGENT_STRATEGY = {
   breakoutMinEdgePercent: 57,
   oilSelloffCaptureMode: true,
   markovHedgeFundMethod: true,
+  dreamReflection: true,
   missedOpportunityReentry: true,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
@@ -3413,6 +3415,50 @@ function migratePeterMissedOpportunityReentry() {
   return changed;
 }
 
+function migratePeterDreamReflectionStrategy() {
+  let changed = false;
+  userRoster.forEach((user) => {
+    const email = normalizeEmail(user.email);
+    const strategy = normalizeUserStrategy(user.strategy);
+    const shouldEnable = email === "peter@pjbell.com";
+    const history = normalizeStrategyHistory(user.strategyHistory);
+    const alreadySeeded = history.some((entry) => entry.id === "strategy-change-0006-peter-dream-reflection");
+    if (!shouldEnable && strategy.dreamReflection === true) {
+      changed = true;
+      user.strategy = {
+        ...strategy,
+        dreamReflection: false
+      };
+      user.strategyHistory = history;
+      return;
+    }
+    if (shouldEnable && !alreadySeeded) {
+      changed = true;
+      const after = { ...strategy, dreamReflection: true };
+      user.strategy = after;
+      user.strategyHistory = normalizeStrategyHistory([
+        {
+          id: "strategy-change-0006-peter-dream-reflection",
+          changedAt: new Date().toISOString(),
+          changedByName: "Peter Bell",
+          changedByEmail: "peter@pjbell.com",
+          summary: "Refinement 6/7/2026: Dream reflection layer enabled",
+          detail: "Peter only. A separate Cloudflare Worker pass reviews D1 Open Brain memory events and recent D1 paper-trading sessions, then writes reviewable synthesized insights back into D1. Other traders remain off.",
+          before: { ...strategy, dreamReflection: false },
+          after
+        },
+        ...history
+      ]);
+    } else {
+      user.strategy = strategy;
+      user.strategyHistory = history;
+    }
+  });
+
+  if (changed) saveUserRoster();
+  return changed;
+}
+
 function getCurrentAccessEmail() {
   return normalizeEmail(window.sessionStorage.getItem(ACCESS_EMAIL_KEY));
 }
@@ -3621,6 +3667,7 @@ function normalizeUserStrategy(strategy = {}) {
     advisoryOutcomeLearner: merged.advisoryOutcomeLearner !== false,
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
+    dreamReflection: merged.dreamReflection === true,
     skillFocus: String(merged.skillFocus || DEFAULT_USER_STRATEGY.skillFocus).trim(),
     openBrainMemory: String(merged.openBrainMemory || DEFAULT_USER_STRATEGY.openBrainMemory).trim(),
     regimeAware: merged.regimeAware !== false,
@@ -3721,6 +3768,7 @@ const STRATEGY_HISTORY_FIELDS = [
   ["advisoryOutcomeLearner", "Advisory outcome learner"],
   ["skillsAccess", "Skills access"],
   ["openBrainAccess", "Open Brain access"],
+  ["dreamReflection", "Dream reflection layer"],
   ["skillFocus", "Skill focus"],
   ["openBrainMemory", "Open Brain instruction"],
   ["regimeAware", "Regime-aware Martingale"],
@@ -3932,6 +3980,7 @@ function getStrategyChangeSummary(before, after) {
   if (before.karpathyLoop !== after.karpathyLoop) changes.push(after.karpathyLoop ? "enabled Karpathy loop" : "disabled Karpathy loop");
   if (before.skillsAccess !== after.skillsAccess) changes.push(after.skillsAccess ? "enabled Skills access" : "disabled Skills access");
   if (before.openBrainAccess !== after.openBrainAccess) changes.push(after.openBrainAccess ? "enabled Open Brain access" : "disabled Open Brain access");
+  if (before.dreamReflection !== after.dreamReflection) changes.push(after.dreamReflection ? "enabled Dream reflection layer" : "disabled Dream reflection layer");
   if (before.karpathyCoachText !== after.karpathyCoachText) changes.push("Karpathy coach policy");
   if (before.karpathyFlatSelectivity !== after.karpathyFlatSelectivity) changes.push(after.karpathyFlatSelectivity ? "enabled Karpathy flat selectivity" : "disabled Karpathy flat selectivity");
   if (before.karpathyConfirmationGate !== after.karpathyConfirmationGate) changes.push(after.karpathyConfirmationGate ? "enabled Karpathy confirmation gate" : "disabled Karpathy confirmation gate");
@@ -6105,6 +6154,7 @@ function saveUserStrategySettings(user, container) {
     advisoryOutcomeLearner: container.querySelector("[data-strategy-field='advisoryOutcomeLearner']")?.checked,
     skillsAccess: container.querySelector("[data-strategy-field='skillsAccess']")?.checked,
     openBrainAccess: container.querySelector("[data-strategy-field='openBrainAccess']")?.checked,
+    dreamReflection: container.querySelector("[data-strategy-field='dreamReflection']")?.checked,
     skillFocus: container.querySelector("[data-strategy-field='skillFocus']")?.value,
     openBrainMemory: container.querySelector("[data-strategy-field='openBrainMemory']")?.value,
     regimeAware: container.querySelector("[data-strategy-field='regimeAware']")?.checked,
@@ -6262,6 +6312,7 @@ function renderCurrentUserStrategy() {
     const access = [
       strategy.skillsAccess ? `Skills: ${strategy.skillFocus}` : "Skills disabled",
       strategy.openBrainAccess ? "Open Brain enabled" : "Open Brain disabled",
+      strategy.dreamReflection ? "Dream reflection enabled" : "Dream reflection disabled",
       strategy.karpathyLoop ? "Karpathy loop enabled" : "Karpathy loop disabled",
       strategy.regimeAware ? "Regime-aware sizing enabled" : "Fixed Martingale sizing"
     ].join(" / ");
@@ -6330,7 +6381,8 @@ function getStrategyEngineRules(strategy = getCurrentUserStrategy()) {
     { key: "profitLockGivebackPct", label: "Profit-lock giveback", value: strategy.profitLockGivebackPct, type: "number", min: 5, max: 80, step: 1, suffix: "%", help: "How much of the favorable move the trailing stop is allowed to give back." },
     { key: "missedOpportunityMoveBps", label: "Missed-opportunity move", value: strategy.missedOpportunityMoveBps, type: "number", min: 5, max: 200, step: 1, suffix: " bps", help: "Minimum move size before a missed opportunity is logged to Open Brain." },
     { key: "skillsAccess", label: "Skills context", value: strategy.skillsAccess, type: "checkbox", on: strategy.skillFocus, off: "Disabled" },
-    { key: "openBrainAccess", label: "Open Brain context", value: strategy.openBrainAccess, type: "checkbox", on: "Enabled", off: "Disabled" }
+    { key: "openBrainAccess", label: "Open Brain context", value: strategy.openBrainAccess, type: "checkbox", on: "Enabled", off: "Disabled" },
+    { key: "dreamReflection", label: "Dream reflection layer", value: strategy.dreamReflection, type: "checkbox", on: "Cloudflare D1 memory consolidation enabled", off: "Off", help: "Server-side only. The browser displays and syncs the switch; Cloudflare reads D1 memory/session data and stores synthesized insights in D1." }
   ];
 }
 
@@ -7033,6 +7085,10 @@ function createUserProfilePanel(user) {
       <label class="profile-toggle-row">
         <input data-strategy-field="openBrainAccess" type="checkbox"${strategy.openBrainAccess ? " checked" : ""}>
         Allow Open Brain access
+      </label>
+      <label class="profile-toggle-row">
+        <input data-strategy-field="dreamReflection" type="checkbox"${strategy.dreamReflection ? " checked" : ""} title="Runs a separate memory reflection pass that consolidates scoped ComHedge memories and recent sessions into reviewable synthesized insights.">
+        Dream reflection layer <span class="profile-field-hint" title="Peter-only default. The reflection worker is separate from the trading scheduler and should propose memory patches, not execute trades.">memory consolidation switch</span>
       </label>
       <label class="profile-toggle-row">
         <input data-strategy-field="regimeAware" type="checkbox"${strategy.regimeAware ? " checked" : ""}>
@@ -15976,9 +16032,10 @@ function initializeApp() {
   const migratedKarpathyAutoApply = migrateKarpathyAutoApplyForAllUsers();
   const migratedMarkovTestAgents = migrateMarkovMethodForTestAgents();
   const migratedPeterMissedReentry = migratePeterMissedOpportunityReentry();
+  const migratedPeterDreamReflection = migratePeterDreamReflectionStrategy();
   const seededMarkovHistory = seedMarkovStrategyHistoryForTestAgents();
   const seededOilSelloffCapture = seedOilSelloffCaptureForTestAgents();
-  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || migratedPeterMissedReentry || seededMarkovHistory || seededOilSelloffCapture) saveSharedSettings();
+  if (migratedKarpathyAutoApply || migratedMarkovTestAgents || migratedPeterMissedReentry || migratedPeterDreamReflection || seededMarkovHistory || seededOilSelloffCapture) saveSharedSettings();
   const liveCommodityInput = document.querySelector("#live-trade-commodity");
   const liveContractInput = document.querySelector("#live-trade-contract");
   if (liveCommodityInput) liveCommodityInput.value = commoditySelect.value;
