@@ -1833,15 +1833,23 @@ function makeDreamInsightId(userEmail, content, category) {
 }
 
 function normalizeDreamPatch(patch = {}) {
-  const summaryText = String(patch.summary || patch.runSummary || "").trim();
+  const summaryText = cleanDreamSummaryText(String(patch.summary || patch.runSummary || "").trim());
   let mergedPatch = patch;
-  if (summaryText.startsWith("{")) {
-    const nested = parseAdvisoryContent(summaryText);
+  const rawSummaryText = String(patch.summary || patch.runSummary || "").trim();
+  if (rawSummaryText.startsWith("{")) {
+    const nested = parseAdvisoryContent(rawSummaryText);
     if (nested && typeof nested === "object" && (nested.summary || nested.add || nested.insights)) {
       mergedPatch = {
-        ...nested,
         ...patch,
+        ...nested,
         summary: nested.summary || patch.summary
+      };
+    }
+    if ((!Array.isArray(mergedPatch.add) || !mergedPatch.add.length) && rawSummaryText.includes("\"content\"")) {
+      mergedPatch = {
+        ...mergedPatch,
+        summary: extractLooseJsonStringField(rawSummaryText, "summary") || summaryText,
+        add: extractLooseDreamInsightItems(rawSummaryText)
       };
     }
   }
@@ -1863,13 +1871,54 @@ function normalizeDreamPatch(patch = {}) {
   }).filter(Boolean);
 
   return {
-    summary: String(mergedPatch.summary || mergedPatch.runSummary || "").trim().slice(0, 2000),
+    summary: cleanDreamSummaryText(String(mergedPatch.summary || mergedPatch.runSummary || summaryText).trim()).slice(0, 2000),
     add: safeItems.slice(0, 25),
     update: Array.isArray(mergedPatch.update) ? mergedPatch.update.slice(0, 25) : [],
     merge: Array.isArray(mergedPatch.merge) ? mergedPatch.merge.slice(0, 25) : [],
     deprecate: Array.isArray(mergedPatch.deprecate) ? mergedPatch.deprecate.slice(0, 25) : [],
     needs_review: Array.isArray(mergedPatch.needs_review) ? mergedPatch.needs_review.slice(0, 25) : []
   };
+}
+
+function parseJsonStringLiteral(value = "") {
+  try {
+    return JSON.parse(`"${String(value).replace(/"/g, "\\\"")}"`);
+  } catch (_error) {
+    return String(value || "").replace(/\\"/g, "\"").replace(/\\n/g, "\n");
+  }
+}
+
+function extractLooseJsonStringField(text = "", field = "summary") {
+  const pattern = new RegExp(`"${field}"\\s*:\\s*"((?:\\\\.|[^"\\\\])*)`);
+  const match = String(text || "").match(pattern);
+  return match ? parseJsonStringLiteral(match[1]).trim() : "";
+}
+
+function extractLooseDreamInsightItems(text = "") {
+  const source = String(text || "");
+  const items = [];
+  const objectPattern = /\{[^{}]*"category"\s*:\s*"((?:\\.|[^"\\])*)"[\s\S]{0,1600}?"content"\s*:\s*"((?:\\.|[^"\\])*)/g;
+  let match = null;
+  while ((match = objectPattern.exec(source)) && items.length < 5) {
+    const category = parseJsonStringLiteral(match[1]).trim();
+    const content = parseJsonStringLiteral(match[2]).trim();
+    if (!content || content.startsWith("{")) continue;
+    items.push({
+      category,
+      content,
+      confidence: 0.68,
+      evidence: ["Recovered from malformed model JSON."],
+      sourceEventKeys: []
+    });
+  }
+  return items;
+}
+
+function cleanDreamSummaryText(summary = "") {
+  const text = String(summary || "").trim();
+  if (!text.startsWith("{")) return text;
+  const extracted = extractLooseJsonStringField(text, "summary");
+  return extracted || text.slice(0, 500);
 }
 
 async function saveDreamReflectionRunD1(env, run = {}) {
@@ -2132,7 +2181,7 @@ async function createOpenRouterDreamReflection(env, context = {}) {
       model,
       messages: buildDreamReflectionMessages(context),
       temperature: 0.1,
-      max_tokens: 1600,
+      max_tokens: 2600,
       response_format: { type: "json_object" }
     })
   }, OPENROUTER_FETCH_TIMEOUT_MS);
@@ -2154,12 +2203,13 @@ function ensureDreamPatchHasInsight(patch = {}, context = {}) {
   const normalized = normalizeDreamPatch(patch);
   if (normalized.add.length) return normalized;
   const summary = String(normalized.summary || patch.summary || "").trim();
-  if (summary.length >= 40 && !/^no strong new pattern/i.test(summary)) {
+  const cleanSummary = cleanDreamSummaryText(summary);
+  if (cleanSummary.length >= 40 && !/^no strong new pattern/i.test(cleanSummary)) {
     return {
       ...normalized,
       add: [{
-        category: summary.toLowerCase().includes("karpathy") ? "karpathy_loop_review" : "synthesized_insight",
-        content: summary.slice(0, 2000),
+        category: cleanSummary.toLowerCase().includes("karpathy") ? "karpathy_loop_review" : "synthesized_insight",
+        content: cleanSummary.slice(0, 2000),
         confidence: 0.66,
         evidence: [
           `sourceEventCount=${Array.isArray(context.recentEvents) ? context.recentEvents.length : 0}`,
