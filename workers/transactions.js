@@ -29,6 +29,12 @@ const DREAM_REFLECTION_INPUT_LIMIT = 120;
 const DREAM_REFLECTION_INSIGHT_LIMIT = 100;
 const DREAM_REFLECTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
 const DREAM_REFLECTION_MODEL = "openrouter/auto";
+const DREAM_RECOMMENDATION_TYPES = new Set([
+  "observe_only",
+  "suggest_strategy_change",
+  "suggest_karpathy_threshold_review",
+  "suggest_scheduler_rule_review"
+]);
 const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime-2";
 const DEFAULT_OPENAI_REALTIME_VOICE = "marin";
 const DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_flash_v2_5";
@@ -642,6 +648,7 @@ function buildOpenRouterAdvisoryMessages(body = {}) {
   const commodity = body.commodity || body.commodityName || "the selected commodity";
   const horizon = body.horizon || "intraday";
   const context = body.context || {};
+  const accuracyTarget = Number(body.accuracyTarget || context.accuracyTarget || 60);
 
   const systemContent = [
     "You are an experienced commodity futures advisor producing calibrated directional advisories.",
@@ -649,6 +656,9 @@ function buildOpenRouterAdvisoryMessages(body = {}) {
     "Return compact JSON only with keys: conviction, tone, summary, reasons, risks.",
     "conviction must be an integer 0-100 representing your calibrated directional confidence.",
     "tone must be exactly one of: long, short, wait.",
+    `The production target is more than ${accuracyTarget}% directional accuracy on qualified advisories so the paper martingale strategy has positive expectancy.`,
+    "Only issue long or short when evidence is strong enough to support that accuracy target; otherwise return wait with a low conviction.",
+    "Use advisoryAccuracy context, when present, to avoid repeating forecast types, calibration bands, or sides that are below target.",
     "If signals are mixed or weak, prefer wait or a low conviction over forcing a direction.",
     "Reasons should cite specific signal values, not generic statements.",
     "Risks should be concrete events that would invalidate the call."
@@ -671,6 +681,7 @@ function buildCriticReviewMessages(primaryAdvisory, body = {}) {
   const commodity = body.commodity || body.commodityName || "the selected commodity";
   const horizon = body.horizon || "intraday";
   const context = body.context || {};
+  const accuracyTarget = Number(body.accuracyTarget || context.accuracyTarget || 60);
 
   const systemContent = [
     "You are an independent peer reviewer for commodity futures advisories.",
@@ -682,6 +693,8 @@ function buildCriticReviewMessages(primaryAdvisory, body = {}) {
     "adjustedConviction must be an integer 0-100 representing your own suggested conviction (may differ from primary).",
     "concerns is an array of specific concerns about the primary's reasoning, missed signals, or overconfidence.",
     "supportingPoints is an array of specific points where you agree with the primary.",
+    `Reject or downgrade calls that are unlikely to preserve more than ${accuracyTarget}% directional accuracy for the paper martingale strategy.`,
+    "Use advisoryAccuracy context, when present, to identify weak sides, weak score bands, and recent repeated advisory errors.",
     "Be willing to disagree. If the primary forced a direction on weak signals or ignored a key risk, say so concretely."
   ].join(" ");
 
@@ -1807,20 +1820,41 @@ async function ensureDreamReflectionTables(env) {
       status TEXT NOT NULL,
       confidence REAL,
       content TEXT NOT NULL,
+      recommendation_type TEXT NOT NULL DEFAULT 'observe_only',
+      auto_apply_status TEXT NOT NULL DEFAULT 'pending',
       evidence_json TEXT NOT NULL DEFAULT '[]',
       source_event_keys_json TEXT NOT NULL DEFAULT '[]',
+      applied_at TEXT,
+      applied_json TEXT NOT NULL DEFAULT '{}',
       run_id TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )
   `).run();
+  await safeD1Run(env, "ALTER TABLE dream_memory_insights ADD COLUMN recommendation_type TEXT NOT NULL DEFAULT 'observe_only'");
+  await safeD1Run(env, "ALTER TABLE dream_memory_insights ADD COLUMN auto_apply_status TEXT NOT NULL DEFAULT 'pending'");
+  await safeD1Run(env, "ALTER TABLE dream_memory_insights ADD COLUMN applied_at TEXT");
+  await safeD1Run(env, "ALTER TABLE dream_memory_insights ADD COLUMN applied_json TEXT NOT NULL DEFAULT '{}'");
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_memory_insights_user ON dream_memory_insights (user_email, status, updated_at DESC)`).run();
   await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_memory_insights_category ON dream_memory_insights (category, status, updated_at DESC)`).run();
+  await env.DB.prepare(`CREATE INDEX IF NOT EXISTS idx_dream_memory_insights_recommendation ON dream_memory_insights (recommendation_type, auto_apply_status, updated_at DESC)`).run();
 }
 
 function normalizeDreamReflectionCategory(value) {
   const category = String(value || "general").trim().toLowerCase().replace(/[^a-z0-9_-]+/g, "_").replace(/^_+|_+$/g, "");
   return category || "general";
+}
+
+function inferDreamRecommendationType(item = {}) {
+  const explicit = String(item.recommendationType || item.recommendation_type || item.recommendation || item.action || "").trim().toLowerCase();
+  if (DREAM_RECOMMENDATION_TYPES.has(explicit)) return explicit;
+  const category = normalizeDreamReflectionCategory(item.category);
+  const content = String(item.content || item.memory || item.summary || "").toLowerCase();
+  if (category === "karpathy_loop_review" || content.includes("karpathy")) return "suggest_karpathy_threshold_review";
+  if (category === "advisory_accuracy" || content.includes("advisory accuracy") || content.includes("forecast accuracy") || content.includes("calibration")) return "suggest_strategy_change";
+  if (category === "contradiction" || content.includes("missed-opportunity") || content.includes("open position")) return "suggest_scheduler_rule_review";
+  if (content.includes("martingale") || content.includes("step-4") || content.includes("escalation") || content.includes("drawdown")) return "suggest_strategy_change";
+  return "observe_only";
 }
 
 function makeDreamInsightId(userEmail, content, category) {
@@ -1863,6 +1897,7 @@ function normalizeDreamPatch(patch = {}) {
       category: normalizeDreamReflectionCategory(item?.category),
       content: content.slice(0, 2000),
       confidence: Number.isFinite(confidence) ? clamp(confidence, 0, 1) : null,
+      recommendationType: inferDreamRecommendationType(item),
       evidence: Array.isArray(item?.evidence) ? item.evidence.slice(0, 10) : [],
       sourceEventKeys: Array.isArray(item?.sourceEventKeys)
         ? item.sourceEventKeys.slice(0, 25).map((key) => String(key || "").trim()).filter(Boolean)
@@ -1906,6 +1941,7 @@ function extractLooseDreamInsightItems(text = "") {
     items.push({
       category,
       content,
+      recommendationType: inferDreamRecommendationType({ category, content }),
       confidence: 0.68,
       evidence: ["Recovered from malformed model JSON."],
       sourceEventKeys: []
@@ -1983,19 +2019,27 @@ async function upsertDreamInsightsD1(env, userEmail, runId, insights = []) {
         status,
         confidence,
         content,
+        recommendation_type,
+        auto_apply_status,
         evidence_json,
         source_event_keys_json,
+        applied_at,
+        applied_json,
         run_id,
         created_at,
         updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(insight_id) DO UPDATE SET
         category = excluded.category,
         status = excluded.status,
         confidence = excluded.confidence,
         content = excluded.content,
+        recommendation_type = excluded.recommendation_type,
+        auto_apply_status = excluded.auto_apply_status,
         evidence_json = excluded.evidence_json,
         source_event_keys_json = excluded.source_event_keys_json,
+        applied_at = excluded.applied_at,
+        applied_json = excluded.applied_json,
         run_id = excluded.run_id,
         updated_at = excluded.updated_at
     `).bind(
@@ -2005,8 +2049,12 @@ async function upsertDreamInsightsD1(env, userEmail, runId, insights = []) {
       "active",
       item.confidence,
       String(item.content || "").trim().slice(0, 2000),
+      inferDreamRecommendationType(item),
+      item.autoApplyStatus || "pending",
       JSON.stringify(item.evidence || []),
       JSON.stringify(item.sourceEventKeys || []),
+      item.appliedAt || null,
+      JSON.stringify(item.applied || {}),
       runId,
       now,
       now
@@ -2014,6 +2062,161 @@ async function upsertDreamInsightsD1(env, userEmail, runId, insights = []) {
     stored += 1;
   }
   return stored;
+}
+
+async function applyDreamRecommendations(env, user = {}, context = {}, insights = []) {
+  const applicable = insights.filter((item) => inferDreamRecommendationType(item) !== "observe_only");
+  if (!applicable.length) {
+    return insights.map((item) => ({ ...item, autoApplyStatus: "observe_only", applied: { reason: "No automatic action requested" } }));
+  }
+
+  const email = normalizeEmail(user.email || user.userEmail || "");
+  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const enriched = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, settings));
+  const users = Array.isArray(enriched.users) ? enriched.users : [];
+  const target = users.find((candidate) => normalizeEmail(candidate.email) === email);
+  const profile = enriched.userProfiles?.[email] && typeof enriched.userProfiles[email] === "object"
+    ? enriched.userProfiles[email]
+    : {};
+  const mergedUser = {
+    ...(target || { email }),
+    ...profile,
+    strategy: {
+      ...(target?.strategy && typeof target.strategy === "object" ? target.strategy : {}),
+      ...(profile.strategy && typeof profile.strategy === "object" ? profile.strategy : {})
+    },
+    paperTrading: {
+      ...(target?.paperTrading && typeof target.paperTrading === "object" ? target.paperTrading : {}),
+      ...(profile.paperTrading && typeof profile.paperTrading === "object" ? profile.paperTrading : {})
+    }
+  };
+  if (!target && !email) return insights;
+
+  let changed = false;
+  const now = new Date().toISOString();
+  const appliedInsights = insights.map((item) => {
+    const recommendationType = inferDreamRecommendationType(item);
+    if (recommendationType === "observe_only") {
+      return { ...item, recommendationType, autoApplyStatus: "observe_only", applied: { reason: "Recorded as memory only" } };
+    }
+
+    const applied = applySingleDreamRecommendation(mergedUser, context, item, now);
+    if (applied.changed) changed = true;
+    return {
+      ...item,
+      recommendationType,
+      autoApplyStatus: applied.status,
+      appliedAt: applied.changed ? now : null,
+      applied
+    };
+  });
+
+  if (changed) {
+    const nextStrategy = mergedUser.strategy && typeof mergedUser.strategy === "object" ? mergedUser.strategy : {};
+    const nextPaperTrading = mergedUser.paperTrading && typeof mergedUser.paperTrading === "object" ? mergedUser.paperTrading : {};
+    if (target) {
+      target.strategy = nextStrategy;
+      target.paperTrading = nextPaperTrading;
+      target.strategyHistory = normalizeDreamStrategyHistory(target.strategyHistory, appliedInsights, now);
+    }
+    enriched.userProfiles = enriched.userProfiles && typeof enriched.userProfiles === "object" ? enriched.userProfiles : {};
+    enriched.userProfiles[email] = {
+      ...profile,
+      strategy: nextStrategy,
+      paperTrading: nextPaperTrading,
+      strategyHistory: normalizeDreamStrategyHistory(profile.strategyHistory || target?.strategyHistory, appliedInsights, now)
+    };
+    enriched.generatedAt = now;
+    enriched.source = "cloudflare-d1-shared-settings";
+    await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, enriched);
+    await upsertUserStrategyRecordsD1(env, enriched);
+  }
+
+  return appliedInsights;
+}
+
+function normalizeDreamStrategyHistory(history = [], insights = [], changedAt = new Date().toISOString()) {
+  const applied = insights.filter((insight) => insight.autoApplyStatus === "applied");
+  if (!applied.length) return Array.isArray(history) ? history : [];
+  const historyEntry = {
+    id: `dream-auto-apply-${changedAt}`,
+    changedAt,
+    changedByName: "Cloudflare Dream Reflection",
+    changedByEmail: "worker@cloudflare",
+    summary: "Dream recommendations auto-applied",
+    detail: applied.map((insight) => `${inferDreamRecommendationType(insight)}: ${String(insight.content || "").slice(0, 180)}`).join("\n"),
+    before: {},
+    after: {}
+  };
+  return [historyEntry, ...(Array.isArray(history) ? history : [])].slice(0, 50);
+}
+
+function applySingleDreamRecommendation(user = {}, context = {}, item = {}, now = new Date().toISOString()) {
+  const type = inferDreamRecommendationType(item);
+  const content = String(item.content || "").toLowerCase();
+  const strategy = user.strategy && typeof user.strategy === "object" ? user.strategy : {};
+  const paperTrading = user.paperTrading && typeof user.paperTrading === "object" ? user.paperTrading : {};
+
+  if (type === "suggest_karpathy_threshold_review") {
+    const rec = context.karpathyLoop?.latestRecommendation;
+    const current = Number(paperTrading.entryThreshold ?? context.karpathyLoop?.currentThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD);
+    const recommended = Number(rec?.recommendedThreshold);
+    if (!rec?.enabled || rec.autoApply !== true || !Number.isFinite(recommended) || Number(rec.sampleCount) < 3) {
+      return { changed: false, status: "blocked", reason: "Karpathy recommendation is not eligible for automatic apply" };
+    }
+    const nextThreshold = clamp(Math.round(Math.max(recommended, current)), 45, 75);
+    if (nextThreshold === current) {
+      return { changed: false, status: "no_change", reason: "Karpathy threshold already at least as strict", currentThreshold: current };
+    }
+    user.paperTrading = {
+      ...paperTrading,
+      entryThreshold: nextThreshold,
+      dreamKarpathyThresholdAppliedAt: now
+    };
+    return { changed: true, status: "applied", patch: { paperTrading: { entryThreshold: nextThreshold } }, reason: "Applied bounded Karpathy tightening only", previousThreshold: current };
+  }
+
+  if (type === "suggest_strategy_change") {
+    const patch = {};
+    if (content.includes("martingale") || content.includes("step-4") || content.includes("escalation") || content.includes("drawdown")) {
+      patch.flatMaxMartingaleSteps = Math.min(Number(strategy.flatMaxMartingaleSteps) || 2, 1);
+      patch.flatSizeMultiplier = Math.min(Number(strategy.flatSizeMultiplier) || 0.5, 0.4);
+      patch.markovSidewaysThresholdBoost = Math.max(Number(strategy.markovSidewaysThresholdBoost) || 5, 8);
+    }
+    if (content.includes("advisory") || content.includes("forecast accuracy") || content.includes("calibration")) {
+      patch.breakoutMinEdgePercent = Math.max(Number(strategy.breakoutMinEdgePercent) || 55, 62);
+      patch.flatMinEdgePercent = Math.max(Number(strategy.flatMinEdgePercent) || 56, 58);
+      patch.trendingMinEdgePercent = Math.max(Number(strategy.trendingMinEdgePercent) || 58, 60);
+      patch.advisoryAccuracyDreamReview = true;
+    }
+    if (!Object.keys(patch).length) return { changed: false, status: "observe_only", reason: "No conservative strategy patch matched" };
+    const changed = Object.entries(patch).some(([key, value]) => strategy[key] !== value);
+    if (!changed) return { changed: false, status: "no_change", reason: "Conservative strategy patch already active", patch };
+    user.strategy = {
+      ...strategy,
+      ...patch,
+      dreamStrategyAppliedAt: now
+    };
+    return { changed: true, status: "applied", patch: { strategy: patch }, reason: "Applied conservative risk tightening from Dream" };
+  }
+
+  if (type === "suggest_scheduler_rule_review") {
+    const patch = {};
+    if (content.includes("missed-opportunity") || content.includes("open position")) {
+      patch.missedOpportunityOpenPositionFilter = true;
+    }
+    if (!Object.keys(patch).length) return { changed: false, status: "observe_only", reason: "No conservative scheduler patch matched" };
+    const changed = Object.entries(patch).some(([key, value]) => strategy[key] !== value);
+    if (!changed) return { changed: false, status: "no_change", reason: "Scheduler review patch already active", patch };
+    user.strategy = {
+      ...strategy,
+      ...patch,
+      dreamSchedulerRuleAppliedAt: now
+    };
+    return { changed: true, status: "applied", patch: { strategy: patch }, reason: "Applied position-aware scheduler review guard" };
+  }
+
+  return { changed: false, status: "observe_only", reason: "No automatic action for recommendation type" };
 }
 
 async function loadDreamReflectionStatusD1(env, limit = DREAM_REFLECTION_INSIGHT_LIMIT) {
@@ -2026,7 +2229,7 @@ async function loadDreamReflectionStatusD1(env, limit = DREAM_REFLECTION_INSIGHT
     LIMIT 20
   `).all();
   const insightsResult = await env.DB.prepare(`
-    SELECT insight_id, user_email, category, status, confidence, content, evidence_json, source_event_keys_json, run_id, created_at, updated_at
+    SELECT insight_id, user_email, category, status, confidence, content, recommendation_type, auto_apply_status, evidence_json, source_event_keys_json, applied_at, applied_json, run_id, created_at, updated_at
     FROM dream_memory_insights
     ORDER BY updated_at DESC
     LIMIT ?
@@ -2058,8 +2261,12 @@ async function loadDreamReflectionStatusD1(env, limit = DREAM_REFLECTION_INSIGHT
       status: row.status,
       confidence: row.confidence,
       content: row.content,
+      recommendationType: row.recommendation_type || "observe_only",
+      autoApplyStatus: row.auto_apply_status || "unknown",
       evidence: parseStoredJson(row.evidence_json, []),
       sourceEventKeys: parseStoredJson(row.source_event_keys_json, []),
+      appliedAt: row.applied_at,
+      applied: parseStoredJson(row.applied_json, {}),
       runId: row.run_id,
       createdAt: row.created_at,
       updatedAt: row.updated_at
@@ -2141,6 +2348,43 @@ function getDreamKarpathyContext(user = {}, trades = []) {
   };
 }
 
+function compactDreamAdvisoryAccuracy(metrics = null) {
+  if (!metrics || typeof metrics !== "object") {
+    return {
+      available: false,
+      reason: "No advisory accuracy metrics available for this Dream pass."
+    };
+  }
+  return {
+    available: true,
+    generatedAt: metrics.generatedAt || "",
+    commodity: metrics.commodity || "oil",
+    period: metrics.period || "",
+    threshold: metrics.threshold,
+    sampleCount: metrics.sampleCount,
+    evaluationWindowMinutes: metrics.evaluationWindowMinutes,
+    forecastSummary: metrics.forecastSummary || null,
+    tradeSummary: metrics.tradeSummary || null,
+    qualifiedSummary: metrics.qualifiedSummary || null,
+    averageAbsMove: metrics.averageAbsMove,
+    edge: metrics.edge || null,
+    calibrationBands: Array.isArray(metrics.calibrationBands)
+      ? metrics.calibrationBands.slice(0, 5).map((item) => ({
+        band: item.band,
+        summary: item.summary,
+        longSummary: item.longSummary,
+        shortSummary: item.shortSummary
+      }))
+      : [],
+    recentOutcomes: Array.isArray(metrics.recentOutcomes)
+      ? metrics.recentOutcomes.slice(0, 20)
+      : [],
+    targetAccuracy: 60,
+    martingaleObjective: "Qualified advisories should exceed 60% directional accuracy before the martingale strategy relies on them for recovery entries.",
+    dreamRole: "Review whether advisory forecast and trade accuracy should tighten or disable scheduler rules. Only conservative changes may be auto-applied."
+  };
+}
+
 async function getOpenRouterApiKey(env) {
   if (!env.OPENROUTER_API_KEY) return "";
   if (typeof env.OPENROUTER_API_KEY.get === "function") return env.OPENROUTER_API_KEY.get();
@@ -2150,13 +2394,17 @@ async function getOpenRouterApiKey(env) {
 function buildDreamReflectionMessages(context = {}) {
   const systemContent = [
     "You are ComHedge Dream Reflection, a Cloudflare background memory maintenance worker.",
-    "You do not execute trades, place orders, or change strategies.",
+    "You do not execute trades or place orders.",
     "Review only the provided D1-scoped context for recurring preferences, successful workflows, repeated errors, contradictions, and durable trading/process lessons.",
-    "Karpathy loop data is included so you can evaluate whether the trading learner is getting better or repeating mistakes. Dream may produce memory insights about Karpathy, but must not directly change thresholds.",
+    "Karpathy loop data is included so you can evaluate whether the trading learner is getting better or repeating mistakes.",
+    "Advisory accuracy data is included so you can compare forecast direction, trade outcomes, calibration bands, and recent advisory misses.",
+    "Dream must explicitly reflect on how to get qualified advisories above 60% directional accuracy so the paper martingale strategy has enough edge.",
+    "If advisory accuracy is below 60%, prefer recommendations that reduce forced directional calls, tighten weak calibration bands, or block weak martingale escalation.",
     "Return compact JSON only with keys: summary, add, update, merge, deprecate, needs_review.",
-    "Return at least one add item when the context contains a durable lesson, repeated mistake, repeated success, or Karpathy/outcome-learning pattern.",
-    "Each add item must include category, content, confidence, evidence, and sourceEventKeys.",
-    "Use categories such as karpathy_loop_review, paper_trade_pattern, execution_selectivity, contradiction, workflow_success, or dream_maintenance."
+    "Return at least one add item when the context contains a durable lesson, repeated mistake, repeated success, advisory accuracy pattern, or Karpathy/outcome-learning pattern.",
+    "Each add item must include category, content, confidence, evidence, sourceEventKeys, and recommendationType.",
+    "recommendationType must be exactly one of: observe_only, suggest_strategy_change, suggest_karpathy_threshold_review, suggest_scheduler_rule_review.",
+    "Use categories such as advisory_accuracy, karpathy_loop_review, paper_trade_pattern, execution_selectivity, contradiction, workflow_success, or dream_maintenance."
   ].join(" ");
   return [
     { role: "system", content: systemContent },
@@ -2356,6 +2604,21 @@ async function runDreamReflection(env, options = {}) {
 
   const status = await loadDreamReflectionStatusD1(env, DREAM_REFLECTION_INSIGHT_LIMIT);
   const openBrain = await loadOpenBrainEventsD1(env, DREAM_REFLECTION_INPUT_LIMIT);
+  let advisoryAccuracy = compactDreamAdvisoryAccuracy(null);
+  try {
+    const advisorySummary = await buildAdvisorySummary(env, "cloudflare-d1-dream-advisory-accuracy", {
+      includeMetrics: true,
+      commodity: "oil",
+      period: "hour",
+      threshold: 60
+    });
+    advisoryAccuracy = compactDreamAdvisoryAccuracy(advisorySummary.accuracyMetrics);
+  } catch (error) {
+    advisoryAccuracy = {
+      available: false,
+      reason: error?.message || "Advisory accuracy metrics failed to load."
+    };
+  }
   const runs = [];
 
   for (const user of users) {
@@ -2386,10 +2649,11 @@ async function runDreamReflection(env, options = {}) {
           name: user.name || user.userName || "",
           strategy: user.strategy
         },
-        layers: ["raw_open_brain_events", "paper_trade_session_events", "synthesized_dream_insights"],
+        layers: ["raw_open_brain_events", "paper_trade_session_events", "advisory_accuracy_metrics", "synthesized_dream_insights"],
         recentEvents: events,
         recentPaperTrades: trades,
         karpathyLoop: getDreamKarpathyContext(user, trades),
+        advisoryAccuracy,
         existingInsights: status.insights
           .filter((insight) => normalizeEmail(insight.userEmail) === userEmail && insight.status === "active")
           .slice(0, DREAM_REFLECTION_INSIGHT_LIMIT)
@@ -2400,7 +2664,9 @@ async function runDreamReflection(env, options = {}) {
       } catch (modelError) {
         reflection = createFallbackDreamReflection(context, modelError.message);
       }
-      const storedInsights = await upsertDreamInsightsD1(env, userEmail, runId, reflection.patch.add);
+      const appliedInsights = await applyDreamRecommendations(env, user, context, reflection.patch.add);
+      const storedInsights = await upsertDreamInsightsD1(env, userEmail, runId, appliedInsights);
+      const autoApplied = appliedInsights.filter((insight) => insight.autoApplyStatus === "applied").length;
       await saveDreamReflectionRunD1(env, {
         runId,
         startedAt,
@@ -2414,10 +2680,12 @@ async function runDreamReflection(env, options = {}) {
         summary: reflection.patch.summary,
         patch: {
           ...reflection.patch,
+          add: appliedInsights,
+          autoApplied,
           fallbackReason: reflection.fallbackReason || null
         }
       });
-      runs.push({ runId, userEmail, status: "completed", storedInsights, model: reflection.model, fallbackReason: reflection.fallbackReason || null });
+      runs.push({ runId, userEmail, status: "completed", storedInsights, autoApplied, model: reflection.model, fallbackReason: reflection.fallbackReason || null });
     } catch (error) {
       await saveDreamReflectionRunD1(env, {
         runId,
@@ -4604,7 +4872,9 @@ function getServerStrategySettings(user = {}) {
     noChaseEntries: strategy.noChaseEntries !== false,
     pullbackEntryRequired: strategy.pullbackEntryRequired !== false,
     profitLockTrailingStop: strategy.profitLockTrailingStop !== false,
+    advisoryOutcomeLearner: strategy.advisoryOutcomeLearner !== false,
     missedOpportunityLearner: strategy.missedOpportunityLearner !== false,
+    missedOpportunityOpenPositionFilter: strategy.missedOpportunityOpenPositionFilter === true,
     missedOpportunityReentry: isPeterMissedOpportunityReentryUser(user),
     martingaleRecoveryMode: String(strategy.martingaleRecoveryMode || "predict").toLowerCase(),
     martingaleRecoveryMinProfit: Math.max(0, Number(strategy.martingaleRecoveryMinProfit) || PAPER_MARTINGALE_RECOVERY_MIN_PROFIT),
@@ -7041,6 +7311,12 @@ function getServerTrendCaptureSignal(signal, micro, strategy, directionalContext
 
 async function recordServerMissedOpportunity(env, { email, user, commodity, signal, price, strategy, directionalContext, advisoryBreakout, reason }) {
   if (!strategy.missedOpportunityLearner || !advisoryBreakout?.ready) return;
+  if (
+    strategy.missedOpportunityOpenPositionFilter
+    && /existing commodity trade already open|martingale sequence already has an open trade|max open trades reached/i.test(String(reason || ""))
+  ) {
+    return;
+  }
   const moveBps = Number(advisoryBreakout.moveBps) || Number(directionalContext?.recentMove) || 0;
   if (Math.abs(moveBps) < (Number(strategy.missedOpportunityMoveBps) || 20)) return;
   const side = moveBps > 0 ? "long" : "short";
@@ -8805,8 +9081,7 @@ async function handleD1Advisories(env, request, origin, ctx = null) {
     }, 200, origin);
   }
 
-  const snapshots = mergeAdvisorySnapshots(current.snapshots, newSnapshots);
-  await upsertAdvisorySnapshotsD1(env, snapshots);
+  await upsertAdvisorySnapshotsD1(env, newSnapshots);
   const saved = await loadAdvisoryPayloadD1(env);
   if (ctx?.waitUntil) {
     ctx.waitUntil(saveAdvisorySummaryCache(env).catch((error) => {

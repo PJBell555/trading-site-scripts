@@ -11613,7 +11613,16 @@ async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ snapshots })
     });
-    if (!response.ok) throw new Error("advisory save failed");
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const data = await response.json();
+        detail = data?.error || data?.reason || "";
+      } catch (_error) {
+        detail = "";
+      }
+      throw new Error(`advisory save failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    }
 
     const data = await response.json();
     mergeAdvisoryHistory(Array.isArray(data?.snapshots) ? data.snapshots : snapshots);
@@ -11624,7 +11633,7 @@ async function saveSharedAdvisorySnapshots(snapshots, options = {}) {
   } catch (error) {
     nextBackendAdvisorySyncAt = Date.now() + BACKEND_FAILURE_BACKOFF_MS;
     const pendingCount = queueOnFail ? queuePendingAdvisorySnapshots(snapshots) : loadPendingAdvisorySnapshots().length;
-    advisoryHistoryStatusEl.textContent = `Shared advisory log save failed${pendingCount ? `; ${pendingCount} sample${pendingCount === 1 ? "" : "s"} queued locally for retry` : ""}`;
+    advisoryHistoryStatusEl.textContent = `Shared advisory log save failed: ${error.message}${pendingCount ? `; ${pendingCount} sample${pendingCount === 1 ? "" : "s"} queued locally for retry` : ""}`;
     return false;
   }
 }
@@ -12510,6 +12519,36 @@ function advisoryServerMetricsMatch(metrics = advisoryServerMetrics) {
     && metrics.period === advisoryPeriodFilter
     && Number(metrics.threshold) === Number(advisoryScoreThreshold)
   );
+}
+
+function getAdvisoryAccuracySummary() {
+  const metrics = advisoryServerMetricsMatch() ? advisoryServerMetrics : null;
+  if (!metrics) {
+    return {
+      available: false,
+      targetAccuracy: 60,
+      threshold: advisoryScoreThreshold,
+      reason: "No matching Cloudflare advisory accuracy metrics loaded in the browser yet."
+    };
+  }
+  return {
+    available: true,
+    targetAccuracy: 60,
+    commodity: metrics.commodity,
+    period: metrics.period,
+    threshold: metrics.threshold,
+    sampleCount: metrics.sampleCount,
+    forecastSummary: metrics.forecastSummary || null,
+    tradeSummary: metrics.tradeSummary || null,
+    qualifiedSummary: metrics.qualifiedSummary || null,
+    edge: metrics.edge || null,
+    calibrationBands: Array.isArray(metrics.calibrationBands)
+      ? metrics.calibrationBands.slice(0, 5)
+      : [],
+    recentOutcomes: Array.isArray(metrics.recentOutcomes)
+      ? metrics.recentOutcomes.slice(0, 12)
+      : []
+  };
 }
 
 function parseServerMetricNumber(value) {
@@ -15374,8 +15413,12 @@ function getLiveAdvisoryContext() {
   const body = {
     commodity,
     horizon: "intraday",
+    accuracyTarget: 60,
     context: {
       currentPrice: livePrice,
+      accuracyTarget: 60,
+      martingaleObjective: "Qualified advisories should exceed 60% directional accuracy before martingale recovery logic relies on them.",
+      advisoryAccuracy: typeof getAdvisoryAccuracySummary === "function" ? getAdvisoryAccuracySummary() : null,
       signals: baseSignals,
       uiPrimaryModel: primaryEntry.name,
       uiSecondaryModel: secondaryEntry.name,
