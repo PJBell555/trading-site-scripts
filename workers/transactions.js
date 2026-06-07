@@ -1833,7 +1833,20 @@ function makeDreamInsightId(userEmail, content, category) {
 }
 
 function normalizeDreamPatch(patch = {}) {
-  const add = Array.isArray(patch.add) ? patch.add : Array.isArray(patch.insights) ? patch.insights : [];
+  const summaryText = String(patch.summary || patch.runSummary || "").trim();
+  let mergedPatch = patch;
+  if (summaryText.startsWith("{")) {
+    const nested = parseAdvisoryContent(summaryText);
+    if (nested && typeof nested === "object" && (nested.summary || nested.add || nested.insights)) {
+      mergedPatch = {
+        ...nested,
+        ...patch,
+        summary: nested.summary || patch.summary
+      };
+    }
+  }
+
+  const add = Array.isArray(mergedPatch.add) ? mergedPatch.add : Array.isArray(mergedPatch.insights) ? mergedPatch.insights : [];
   const safeItems = add.map((item) => {
     const content = String(item?.content || item?.memory || item?.summary || "").trim();
     if (!content) return null;
@@ -1850,12 +1863,12 @@ function normalizeDreamPatch(patch = {}) {
   }).filter(Boolean);
 
   return {
-    summary: String(patch.summary || patch.runSummary || "").trim().slice(0, 2000),
+    summary: String(mergedPatch.summary || mergedPatch.runSummary || "").trim().slice(0, 2000),
     add: safeItems.slice(0, 25),
-    update: Array.isArray(patch.update) ? patch.update.slice(0, 25) : [],
-    merge: Array.isArray(patch.merge) ? patch.merge.slice(0, 25) : [],
-    deprecate: Array.isArray(patch.deprecate) ? patch.deprecate.slice(0, 25) : [],
-    needs_review: Array.isArray(patch.needs_review) ? patch.needs_review.slice(0, 25) : []
+    update: Array.isArray(mergedPatch.update) ? mergedPatch.update.slice(0, 25) : [],
+    merge: Array.isArray(mergedPatch.merge) ? mergedPatch.merge.slice(0, 25) : [],
+    deprecate: Array.isArray(mergedPatch.deprecate) ? mergedPatch.deprecate.slice(0, 25) : [],
+    needs_review: Array.isArray(mergedPatch.needs_review) ? mergedPatch.needs_review.slice(0, 25) : []
   };
 }
 
@@ -2049,6 +2062,36 @@ function compactDreamEvent(event = {}) {
   };
 }
 
+function getDreamKarpathyContext(user = {}, trades = []) {
+  const existing = user.strategy?.karpathyRecommendation && typeof user.strategy.karpathyRecommendation === "object"
+    ? user.strategy.karpathyRecommendation
+    : null;
+  const closedTrades = trades.filter((trade) => Number.isFinite(Number(trade.netPnl)));
+  const sample = closedTrades.slice(0, 12);
+  const wins = sample.filter((trade) => Number(trade.netPnl) > 0).length;
+  const netPnl = sample.reduce((sum, trade) => sum + (Number(trade.netPnl) || 0), 0);
+  const sampleCount = sample.length;
+  const winRate = sampleCount ? wins / sampleCount : 0;
+  const avgPnl = sampleCount ? netPnl / sampleCount : 0;
+  const currentThreshold = Number(user.paperTrading?.entryThreshold ?? existing?.currentThreshold ?? PAPER_SCHEDULER_DEFAULT_THRESHOLD);
+
+  return {
+    enabled: user.strategy?.karpathyLoop !== false,
+    autoApply: user.strategy?.karpathyAutoApply !== false,
+    currentThreshold,
+    latestRecommendation: existing,
+    recentSample: {
+      sampleCount,
+      wins,
+      losses: sample.filter((trade) => Number(trade.netPnl) < 0).length,
+      winRate,
+      avgPnl,
+      netPnl
+    },
+    dreamRole: "Review Karpathy loop quality and memory lessons only. Do not directly change thresholds from Dream."
+  };
+}
+
 async function getOpenRouterApiKey(env) {
   if (!env.OPENROUTER_API_KEY) return "";
   if (typeof env.OPENROUTER_API_KEY.get === "function") return env.OPENROUTER_API_KEY.get();
@@ -2060,8 +2103,11 @@ function buildDreamReflectionMessages(context = {}) {
     "You are ComHedge Dream Reflection, a Cloudflare background memory maintenance worker.",
     "You do not execute trades, place orders, or change strategies.",
     "Review only the provided D1-scoped context for recurring preferences, successful workflows, repeated errors, contradictions, and durable trading/process lessons.",
+    "Karpathy loop data is included so you can evaluate whether the trading learner is getting better or repeating mistakes. Dream may produce memory insights about Karpathy, but must not directly change thresholds.",
     "Return compact JSON only with keys: summary, add, update, merge, deprecate, needs_review.",
-    "Each add item must include category, content, confidence, evidence, and sourceEventKeys."
+    "Return at least one add item when the context contains a durable lesson, repeated mistake, repeated success, or Karpathy/outcome-learning pattern.",
+    "Each add item must include category, content, confidence, evidence, and sourceEventKeys.",
+    "Use categories such as karpathy_loop_review, paper_trade_pattern, execution_selectivity, contradiction, workflow_success, or dream_maintenance."
   ].join(" ");
   return [
     { role: "system", content: systemContent },
@@ -2099,9 +2145,35 @@ async function createOpenRouterDreamReflection(env, context = {}) {
   const content = data?.choices?.[0]?.message?.content || "{}";
   return {
     model,
-    patch: normalizeDreamPatch(parseAdvisoryContent(content)),
+    patch: normalizeDreamPatch(ensureDreamPatchHasInsight(parseAdvisoryContent(content), context)),
     usage: data.usage || null
   };
+}
+
+function ensureDreamPatchHasInsight(patch = {}, context = {}) {
+  const normalized = normalizeDreamPatch(patch);
+  if (normalized.add.length) return normalized;
+  const summary = String(normalized.summary || patch.summary || "").trim();
+  if (summary.length >= 40 && !/^no strong new pattern/i.test(summary)) {
+    return {
+      ...normalized,
+      add: [{
+        category: summary.toLowerCase().includes("karpathy") ? "karpathy_loop_review" : "synthesized_insight",
+        content: summary.slice(0, 2000),
+        confidence: 0.66,
+        evidence: [
+          `sourceEventCount=${Array.isArray(context.recentEvents) ? context.recentEvents.length : 0}`,
+          `recentPaperTrades=${Array.isArray(context.recentPaperTrades) ? context.recentPaperTrades.length : 0}`,
+          context.karpathyLoop?.latestRecommendation?.summary || context.karpathyLoop?.dreamRole || ""
+        ].filter(Boolean).slice(0, 5),
+        sourceEventKeys: (Array.isArray(context.recentEvents) ? context.recentEvents : [])
+          .slice(0, 10)
+          .map((event) => event.id)
+          .filter(Boolean)
+      }]
+    };
+  }
+  return normalized;
 }
 
 function createFallbackDreamReflection(context = {}, errorMessage = "") {
@@ -2267,6 +2339,7 @@ async function runDreamReflection(env, options = {}) {
         layers: ["raw_open_brain_events", "paper_trade_session_events", "synthesized_dream_insights"],
         recentEvents: events,
         recentPaperTrades: trades,
+        karpathyLoop: getDreamKarpathyContext(user, trades),
         existingInsights: status.insights
           .filter((insight) => normalizeEmail(insight.userEmail) === userEmail && insight.status === "active")
           .slice(0, DREAM_REFLECTION_INSIGHT_LIMIT)

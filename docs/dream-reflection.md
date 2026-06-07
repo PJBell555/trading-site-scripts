@@ -19,7 +19,10 @@ The `dreamReflection` strategy flag is enabled for `peter@pjbell.com` by default
 
 - `raw_open_brain_events`: source material from the Cloudflare Open Brain event table.
 - `paper_trade_session_events`: recent paper-trading actions and outcomes from D1.
+- `karpathy_loop_review`: Dream can review Karpathy threshold recommendations, recent win rate, average P/L, and repeated learning errors.
 - `synthesized_dream_insights`: durable lessons written by the reflection pass after model review.
+
+Dream does not execute the Karpathy loop. Karpathy remains the scheduler-side threshold/outcome learner. Dream only produces memory insights that can explain whether Karpathy is learning from the right evidence or repeating a bad pattern.
 
 ## API
 
