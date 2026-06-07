@@ -2104,6 +2104,56 @@ async function createOpenRouterDreamReflection(env, context = {}) {
   };
 }
 
+function createFallbackDreamReflection(context = {}, errorMessage = "") {
+  const trades = Array.isArray(context.recentPaperTrades) ? context.recentPaperTrades : [];
+  const events = Array.isArray(context.recentEvents) ? context.recentEvents : [];
+  const closedTrades = trades.filter((trade) => Number.isFinite(Number(trade.netPnl)));
+  const losses = closedTrades.filter((trade) => Number(trade.netPnl) < 0);
+  const wins = closedTrades.filter((trade) => Number(trade.netPnl) > 0);
+  const blockedEvents = events.filter((event) => /blocked|wait|no trade|conviction|threshold/i.test(event.summary || ""));
+  const add = [];
+
+  if (closedTrades.length) {
+    const netPnl = closedTrades.reduce((sum, trade) => sum + (Number(trade.netPnl) || 0), 0);
+    add.push({
+      category: "paper_trade_pattern",
+      content: `Recent Peter paper-trade review: ${closedTrades.length} closed/reviewable trades show ${wins.length} wins and ${losses.length} losses with net P/L ${Math.round(netPnl * 100) / 100}. Keep future threshold changes tied to closed-trade evidence rather than one live tick.`,
+      confidence: closedTrades.length >= 10 ? 0.78 : 0.62,
+      evidence: closedTrades.slice(0, 5).map((trade) => `${trade.time || "unknown"} ${trade.action || ""} ${trade.contract || ""} net ${trade.netPnl}`),
+      sourceEventKeys: []
+    });
+  }
+
+  if (blockedEvents.length) {
+    add.push({
+      category: "execution_selectivity",
+      content: `Recent Open Brain memory has ${blockedEvents.length} blocked/wait/threshold events. Preserve the Cloudflare scheduler's wait behavior when conviction or tape confirmation is weak; review repeated blocks only after enough missed-move evidence accumulates.`,
+      confidence: blockedEvents.length >= 5 ? 0.74 : 0.58,
+      evidence: blockedEvents.slice(0, 5).map((event) => event.summary),
+      sourceEventKeys: blockedEvents.slice(0, 10).map((event) => event.id).filter(Boolean)
+    });
+  }
+
+  if (!add.length) {
+    add.push({
+      category: "dream_maintenance",
+      content: "Dream reflection found no strong new pattern in the current D1 window. Keep raw Open Brain events and paper trades separated from synthesized insights until repeated evidence appears.",
+      confidence: 0.55,
+      evidence: [`recentEvents=${events.length}`, `recentPaperTrades=${trades.length}`],
+      sourceEventKeys: events.slice(0, 10).map((event) => event.id).filter(Boolean)
+    });
+  }
+
+  return {
+    model: "cloudflare-rule-fallback",
+    patch: normalizeDreamPatch({
+      summary: `Cloudflare fallback dream completed because OpenRouter reflection failed: ${String(errorMessage || "unknown error").slice(0, 300)}`,
+      add
+    }),
+    fallbackReason: errorMessage
+  };
+}
+
 async function getDreamReflectionUsers(env) {
   const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
     env,
@@ -2221,7 +2271,12 @@ async function runDreamReflection(env, options = {}) {
           .filter((insight) => normalizeEmail(insight.userEmail) === userEmail && insight.status === "active")
           .slice(0, DREAM_REFLECTION_INSIGHT_LIMIT)
       };
-      const reflection = await createOpenRouterDreamReflection(env, context);
+      let reflection = null;
+      try {
+        reflection = await createOpenRouterDreamReflection(env, context);
+      } catch (modelError) {
+        reflection = createFallbackDreamReflection(context, modelError.message);
+      }
       const storedInsights = await upsertDreamInsightsD1(env, userEmail, runId, reflection.patch.add);
       await saveDreamReflectionRunD1(env, {
         runId,
@@ -2234,9 +2289,12 @@ async function runDreamReflection(env, options = {}) {
         insightCount: storedInsights,
         model: reflection.model,
         summary: reflection.patch.summary,
-        patch: reflection.patch
+        patch: {
+          ...reflection.patch,
+          fallbackReason: reflection.fallbackReason || null
+        }
       });
-      runs.push({ runId, userEmail, status: "completed", storedInsights, model: reflection.model });
+      runs.push({ runId, userEmail, status: "completed", storedInsights, model: reflection.model, fallbackReason: reflection.fallbackReason || null });
     } catch (error) {
       await saveDreamReflectionRunD1(env, {
         runId,
