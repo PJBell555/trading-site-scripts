@@ -28,7 +28,7 @@ const OPEN_BRAIN_EVENT_LIMIT = 500;
 const DREAM_REFLECTION_INPUT_LIMIT = 120;
 const DREAM_REFLECTION_INSIGHT_LIMIT = 100;
 const DREAM_REFLECTION_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const DREAM_REFLECTION_MODEL = "openai/gpt-5-mini";
+const DREAM_REFLECTION_MODEL = "openrouter/auto";
 const DEFAULT_OPENAI_REALTIME_MODEL = "gpt-realtime-2";
 const DEFAULT_OPENAI_REALTIME_VOICE = "marin";
 const DEFAULT_ELEVENLABS_TTS_MODEL = "eleven_flash_v2_5";
@@ -2073,7 +2073,7 @@ async function createOpenRouterDreamReflection(env, context = {}) {
   const apiKey = await getOpenRouterApiKey(env);
   if (!apiKey) throw new Error("Missing OPENROUTER_API_KEY Secrets Store binding or value");
   const baseUrl = env.OPENROUTER_BASE_URL || DEFAULT_OPENROUTER_BASE_URL;
-  const model = String(env.DREAM_REFLECTION_MODEL || DREAM_REFLECTION_MODEL).trim() || DREAM_REFLECTION_MODEL;
+  const model = getOpenRouterModel(String(env.DREAM_REFLECTION_MODEL || DREAM_REFLECTION_MODEL).trim() || DREAM_REFLECTION_MODEL);
   const response = await fetchWithTimeout(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
     method: "POST",
     headers: {
@@ -2246,6 +2246,7 @@ async function runDreamReflection(env, options = {}) {
         userEmail,
         sourceEventCount: events.length,
         tradeCount: trades.length,
+        model: String(env.DREAM_REFLECTION_MODEL || DREAM_REFLECTION_MODEL),
         error: error.message,
         patch: {}
       });
