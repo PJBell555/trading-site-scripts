@@ -1158,7 +1158,7 @@
     .rental-controls {
       display: grid;
       gap: 10px;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(5, minmax(0, 1fr));
     }
 
     .rental-controls label {
@@ -1171,6 +1171,21 @@
       font-size: 0.72rem;
       font-weight: 900;
       text-transform: uppercase;
+    }
+
+    .rental-checkbox-control {
+      align-items: center;
+      border: 1px solid var(--line);
+      display: flex;
+      gap: 10px;
+      min-height: 54px;
+      padding: 0 14px;
+    }
+
+    .rental-checkbox-control input {
+      accent-color: var(--navy);
+      height: 18px;
+      width: 18px;
     }
 
     .date-picker {
@@ -2764,9 +2779,12 @@
     }
 
     function normalizeSkiRentalPerson(person = {}, index = 0) {
+      const needsSkis = person.needsSkis === "No" ? "No" : "Yes";
+      const polesNeeded = needsSkis === "Yes" && person.polesNeeded !== false && person.polesNeeded !== "No";
       return {
         traveler: String(person.traveler || travelerLabels()[index] || `Traveler ${index + 1}`).trim(),
-        needsSkis: person.needsSkis === "No" ? "No" : "Yes",
+        needsSkis,
+        polesNeeded,
         ability: skiAbilityOptions.includes(person.ability) ? person.ability : "Intermediate",
         skiType: skiTypeOptions.includes(person.skiType) ? person.skiType : "All-mountain",
         skiLength: skiLengthOptions.includes(person.skiLength) ? person.skiLength : "Not sure"
@@ -2792,8 +2810,8 @@
       if (!isSkiRentalRequired()) return "Travelers will bring their own ski equipment.";
       syncSkiRentalPeopleToParty();
       return skiRentalPeople.map((person) => {
-        if (person.needsSkis === "No") return `${person.traveler}: no skis needed`;
-        return `${person.traveler}: skis yes, ${person.ability}, ${person.skiType}, ${person.skiLength}`;
+        if (person.needsSkis === "No") return `${person.traveler}: no skis needed, poles no`;
+        return `${person.traveler}: skis yes, poles ${person.polesNeeded ? "yes" : "no"}, ${person.ability}, ${person.skiType}, ${person.skiLength}`;
       }).join("; ");
     }
 
@@ -2818,6 +2836,15 @@
       return select;
     }
 
+    function buildCheckbox(checked, field, index) {
+      const input = document.createElement("input");
+      input.type = "checkbox";
+      input.dataset.rentalField = field;
+      input.dataset.rentalIndex = String(index);
+      input.checked = Boolean(checked);
+      return input;
+    }
+
     function renderSkiRentalPlanner({ updateSummary = true } = {}) {
       if (!skiRentalPlanner) return;
       if (skiRentalDetails) skiRentalDetails.dataset.visible = isSkiRentalRequired() ? "true" : "false";
@@ -2839,6 +2866,7 @@
         controls.className = "rental-controls";
         [
           ["Needs skis", buildSelect(["Yes", "No"], person.needsSkis, "needsSkis", index)],
+          ["Poles needed", buildCheckbox(person.needsSkis === "Yes" && person.polesNeeded, "polesNeeded", index)],
           ["Skier type", buildSelect(skiAbilityOptions, person.ability, "ability", index)],
           ["Ski type", buildSelect(skiTypeOptions, person.skiType, "skiType", index)],
           ["Ski length", buildSelect(skiLengthOptions, person.skiLength, "skiLength", index)]
@@ -2847,6 +2875,7 @@
           const span = document.createElement("span");
           span.textContent = labelText;
           label.append(span, control);
+          if (control.type === "checkbox") label.classList.add("rental-checkbox-control");
           controls.append(label);
         });
 
@@ -2891,6 +2920,7 @@
           || lower.includes(`person ${number}`);
         if (!targetsPerson) return;
         person.needsSkis = /\b(no skis|does not need skis|doesn't need skis)\b/i.test(text) ? "No" : "Yes";
+        person.polesNeeded = person.needsSkis === "Yes" && !/\b(no poles|without poles|does not need poles|doesn't need poles)\b/i.test(text);
         if (ability) person.ability = ability;
         if (skiType) person.skiType = skiType;
         if (skiLength) person.skiLength = skiLength;
@@ -2900,6 +2930,7 @@
       if (!applied) {
         skiRentalPeople.forEach((person) => {
           person.needsSkis = "Yes";
+          person.polesNeeded = !/\b(no poles|without poles|does not need poles|doesn't need poles)\b/i.test(text);
           if (ability) person.ability = ability;
           if (skiType) person.skiType = skiType;
           if (skiLength) person.skiLength = skiLength;
@@ -4027,7 +4058,15 @@
       const index = Number(control.dataset.rentalIndex);
       const field = control.dataset.rentalField;
       if (!skiRentalPeople[index] || !field) return;
-      skiRentalPeople[index][field] = control.value;
+      if (field === "polesNeeded") {
+        skiRentalPeople[index][field] = control.checked;
+      } else {
+        skiRentalPeople[index][field] = control.value;
+      }
+      if (field === "needsSkis") {
+        skiRentalPeople[index].polesNeeded = control.value === "Yes";
+        renderSkiRentalPlanner({ updateSummary: false });
+      }
       setSkiRentalSummaryField({ notify: true });
       updateTripSummary();
       scheduleCloudTripSave("ski-rental");
