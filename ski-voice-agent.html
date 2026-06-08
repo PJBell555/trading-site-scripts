@@ -1920,7 +1920,7 @@
           </div>
           <label>
             Group details
-            <input id="lead-group" placeholder="2 adults, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
+            <input id="lead-group" placeholder="1 adult, 0 children, 1 room" title="Enter group size, ages, ski levels, rooming, or lesson needs.">
           </label>
           <div class="party-picker" id="party-picker" data-expanded="false" aria-label="Party selector">
             <div class="party-row">
@@ -3217,6 +3217,10 @@
       Object.entries(bookingFieldMap).forEach(([key, field]) => {
         if (field) field.value = details[key] || "";
       });
+      if (!details.groupDetails && !leadGroup.value.trim()) {
+        leadGroup.value = partySummary();
+        if (leadBookingGroup) leadBookingGroup.value = leadGroup.value;
+      }
       skiRentalPeople.length = 0;
       if (Array.isArray(details.skiRentalPeople)) {
         details.skiRentalPeople.forEach((person, index) => skiRentalPeople.push(normalizeSkiRentalPerson(person, index)));
@@ -4255,7 +4259,7 @@
     });
     populateResortOptions();
     populateAccommodationOptions();
-    renderPartyPicker({ updateSummary: false });
+    renderPartyPicker();
     renderCalendar();
     [leadName, leadEmail].forEach((field) => {
       field.addEventListener("input", () => {
