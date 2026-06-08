@@ -1494,11 +1494,21 @@
     }
 
     .footer-inner {
+      align-items: center;
       display: flex;
       gap: 18px;
       justify-content: space-between;
       margin: 0 auto;
       max-width: 1220px;
+    }
+
+    .preview-trip-button {
+      background: transparent;
+      border: 1px solid rgba(255, 255, 255, 0.45);
+      color: #fff;
+      font-size: 0.76rem;
+      min-height: 30px;
+      padding: 4px 9px;
     }
 
     @media (max-width: 980px) {
@@ -2226,6 +2236,7 @@
   <footer class="footer">
     <div class="footer-inner">
       <span>Ski in Europe | British chalet holidays reimagined by AI</span>
+      <button class="button preview-trip-button" type="button" id="preview-trip-button">Preview Trip</button>
       <span>Secure. Private. Human verified.</span>
     </div>
   </footer>
@@ -2237,6 +2248,7 @@
     const startButton = document.querySelector("#start-button");
     const stopButton = document.querySelector("#stop-button");
     const resetTripButton = document.querySelector("#reset-trip-button");
+    const previewTripButton = document.querySelector("#preview-trip-button");
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
@@ -2297,6 +2309,7 @@
     const isLocalDevPage = window.location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(window.location.hostname);
     const isWorkspaceDevMode = isLocalDevPage && urlParams.get("dev") === "workspace";
     let cloudTripId = urlParams.get("trip") || "";
+    let previewTripUnlocked = false;
     let cloudSaveTimer = null;
     let confirmationTimer = null;
     let confirmationUnavailable = false;
@@ -3146,7 +3159,7 @@
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       const hasFirstDetails = Boolean(customerName && leadGroup.value.trim() && leadDates.value.trim());
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
-      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode ? "true" : "false";
+      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
@@ -4057,6 +4070,13 @@
     startButton.addEventListener("click", () => startSession());
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
+    previewTripButton?.addEventListener("click", () => {
+      previewTripUnlocked = true;
+      renderSkiRentalPlanner({ updateSummary: false });
+      updateTripSummary();
+      document.querySelector(".trip-workspace")?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setStatus("Trip preview opened. Voice is not required for layout testing.", "ready");
+    });
     loadCloudTripFromUrl().then((loaded) => {
       if (!loaded && !isWorkspaceDevMode) resetTrip({ keepStatus: true });
       if (isWorkspaceDevMode) {
