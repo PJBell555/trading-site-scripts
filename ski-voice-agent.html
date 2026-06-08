@@ -866,7 +866,11 @@
 
     body[data-workspace-unlocked="false"] .header-trip-strip,
     body[data-workspace-unlocked="false"] .reset-button,
-    body[data-workspace-unlocked="false"] .trip-workspace,
+    body[data-workspace-unlocked="false"] .trip-workspace {
+      display: none;
+    }
+
+    body[data-review-ready="false"] .handoff-jump-button,
     body[data-workspace-unlocked="false"] .handoff-jump-button {
       display: none;
     }
@@ -1823,7 +1827,7 @@
     }
   </style>
 </head>
-<body data-workspace-unlocked="false">
+<body data-workspace-unlocked="false" data-review-ready="false">
   <header class="topbar">
     <a class="brand" href="#concierge" aria-label="Ski in Europe home">
       <span class="brand-mark" aria-hidden="true">
@@ -3410,6 +3414,7 @@
       const hasFirstDetails = Boolean(customerName && hasMeaningfulPartyDetails() && leadDates.value.trim());
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
       document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
+      document.body.dataset.reviewReady = hasWorkspaceTripDetails() ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 

@@ -9,5 +9,7 @@
   <path d="M5 58l21-27 13 17 18-26 34 36H5Z" fill="#1b5e93"/>
   <path d="M26 31l7 9-7 2-7 9-14 7 21-27Zm31-9 11 12-11-3-8 14-10 3 18-26Z" fill="#fff"/>
   <path d="M0 69c17-8 37-11 58-9 14 1 27 5 38 11v25H0Z" fill="#f5fbff"/>
+  <path d="M22 78c18-5 37-6 56-1M24 83c17-4 35-4 54 1" fill="none" stroke="#f24b63" stroke-width="4" stroke-linecap="round"/>
+  <path d="M19 79l5-1M78 77l6 1M21 84l5-1M78 84l6 1" fill="none" stroke="#f24b63" stroke-width="3" stroke-linecap="round"/>
   <path d="M12 78c14-5 27-7 39-6 13 1 25 4 36 10" fill="none" stroke="#cfe7f7" stroke-width="5" stroke-linecap="round"/>
 </svg>
