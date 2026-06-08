@@ -3904,6 +3904,7 @@ async function handleSkiTrips(env, request, origin) {
       skis: skiJson(body.bookingDetails.skis).slice(0, 500),
       helmet: skiJson(body.bookingDetails.helmet).slice(0, 500),
       skiPasses: skiJson(body.bookingDetails.skiPasses).slice(0, 500),
+      skiRentalRequired: Boolean(body.bookingDetails.skiRentalRequired),
       skiRentalPeople: Array.isArray(body.bookingDetails.skiRentalPeople)
         ? body.bookingDetails.skiRentalPeople.slice(0, 24).map((person, index) => ({
           traveler: skiJson(person?.traveler || `Traveler ${index + 1}`).slice(0, 120),

@@ -1097,6 +1097,41 @@
       gap: 12px;
     }
 
+    .rental-toggle {
+      align-items: center;
+      border: 1px solid var(--line);
+      display: flex;
+      gap: 10px;
+      padding: 12px;
+    }
+
+    .rental-toggle input {
+      height: 18px;
+      width: 18px;
+    }
+
+    .rental-toggle span {
+      color: var(--navy);
+      font-weight: 900;
+    }
+
+    .rental-summary {
+      background: #f5f9fc;
+      border: 1px solid var(--line);
+      color: var(--muted);
+      margin: 0;
+      padding: 10px 12px;
+    }
+
+    .rental-details {
+      display: grid;
+      gap: 12px;
+    }
+
+    .rental-details[data-visible="false"] {
+      display: none;
+    }
+
     .rental-person {
       border: 1px solid var(--line);
       display: grid;
@@ -2143,10 +2178,17 @@
             <h3>What rental gear is needed?</h3>
           </div>
           <input id="lead-ski-rental" type="hidden" title="Ski rental requirements.">
-          <div class="rental-planner" id="ski-rental-planner" aria-label="Ski rental details by traveler"></div>
-          <div class="trip-actions">
-            <button class="button secondary edit-topic" type="button" data-focus="#ski-rental-planner select">Edit</button>
-            <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only ski rental needs. Ask which travelers need skis, each skier ability level, ski type such as all-mountain, terrain park, powder, piste, racing, touring, or other, and ski length if known.">Talk Rentals</button>
+          <label class="rental-toggle">
+            <input id="lead-ski-rental-required" type="checkbox">
+            <span>Rent ski equipment for this trip</span>
+          </label>
+          <p class="rental-summary" id="ski-rental-summary">Travelers will bring their own ski equipment.</p>
+          <div class="rental-details" id="ski-rental-details" data-visible="false">
+            <div class="rental-planner" id="ski-rental-planner" aria-label="Ski rental details by traveler"></div>
+            <div class="trip-actions">
+              <button class="button secondary edit-topic" type="button" data-focus="#ski-rental-planner select">Edit</button>
+              <button class="button dark talk-topic voice-button" type="button" data-topic="I want to update only ski rental needs. Ask which travelers need skis, each skier ability level, ski type such as all-mountain, terrain park, powder, piste, racing, touring, or other, and ski length if known.">Talk Rentals</button>
+            </div>
           </div>
         </article>
 
@@ -2270,6 +2312,9 @@
     const leadBookingGroup = document.querySelector("#lead-booking-group");
     const leadChaletNames = document.querySelector("#lead-chalet-names");
     const leadSkiRental = document.querySelector("#lead-ski-rental");
+    const leadSkiRentalRequired = document.querySelector("#lead-ski-rental-required");
+    const skiRentalSummaryEl = document.querySelector("#ski-rental-summary");
+    const skiRentalDetails = document.querySelector("#ski-rental-details");
     const skiRentalPlanner = document.querySelector("#ski-rental-planner");
     const leadBoots = document.querySelector("#lead-boots");
     const leadSkis = document.querySelector("#lead-skis");
@@ -2739,7 +2784,12 @@
       });
     }
 
+    function isSkiRentalRequired() {
+      return Boolean(leadSkiRentalRequired?.checked);
+    }
+
     function skiRentalSummary() {
+      if (!isSkiRentalRequired()) return "Travelers will bring their own ski equipment.";
       syncSkiRentalPeopleToParty();
       return skiRentalPeople.map((person) => {
         if (person.needsSkis === "No") return `${person.traveler}: no skis needed`;
@@ -2755,6 +2805,7 @@
     function setSkiRentalSummaryField({ notify = false } = {}) {
       if (!leadSkiRental) return;
       leadSkiRental.value = skiRentalSummary();
+      if (skiRentalSummaryEl) skiRentalSummaryEl.textContent = leadSkiRental.value;
       if (notify) leadSkiRental.dispatchEvent(new Event("input", { bubbles: true }));
     }
 
@@ -2769,6 +2820,7 @@
 
     function renderSkiRentalPlanner({ updateSummary = true } = {}) {
       if (!skiRentalPlanner) return;
+      if (skiRentalDetails) skiRentalDetails.dataset.visible = isSkiRentalRequired() ? "true" : "false";
       syncSkiRentalPeopleToParty();
       skiRentalPlanner.innerHTML = "";
       skiRentalPeople.forEach((person, index) => {
@@ -2802,6 +2854,60 @@
         skiRentalPlanner.append(row);
       });
       if (updateSummary) setSkiRentalSummaryField();
+    }
+
+    function applySkiRentalText(text) {
+      const lower = String(text || "").toLowerCase();
+      if (/\b(bring|own|have)\b.*\b(skis?|equipment|gear)\b|\b(no ski rental|no skis needed|no rentals?|not renting)\b/i.test(text)) {
+        if (leadSkiRentalRequired) leadSkiRentalRequired.checked = false;
+        renderSkiRentalPlanner({ updateSummary: true });
+        return true;
+      }
+      if (!/\b(rental|rentals|equipment|skis?|skiing|all[- ]?mountain|powder|terrain park|piste|racing|touring|beginner|intermediate|advanced|\d{3}\s*cm)\b/i.test(text)) return false;
+      if (leadSkiRentalRequired) leadSkiRentalRequired.checked = true;
+      syncSkiRentalPeopleToParty();
+
+      const ability = lower.includes("beginner") ? "Beginner" : lower.includes("advanced") ? "Advanced" : lower.includes("intermediate") ? "Intermediate" : "";
+      const skiType = lower.includes("terrain park") || lower.includes("park") ? "Terrain park"
+        : lower.includes("powder") ? "Powder"
+        : lower.includes("piste") ? "Piste"
+        : lower.includes("racing") || lower.includes("race") ? "Racing"
+        : lower.includes("touring") ? "Touring"
+        : lower.includes("all mountain") || lower.includes("all-mountain") ? "All-mountain"
+        : lower.includes("other") ? "Other"
+        : "";
+      const lengthMatch = text.match(/\b(12[0-9]|13[0-9]|14[0-9]|15[0-9]|16[0-9]|17[0-9]|18[0-9]|19[0-9]|200)\s*cm\b/i);
+      const skiLength = lengthMatch ? `${lengthMatch[1]} cm` : "";
+      const appliesToAll = /\b(all|everyone|everybody|each|both)\b/i.test(text) || skiRentalPeople.length === 1;
+      let applied = false;
+
+      skiRentalPeople.forEach((person, index) => {
+        const number = index + 1;
+        const label = person.traveler.toLowerCase();
+        const targetsPerson = appliesToAll
+          || lower.includes(label)
+          || lower.includes(`traveler ${number}`)
+          || lower.includes(`adult ${number}`)
+          || lower.includes(`person ${number}`);
+        if (!targetsPerson) return;
+        person.needsSkis = /\b(no skis|does not need skis|doesn't need skis)\b/i.test(text) ? "No" : "Yes";
+        if (ability) person.ability = ability;
+        if (skiType) person.skiType = skiType;
+        if (skiLength) person.skiLength = skiLength;
+        applied = true;
+      });
+
+      if (!applied) {
+        skiRentalPeople.forEach((person) => {
+          person.needsSkis = "Yes";
+          if (ability) person.ability = ability;
+          if (skiType) person.skiType = skiType;
+          if (skiLength) person.skiLength = skiLength;
+        });
+      }
+      renderSkiRentalPlanner({ updateSummary: true });
+      setSkiRentalSummaryField({ notify: true });
+      return true;
     }
 
     function setPartyPickerExpanded(isExpanded) {
@@ -3013,6 +3119,7 @@
       details.chaletTypes = getSelectionSummary("chalets");
       details.chaletNames = getSelectionSummary("accommodations") || details.chaletNames;
       details.accommodations = getSelectionSummary("accommodations");
+      details.skiRentalRequired = isSkiRentalRequired();
       details.skiRentalPeople = getSkiRentalPeople();
       details.checkInDate = dateKey(dateState.checkIn);
       details.checkOutDate = dateKey(dateState.checkOut);
@@ -3028,6 +3135,7 @@
       if (Array.isArray(details.skiRentalPeople)) {
         details.skiRentalPeople.forEach((person, index) => skiRentalPeople.push(normalizeSkiRentalPerson(person, index)));
       }
+      if (leadSkiRentalRequired) leadSkiRentalRequired.checked = Boolean(details.skiRentalRequired);
       dateState.checkIn = parseDateKey(details.checkInDate);
       dateState.checkOut = parseDateKey(details.checkOutDate);
       dateState.flexDays = Number(details.dateFlexDays || 0);
@@ -3423,7 +3531,7 @@
       }
       const rentalSentence = sentenceWith(text, /\b(rental|rentals|equipment|skis?|boots?|helmet|poles)\b/i);
       if (rentalSentence) {
-        setFieldIfUseful(leadSkiRental, rentalSentence || "Ski rentals needed");
+        applySkiRentalText(rentalSentence || text);
       }
       const bootsSentence = sentenceWith(text, /\bboots?\b/i);
       if (bootsSentence) {
@@ -3464,6 +3572,7 @@
       partyState.rooms = 1;
       partyState.childAges = [];
       skiRentalPeople.length = 0;
+      if (leadSkiRentalRequired) leadSkiRentalRequired.checked = false;
       renderPartyPicker({ updateSummary: false });
       setPartyPickerExpanded(false);
       applyBookingDetails({});
@@ -3911,6 +4020,13 @@
       setSkiRentalSummaryField({ notify: true });
       updateTripSummary();
       scheduleCloudTripSave("ski-rental");
+    });
+
+    leadSkiRentalRequired?.addEventListener("change", () => {
+      renderSkiRentalPlanner({ updateSummary: true });
+      setSkiRentalSummaryField({ notify: true });
+      updateTripSummary();
+      scheduleCloudTripSave("ski-rental-toggle");
     });
 
     partyDoneButton?.addEventListener("click", () => {
