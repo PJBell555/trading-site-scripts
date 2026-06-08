@@ -483,9 +483,14 @@
     }
 
     .handoff-jump-button {
+      display: none !important;
       grid-column: 1;
       min-width: 0;
       width: 100%;
+    }
+
+    body[data-review-ready="true"] .handoff-jump-button[data-visible="true"] {
+      display: inline-flex !important;
     }
 
     .hero-panel {
@@ -2818,16 +2823,17 @@
     }
 
     function partySummary() {
+      const adultLabel = partyState.adults === 1 ? "adult" : "adults";
       const childLabel = partyState.children === 1 ? "child" : "children";
       const roomLabel = partyState.rooms === 1 ? "room" : "rooms";
       const ageText = partyState.childAges.length
         ? `, ages ${partyState.childAges.join(", ")}`
         : "";
-      return `${partyState.adults} adults, ${partyState.children} ${childLabel}${ageText}, ${partyState.rooms} ${roomLabel}`;
+      return `${partyState.adults} ${adultLabel}, ${partyState.children} ${childLabel}${ageText}, ${partyState.rooms} ${roomLabel}`;
     }
 
     function isDefaultPartySummary(value) {
-      return String(value || "").trim().toLowerCase() === "1 adult, 0 children, 1 room";
+      return /^1\s+adults?,\s*0\s+children,\s*1\s+room$/i.test(String(value || "").trim());
     }
 
     function hasMeaningfulPartyDetails() {
