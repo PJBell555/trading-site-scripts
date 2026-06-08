@@ -870,9 +870,10 @@
       display: none;
     }
 
+    .handoff-jump-button[data-visible="false"],
     body[data-review-ready="false"] .handoff-jump-button,
     body[data-workspace-unlocked="false"] .handoff-jump-button {
-      display: none;
+      display: none !important;
     }
 
     body[data-workspace-unlocked="false"] .hero {
@@ -1916,7 +1917,7 @@
               </span>
               Click to Stop the Voice Concierge
             </button>
-            <a class="button secondary handoff-jump-button" href="#human-handoff">Review and send trip details</a>
+            <a class="button secondary handoff-jump-button" href="#human-handoff" data-visible="false">Review and send trip details</a>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
@@ -2364,6 +2365,7 @@
     const stopButton = document.querySelector("#stop-button");
     const resetTripButton = document.querySelector("#reset-trip-button");
     const previewTripButton = document.querySelector("#preview-trip-button");
+    const handoffJumpButton = document.querySelector(".handoff-jump-button");
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
@@ -3412,9 +3414,11 @@
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       const hasFirstDetails = Boolean(customerName && hasMeaningfulPartyDetails() && leadDates.value.trim());
+      const reviewReady = hasWorkspaceTripDetails();
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
-      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
-      document.body.dataset.reviewReady = hasWorkspaceTripDetails() ? "true" : "false";
+      document.body.dataset.workspaceUnlocked = reviewReady || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
+      document.body.dataset.reviewReady = reviewReady ? "true" : "false";
+      if (handoffJumpButton) handoffJumpButton.dataset.visible = reviewReady ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
