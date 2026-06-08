@@ -383,6 +383,20 @@
       width: 52px;
     }
 
+    .talk-mic-idle-slash {
+      background: #0e5f9f;
+      border-radius: 999px;
+      height: 5px;
+      left: 14px;
+      opacity: 0.36;
+      pointer-events: none;
+      position: absolute;
+      top: 50%;
+      transform: rotate(45deg);
+      transform-origin: center;
+      width: 54px;
+    }
+
     .voice-spinner {
       border: 3px solid rgba(7, 28, 49, 0.2);
       border-top-color: #071c31;
@@ -636,6 +650,10 @@
     body[data-voice-live="true"] .talk-mic-wire {
       filter: grayscale(1);
       opacity: 0.42;
+    }
+
+    body[data-voice-live="true"] .talk-mic-idle-slash {
+      display: none;
     }
 
     .hero-actions .danger {
@@ -1874,6 +1892,7 @@
             <button class="primary voice-button talk-hero-button" type="button" id="start-button">
               <span class="talk-concierge-stage" aria-hidden="true">
                 <img class="talk-mic-wire" src="./assets/microphone-wire.svg" alt="">
+                <span class="talk-mic-idle-slash"></span>
                 <span class="voice-spinner"></span>
                 <img class="talk-concierge" src="./assets/skier-avatar.svg" alt="">
               </span>
@@ -2800,8 +2819,17 @@
       return `${partyState.adults} adults, ${partyState.children} ${childLabel}${ageText}, ${partyState.rooms} ${roomLabel}`;
     }
 
+    function isDefaultPartySummary(value) {
+      return String(value || "").trim().toLowerCase() === "1 adult, 0 children, 1 room";
+    }
+
+    function hasMeaningfulPartyDetails() {
+      const value = leadGroup?.value?.trim() || leadBookingGroup?.value?.trim() || "";
+      return Boolean(value && !isDefaultPartySummary(value));
+    }
+
     function hasDefinedPartyDetails() {
-      return Boolean(leadGroup?.value?.trim() || leadBookingGroup?.value?.trim());
+      return hasMeaningfulPartyDetails();
     }
 
     function travelerLabels() {
@@ -3300,6 +3328,7 @@
 
     function hasMeaningfulBookingDetails() {
       return Object.entries(getBookingDetails()).some(([key, value]) => {
+        if (key === "groupDetails") return Boolean(String(value || "").trim() && !isDefaultPartySummary(value));
         if (key === "skiRental") return isSkiRentalRequired() && Boolean(String(value || "").trim());
         if (key === "skiRentalRequired") return Boolean(value);
         if (key === "skiRentalPeople") return isSkiRentalRequired() && Array.isArray(value) && value.length > 0;
@@ -3315,7 +3344,7 @@
         || leadDates.value.trim()
         || leadDestination.value.trim()
         || leadChalet.value.trim()
-        || leadGroup.value.trim()
+        || hasMeaningfulPartyDetails()
         || hasMeaningfulBookingDetails()
         || leadNotes.value.trim()
         || transcript.length
@@ -3337,7 +3366,7 @@
         leadName.value.trim()
         || leadCity.value.trim()
         || leadDates.value.trim()
-        || leadGroup.value.trim()
+        || hasMeaningfulPartyDetails()
         || leadFlights.value.trim()
         || leadTransfers.value.trim()
         || (isSkiRentalRequired() && leadSkiRental.value.trim())
@@ -3378,7 +3407,7 @@
       bannerDates.textContent = bookingDetails.dates || leadDates.value.trim() || "Check-in date - Check-out date";
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
-      const hasFirstDetails = Boolean(customerName && leadGroup.value.trim() && leadDates.value.trim());
+      const hasFirstDetails = Boolean(customerName && hasMeaningfulPartyDetails() && leadDates.value.trim());
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
       document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
