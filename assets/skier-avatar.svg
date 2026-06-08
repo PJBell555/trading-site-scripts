@@ -1,11 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Skier avatar">
-  <circle cx="32" cy="32" r="30" fill="#111827"/>
-  <circle cx="32" cy="32" r="21" fill="#10a7d8"/>
-  <path d="M13 42l12-14 7 8 7-12 13 18H13Z" fill="#fff"/>
-  <path d="M16 43l12-12 6 7 6-11 12 16H16Z" fill="#10223a"/>
-  <path d="M26 20c1-5 8-6 12-2l-1 8-10-1-1-5Z" fill="#b91c1c"/>
-  <path d="M35 25l4 9 8 2" stroke="#7f1d1d" stroke-width="4" stroke-linecap="round"/>
-  <path d="M31 26l-4 12 7 8" stroke="#f6d3b2" stroke-width="5" stroke-linecap="round"/>
-  <path d="M27 38l-2 13M34 46l7 7" stroke="#6b3f24" stroke-width="5" stroke-linecap="round"/>
-  <path d="M18 55c9 2 27 1 37-4" stroke="#6b3f24" stroke-width="4" stroke-linecap="round"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96" role="img" aria-label="Skier">
+  <rect width="96" height="96" rx="22" fill="#e9f7ef"/>
+  <path d="M23 78c16 5 36 3 51-6" fill="none" stroke="#f3254f" stroke-width="5" stroke-linecap="round"/>
+  <path d="M38 32l15 8-7 14-18 3" fill="none" stroke="#1e94c8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M47 54l8 14" fill="none" stroke="#1e94c8" stroke-width="7" stroke-linecap="round"/>
+  <path d="M48 38l21-8" fill="none" stroke="#2876b9" stroke-width="5" stroke-linecap="round"/>
+  <path d="M30 51l-11 8" fill="none" stroke="#ffba30" stroke-width="5" stroke-linecap="round"/>
+  <path d="M35 25l24 10-7 21-27-11Z" fill="#f26834"/>
+  <path d="M54 36l9 5" fill="none" stroke="#1e94c8" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="34" cy="20" r="10" fill="#44a9dc"/>
+  <path d="M24 18c4-7 13-10 21-5" fill="none" stroke="#1986c7" stroke-width="5" stroke-linecap="round"/>
+  <path d="M39 68l21 3" fill="none" stroke="#86c6e4" stroke-width="5" stroke-linecap="round"/>
 </svg>
