@@ -1918,7 +1918,7 @@
               </span>
               Click to Stop the Voice Concierge
             </button>
-            <a class="button secondary handoff-jump-button" href="#human-handoff" data-visible="false" hidden>Review and send trip details</a>
+            <a class="button secondary handoff-jump-button" href="#human-handoff" data-visible="false" hidden style="display: none;">Review and send trip details</a>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
@@ -3333,6 +3333,13 @@
       leadForm.dataset.closed = "true";
     }
 
+    function setReviewButtonVisible(isVisible) {
+      if (!handoffJumpButton) return;
+      handoffJumpButton.dataset.visible = isVisible ? "true" : "false";
+      handoffJumpButton.hidden = !isVisible;
+      handoffJumpButton.style.display = isVisible ? "" : "none";
+    }
+
     function hasMeaningfulBookingDetails() {
       return Object.entries(getBookingDetails()).some(([key, value]) => {
         if (key === "groupDetails") return Boolean(String(value || "").trim() && !isDefaultPartySummary(value));
@@ -3441,10 +3448,7 @@
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
       document.body.dataset.workspaceUnlocked = reviewReady || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
       document.body.dataset.reviewReady = reviewReady ? "true" : "false";
-      if (handoffJumpButton) {
-        handoffJumpButton.dataset.visible = reviewReady ? "true" : "false";
-        handoffJumpButton.hidden = !reviewReady;
-      }
+      setReviewButtonVisible(reviewReady);
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
@@ -3760,10 +3764,7 @@
       leadForm.dataset.closed = "false";
       handoffConfirmation.dataset.visible = "false";
       handoffConfirmation.textContent = "";
-      if (handoffJumpButton) {
-        handoffJumpButton.dataset.visible = "false";
-        handoffJumpButton.hidden = true;
-      }
+      setReviewButtonVisible(false);
       setNameSaveVisible(false);
       clearCloudTripId();
       updateTripSummary();
