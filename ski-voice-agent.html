@@ -1118,12 +1118,14 @@
     .rental-needed-toggle {
       align-items: center;
       border: 1px solid var(--line);
+      border-radius: 4px;
       color: var(--navy);
       display: flex;
       font-weight: 900;
       gap: 10px;
-      min-height: 44px;
-      padding: 0 12px;
+      justify-self: end;
+      min-height: 42px;
+      padding: 0 14px;
     }
 
     .rental-needed-toggle input {
@@ -1151,9 +1153,10 @@
 
     .rental-person {
       border: 1px solid var(--line);
+      background: #f9fcff;
       display: grid;
-      gap: 12px;
-      padding: 12px;
+      gap: 14px;
+      padding: 14px 16px;
     }
 
     .rental-person[data-needs-rental="false"] .rental-controls {
@@ -1162,9 +1165,9 @@
 
     .rental-person-header {
       align-items: center;
-      display: flex;
+      display: grid;
       gap: 10px;
-      justify-content: space-between;
+      grid-template-columns: minmax(0, 1fr) auto;
     }
 
     .rental-person-header > div {
@@ -1185,6 +1188,7 @@
       display: grid;
       gap: 10px;
       grid-template-columns: repeat(4, minmax(0, 1fr));
+      align-items: end;
     }
 
     .rental-controls label {
@@ -1201,11 +1205,13 @@
 
     .rental-checkbox-control {
       align-items: center;
+      background: #fff;
       border: 1px solid var(--line);
+      border-radius: 4px;
       display: flex;
       gap: 10px;
-      min-height: 54px;
-      padding: 0 14px;
+      min-height: 56px;
+      padding: 0 16px;
     }
 
     .rental-checkbox-control input {
@@ -2794,7 +2800,7 @@
 
     function travelerLabels() {
       if (!hasDefinedPartyDetails()) {
-        return [leadName.value.trim() || "Traveler 1"];
+        return [leadName.value.trim()];
       }
       const labels = [];
       const lead = leadName.value.trim();
@@ -2811,8 +2817,12 @@
     function normalizeSkiRentalPerson(person = {}, index = 0) {
       const needsSkis = person.needsSkis === "Yes" ? "Yes" : "No";
       const polesNeeded = needsSkis === "Yes" && person.polesNeeded !== false && person.polesNeeded !== "No";
+      const fallbackTraveler = travelerLabels()[index] ?? "";
+      const rawTraveler = String(person.traveler ?? fallbackTraveler).trim();
+      const placeholderTraveler = new RegExp(`^Traveler\\s+${index + 1}$`, "i").test(rawTraveler);
+      const traveler = !hasDefinedPartyDetails() && placeholderTraveler ? "" : rawTraveler;
       return {
-        traveler: String(person.traveler || travelerLabels()[index] || `Traveler ${index + 1}`).trim(),
+        traveler,
         needsSkis,
         polesNeeded,
         ability: skiAbilityOptions.includes(person.ability) ? person.ability : "Intermediate",
@@ -2840,7 +2850,8 @@
     function skiRentalSummary() {
       if (!isSkiRentalRequired()) return "Travelers will bring their own ski equipment.";
       return skiRentalPeople.filter((person) => person.needsSkis === "Yes").map((person) => {
-        return `${person.traveler}: skis yes, poles ${person.polesNeeded ? "yes" : "no"}, ${person.ability}, ${person.skiType}, ${person.skiLength}`;
+        const details = `skis yes, poles ${person.polesNeeded ? "yes" : "no"}, ${person.ability}, ${person.skiType}, ${person.skiLength}`;
+        return person.traveler ? `${person.traveler}: ${details}` : details;
       }).join("; ");
     }
 
@@ -2890,6 +2901,7 @@
         const titleWrap = document.createElement("div");
         const title = document.createElement("strong");
         title.textContent = person.traveler;
+        title.hidden = !person.traveler;
         const count = document.createElement("small");
         count.textContent = `Traveler ${index + 1}`;
         titleWrap.append(title, count);
@@ -2910,8 +2922,12 @@
           const label = document.createElement("label");
           const span = document.createElement("span");
           span.textContent = labelText;
-          label.append(span, control);
-          if (control.type === "checkbox") label.classList.add("rental-checkbox-control");
+          if (control.type === "checkbox") {
+            label.classList.add("rental-checkbox-control");
+            label.append(control, span);
+          } else {
+            label.append(span, control);
+          }
           controls.append(label);
         });
 
