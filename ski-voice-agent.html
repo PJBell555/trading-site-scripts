@@ -3405,7 +3405,6 @@
         || leadSkis.value.trim()
         || leadHelmet.value.trim()
         || leadSkiPasses.value.trim()
-        || leadNotes.value.trim()
         || dateState.checkIn
         || dateState.checkOut
         || hasMeaningfulSelection("countries")
@@ -3761,6 +3760,10 @@
       leadForm.dataset.closed = "false";
       handoffConfirmation.dataset.visible = "false";
       handoffConfirmation.textContent = "";
+      if (handoffJumpButton) {
+        handoffJumpButton.dataset.visible = "false";
+        handoffJumpButton.hidden = true;
+      }
       setNameSaveVisible(false);
       clearCloudTripId();
       updateTripSummary();
