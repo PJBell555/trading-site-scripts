@@ -2294,6 +2294,8 @@
     const checkoutDisplay = document.querySelector("#checkout-display");
 
     const urlParams = new URLSearchParams(window.location.search);
+    const isLocalDevPage = window.location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(window.location.hostname);
+    const isWorkspaceDevMode = isLocalDevPage && urlParams.get("dev") === "workspace";
     let cloudTripId = urlParams.get("trip") || "";
     let cloudSaveTimer = null;
     let confirmationTimer = null;
@@ -3144,7 +3146,7 @@
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       const hasFirstDetails = Boolean(customerName && leadGroup.value.trim() && leadDates.value.trim());
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
-      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() ? "true" : "false";
+      document.body.dataset.workspaceUnlocked = hasWorkspaceTripDetails() || isWorkspaceDevMode ? "true" : "false";
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
@@ -4056,7 +4058,12 @@
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
     loadCloudTripFromUrl().then((loaded) => {
-      if (!loaded) resetTrip({ keepStatus: true });
+      if (!loaded && !isWorkspaceDevMode) resetTrip({ keepStatus: true });
+      if (isWorkspaceDevMode) {
+        renderSkiRentalPlanner({ updateSummary: false });
+        updateTripSummary();
+        setStatus("Local workspace preview mode. Voice and Cloudflare trip loading are not required.", "ready");
+      }
     });
   </script>
 </body>
