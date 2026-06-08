@@ -3195,6 +3195,16 @@
       leadForm.dataset.closed = "true";
     }
 
+    function hasMeaningfulBookingDetails() {
+      return Object.entries(getBookingDetails()).some(([key, value]) => {
+        if (key === "skiRental") return isSkiRentalRequired() && Boolean(String(value || "").trim());
+        if (key === "skiRentalRequired") return Boolean(value);
+        if (key === "skiRentalPeople") return isSkiRentalRequired() && Array.isArray(value) && value.length > 0;
+        if (Array.isArray(value)) return value.length > 0;
+        return Boolean(String(value || "").trim());
+      });
+    }
+
     function hasTripData() {
       return Boolean(
         leadName.value.trim()
@@ -3203,7 +3213,7 @@
         || leadDestination.value.trim()
         || leadChalet.value.trim()
         || leadGroup.value.trim()
-        || Object.values(getBookingDetails()).some(Boolean)
+        || hasMeaningfulBookingDetails()
         || leadNotes.value.trim()
         || transcript.length
         || cloudTripId
@@ -3227,7 +3237,7 @@
         || leadGroup.value.trim()
         || leadFlights.value.trim()
         || leadTransfers.value.trim()
-        || leadSkiRental.value.trim()
+        || (isSkiRentalRequired() && leadSkiRental.value.trim())
         || leadBoots.value.trim()
         || leadSkis.value.trim()
         || leadHelmet.value.trim()
@@ -3554,6 +3564,7 @@
 
     function resetTrip({ keepStatus = false } = {}) {
       stopSession({ resetStatus: false });
+      previewTripUnlocked = false;
       transcript = [];
       assistantBuffer = "";
       leadName.value = "";
@@ -3583,8 +3594,8 @@
       handoffConfirmation.dataset.visible = "false";
       handoffConfirmation.textContent = "";
       setNameSaveVisible(false);
-      updateTripSummary();
       clearCloudTripId();
+      updateTripSummary();
       confirmationUnavailable = false;
       saveCloudTripNow("reset");
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
