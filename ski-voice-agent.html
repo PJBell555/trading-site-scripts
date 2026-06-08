@@ -3353,6 +3353,14 @@
 
     function hasTripData() {
       return Boolean(
+        hasUserTripData()
+        || transcript.length
+        || cloudTripId
+      );
+    }
+
+    function hasUserTripData() {
+      return Boolean(
         leadName.value.trim()
         || leadCity.value.trim()
         || leadDates.value.trim()
@@ -3361,8 +3369,6 @@
         || hasMeaningfulPartyDetails()
         || hasMeaningfulBookingDetails()
         || leadNotes.value.trim()
-        || transcript.length
-        || cloudTripId
       );
     }
 
@@ -3496,7 +3502,7 @@
 
     async function saveCloudTripNow(reason = "update", { quiet = true } = {}) {
       if (isHydratingTrip) return null;
-      if (!hasTripData()) return null;
+      if (!hasUserTripData()) return null;
 
       try {
         const response = await fetch(`${API_BASE}/ski/trips`, {
@@ -3765,7 +3771,6 @@
       clearCloudTripId();
       updateTripSummary();
       confirmationUnavailable = false;
-      saveCloudTripNow("reset");
       if (!keepStatus) setStatus("New trip started. Tell the concierge dates, group size, budget, and ski style.", "ready");
     }
 
