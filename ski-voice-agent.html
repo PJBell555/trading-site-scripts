@@ -870,6 +870,7 @@
       display: none;
     }
 
+    .handoff-jump-button[hidden],
     .handoff-jump-button[data-visible="false"],
     body[data-review-ready="false"] .handoff-jump-button,
     body[data-workspace-unlocked="false"] .handoff-jump-button {
@@ -1917,7 +1918,7 @@
               </span>
               Click to Stop the Voice Concierge
             </button>
-            <a class="button secondary handoff-jump-button" href="#human-handoff" data-visible="false">Review and send trip details</a>
+            <a class="button secondary handoff-jump-button" href="#human-handoff" data-visible="false" hidden>Review and send trip details</a>
           </div>
           <div class="status is-hidden" id="status" data-state="idle" aria-live="polite">Idle.</div>
         </div>
@@ -3391,6 +3392,29 @@
       );
     }
 
+    function hasReviewableTripDetails() {
+      return Boolean(
+        leadName.value.trim()
+        || leadCity.value.trim()
+        || leadDates.value.trim()
+        || hasMeaningfulPartyDetails()
+        || leadFlights.value.trim()
+        || leadTransfers.value.trim()
+        || (isSkiRentalRequired() && leadSkiRental.value.trim())
+        || leadBoots.value.trim()
+        || leadSkis.value.trim()
+        || leadHelmet.value.trim()
+        || leadSkiPasses.value.trim()
+        || leadNotes.value.trim()
+        || dateState.checkIn
+        || dateState.checkOut
+        || hasMeaningfulSelection("countries")
+        || hasMeaningfulSelection("destinations")
+        || hasMeaningfulSelection("chalets")
+        || hasMeaningfulSelection("accommodations")
+      );
+    }
+
     function extractParty(notes) {
       const lower = notes.toLowerCase();
       const adults = lower.match(/(\d+)\s*adults?/);
@@ -3414,11 +3438,14 @@
       const notes = leadNotes.value.toLowerCase();
       bannerParty.textContent = bookingDetails.groupDetails || leadGroup.value.trim() || extractParty(notes);
       const hasFirstDetails = Boolean(customerName && hasMeaningfulPartyDetails() && leadDates.value.trim());
-      const reviewReady = hasWorkspaceTripDetails();
+      const reviewReady = hasReviewableTripDetails();
       document.body.dataset.tripCompact = hasFirstDetails ? "true" : "false";
       document.body.dataset.workspaceUnlocked = reviewReady || isWorkspaceDevMode || previewTripUnlocked ? "true" : "false";
       document.body.dataset.reviewReady = reviewReady ? "true" : "false";
-      if (handoffJumpButton) handoffJumpButton.dataset.visible = reviewReady ? "true" : "false";
+      if (handoffJumpButton) {
+        handoffJumpButton.dataset.visible = reviewReady ? "true" : "false";
+        handoffJumpButton.hidden = !reviewReady;
+      }
       resetTripButton.dataset.visible = hasTripData() ? "true" : "false";
     }
 
