@@ -3903,7 +3903,16 @@ async function handleSkiTrips(env, request, origin) {
       boots: skiJson(body.bookingDetails.boots).slice(0, 500),
       skis: skiJson(body.bookingDetails.skis).slice(0, 500),
       helmet: skiJson(body.bookingDetails.helmet).slice(0, 500),
-      skiPasses: skiJson(body.bookingDetails.skiPasses).slice(0, 500)
+      skiPasses: skiJson(body.bookingDetails.skiPasses).slice(0, 500),
+      skiRentalPeople: Array.isArray(body.bookingDetails.skiRentalPeople)
+        ? body.bookingDetails.skiRentalPeople.slice(0, 24).map((person, index) => ({
+          traveler: skiJson(person?.traveler || `Traveler ${index + 1}`).slice(0, 120),
+          needsSkis: skiJson(person?.needsSkis || "Yes").slice(0, 20),
+          ability: skiJson(person?.ability || "Intermediate").slice(0, 40),
+          skiType: skiJson(person?.skiType || "All-mountain").slice(0, 60),
+          skiLength: skiJson(person?.skiLength || "Not sure").slice(0, 40)
+        }))
+        : []
     } : {}
   };
 
