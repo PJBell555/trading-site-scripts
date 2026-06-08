@@ -2788,7 +2788,14 @@
       return `${partyState.adults} adults, ${partyState.children} ${childLabel}${ageText}, ${partyState.rooms} ${roomLabel}`;
     }
 
+    function hasDefinedPartyDetails() {
+      return Boolean(leadGroup?.value?.trim() || leadBookingGroup?.value?.trim());
+    }
+
     function travelerLabels() {
+      if (!hasDefinedPartyDetails()) {
+        return [leadName.value.trim() || "Traveler 1"];
+      }
       const labels = [];
       const lead = leadName.value.trim();
       for (let index = 0; index < partyState.adults; index += 1) {
