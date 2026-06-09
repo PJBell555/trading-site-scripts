@@ -2490,7 +2490,9 @@
     let accommodationImageIndex = 0;
 
     if (heroVideo) {
-      const playHeroVideoWithAudio = () => {
+      const playHeroVideoWithAudio = (event) => {
+        if (heroVideo.ended || heroVideo.dataset.ended === "true") return;
+        if (event?.target?.closest?.(".voice-button, .talk-topic, .edit-topic")) return;
         heroVideo.muted = false;
         heroVideo.volume = 1;
         const playAttempt = heroVideo.play();
