@@ -509,6 +509,16 @@
       width: 100%;
     }
 
+    .talk-helper[data-state="error"] {
+      background: rgba(88, 13, 17, 0.9);
+      border-color: rgba(255, 156, 156, 0.55);
+      color: #ffe8e8;
+    }
+
+    .talk-helper[data-state="ready"] {
+      color: #dff8ec;
+    }
+
     .hero-actions .danger {
       grid-column: 1;
       min-width: 0;
@@ -1614,10 +1624,13 @@
     }
 
     .status {
-      border: 1px solid var(--line);
-      color: var(--muted);
+      background: rgba(6, 27, 48, 0.72);
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: rgba(255, 255, 255, 0.92);
       min-height: 44px;
       padding: 11px 12px;
+      text-align: center;
+      width: min(100%, 700px);
     }
 
     .status.is-hidden {
@@ -1633,12 +1646,13 @@
 
     .status[data-state="ready"] {
       border-color: rgba(36, 115, 77, 0.35);
-      color: var(--green);
+      color: #dff8ec;
     }
 
     .status[data-state="error"] {
-      border-color: rgba(180, 35, 24, 0.35);
-      color: var(--red);
+      background: rgba(88, 13, 17, 0.9);
+      border-color: rgba(255, 156, 156, 0.55);
+      color: #ffe8e8;
     }
 
     .handoff-confirmation {
@@ -2556,6 +2570,7 @@
     const liveAvatarFrame = document.querySelector(".liveavatar-frame");
     const firstTripCard = document.querySelector(".trip-workspace .trip-card");
     const statusEl = document.querySelector("#status");
+    const talkHelper = document.querySelector(".talk-helper");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
     const handoffConfirmation = document.querySelector("#handoff-confirmation");
@@ -3538,6 +3553,10 @@
       statusEl.textContent = message;
       statusEl.dataset.state = state;
       statusEl.classList.remove("is-hidden");
+      if (talkHelper) {
+        talkHelper.textContent = message;
+        talkHelper.dataset.state = state;
+      }
     }
 
     function scrollToTripDetails() {
@@ -4276,6 +4295,25 @@
         setStatus("Preparing browser audio.");
 
         peerConnection = new RTCPeerConnection();
+        peerConnection.addEventListener("connectionstatechange", () => {
+          const state = peerConnection?.connectionState;
+          if (!state || state === "new") return;
+          if (state === "closed" && statusEl.dataset.state === "error") return;
+          if (state === "connected") {
+            setStatus("Voice connection established. Waiting for the concierge.", "ready");
+          } else if (state === "failed" || state === "disconnected" || state === "closed") {
+            setStatus(`Voice connection ${state}. Click Start to try again.`, "error");
+            if (state !== "closed") stopSession({ resetStatus: false });
+          } else {
+            setStatus(`Voice connection ${state}.`, "ready");
+          }
+        });
+        peerConnection.addEventListener("iceconnectionstatechange", () => {
+          const state = peerConnection?.iceConnectionState;
+          if (state === "failed" || state === "disconnected") {
+            setStatus(`Voice network connection ${state}. Click Start to try again.`, "error");
+          }
+        });
         mediaStream.getTracks().forEach((track) => peerConnection.addTrack(track, mediaStream));
         peerConnection.addEventListener("track", (event) => {
           const [stream] = event.streams;
@@ -4287,6 +4325,15 @@
           });
         });
         dataChannel = peerConnection.createDataChannel("oai-events");
+        dataChannel.addEventListener("error", () => {
+          setStatus("Voice data channel error. Click Start to try again.", "error");
+        });
+        dataChannel.addEventListener("close", () => {
+          if (statusEl.dataset.state !== "error" && document.body.dataset.voiceLive === "true") {
+            setStatus("Voice data channel closed. Click Start to reconnect.", "error");
+            stopSession({ resetStatus: false });
+          }
+        });
         dataChannel.addEventListener("open", () => {
           setVoiceConnecting(false);
           setVoiceLive(true);
