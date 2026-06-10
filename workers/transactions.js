@@ -4671,16 +4671,14 @@ function hasPeterDreamReflectionHistoryEntry(history = []) {
 
 function applyMarkovMethodSeedToRecord(record = {}, email = "") {
   const normalizedEmail = normalizeEmail(email || record.email);
-  if (!MARKOV_METHOD_TEST_AGENT_EMAILS.has(normalizedEmail)) return record;
+  if (!normalizedEmail) return record;
 
   let history = Array.isArray(record.strategyHistory) ? record.strategyHistory : [];
   const strategy = record.strategy && typeof record.strategy === "object" && !Array.isArray(record.strategy)
     ? record.strategy
     : {};
-  const missedReentryEnabled = normalizedEmail === PETER_MISSED_REENTRY_EMAIL;
-  const oilSelloffCaptureEnabled = typeof strategy.oilSelloffCaptureMode === "boolean"
-    ? strategy.oilSelloffCaptureMode
-    : true;
+  const missedReentryEnabled = true;
+  const oilSelloffCaptureEnabled = true;
   const before = {
     ...strategy,
     markovHedgeFundMethod: false,
@@ -4691,6 +4689,7 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
     ...strategy,
     markovHedgeFundMethod: true,
     oilSelloffCaptureMode: oilSelloffCaptureEnabled,
+    dreamReflection: true,
     markovRegimeMoveBps: Number(strategy.markovRegimeMoveBps) || 8,
     markovSidewaysThresholdBoost: Number(strategy.markovSidewaysThresholdBoost) || 5,
     markovSidewaysSizeMultiplier: Number(strategy.markovSidewaysSizeMultiplier) || 0.5,
@@ -4732,28 +4731,17 @@ function applyMarkovMethodSeedToRecord(record = {}, email = "") {
       after
     }, ...history].slice(0, 50);
   }
-  if (normalizedEmail === PETER_DREAM_REFLECTION_EMAIL) {
-    const dreamAfter = {
-      ...after,
-      dreamReflection: strategy.dreamReflection !== false
-    };
-    if (!hasPeterDreamReflectionHistoryEntry(history)) {
-      history = [{
-        id: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_ID,
-        changedAt: "2026-06-07T00:00:00.000Z",
-        changedByName: "Peter Bell",
-        changedByEmail: "peter@pjbell.com",
-        summary: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_TEXT,
-        detail: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_DETAIL,
-        before: { ...dreamAfter, dreamReflection: false },
-        after: dreamAfter
-      }, ...history].slice(0, 50);
-    }
-    return {
-      ...record,
-      strategy: dreamAfter,
-      strategyHistory: history
-    };
+  if (!hasPeterDreamReflectionHistoryEntry(history)) {
+    history = [{
+      id: PETER_DREAM_REFLECTION_STRATEGY_CHANGE_ID,
+      changedAt: "2026-06-07T00:00:00.000Z",
+      changedByName: "Peter Bell",
+      changedByEmail: "peter@pjbell.com",
+      summary: "Dream reflection layer enabled for all traders",
+      detail: "A separate Cloudflare Worker pass reviews D1 Open Brain memory events and recent D1 paper-trading sessions, then writes reviewable synthesized insights back into D1 for every trader.",
+      before: { ...after, dreamReflection: false },
+      after
+    }, ...history].slice(0, 50);
   }
   return {
     ...record,
@@ -4848,10 +4836,7 @@ function getUserPaperSchedulerSettings(user = {}, env, modelSettings = normalize
   const explicit = user.paperTrading && typeof user.paperTrading === "object"
     ? user.paperTrading
     : {};
-  const enabledEmails = getEnabledPaperTraderEmails(env);
-  const enabled = typeof explicit.enabled === "boolean"
-    ? explicit.enabled
-    : Boolean(user.paperTradingEnabled || enabledEmails.has(email));
+  const enabled = Boolean(email);
 
   return {
     enabled,
@@ -4879,9 +4864,7 @@ function getUserPaperSchedulerSettings(user = {}, env, modelSettings = normalize
 
 function shouldEvaluatePaperSchedulerUser(user = {}, env) {
   const email = normalizeEmail(user.email);
-  if (!email) return false;
-  const enabledEmails = getEnabledPaperTraderEmails(env);
-  return !enabledEmails.size || enabledEmails.has(email);
+  return Boolean(email);
 }
 
 function updateUserPaperSchedulerSettings(user, nextSettings = {}) {
@@ -4971,11 +4954,9 @@ function getServerStrategySettings(user = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(strategy.breakoutMinEdgePercent) || 55), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(strategy.breakoutMinVolatilityBps) || 0.8, 0, 20),
     breakoutMinMoveBps: clamp(Number(strategy.breakoutMinMoveBps) || 3, 0, 50),
-    oilSelloffCaptureMode: strategy.oilSelloffCaptureMode === true,
+    oilSelloffCaptureMode: strategy.oilSelloffCaptureMode !== false,
     trendCaptureMode: strategy.trendCaptureMode !== false,
-    markovHedgeFundMethod: isMarkovMethodTestAgent(user)
-      ? true
-      : strategy.markovHedgeFundMethod === true,
+    markovHedgeFundMethod: strategy.markovHedgeFundMethod !== false,
     markovRegimeMoveBps: clamp(Number(strategy.markovRegimeMoveBps) || 8, 1, 100),
     markovSidewaysThresholdBoost: clamp(Math.round(Number(strategy.markovSidewaysThresholdBoost) || 5), 0, 30),
     markovSidewaysSizeMultiplier: clamp(Number(strategy.markovSidewaysSizeMultiplier) || 0.5, 0.1, 1),
@@ -4990,7 +4971,7 @@ function getServerStrategySettings(user = {}) {
     advisoryOutcomeLearner: strategy.advisoryOutcomeLearner !== false,
     missedOpportunityLearner: strategy.missedOpportunityLearner !== false,
     missedOpportunityOpenPositionFilter: strategy.missedOpportunityOpenPositionFilter === true,
-    missedOpportunityReentry: isPeterMissedOpportunityReentryUser(user),
+    missedOpportunityReentry: strategy.missedOpportunityReentry !== false,
     martingaleRecoveryMode: String(strategy.martingaleRecoveryMode || "predict").toLowerCase(),
     martingaleRecoveryMinProfit: Math.max(0, Number(strategy.martingaleRecoveryMinProfit) || PAPER_MARTINGALE_RECOVERY_MIN_PROFIT),
     martingaleRecoveryMaxTargetOffset: clamp(Number(strategy.martingaleRecoveryMaxTargetOffset) || PAPER_MARTINGALE_RECOVERY_MAX_TARGET_OFFSET, 0.01, 0.2),
@@ -5000,7 +4981,7 @@ function getServerStrategySettings(user = {}) {
     profitLockMinMoveBps: clamp(Number(strategy.profitLockMinMoveBps) || 10, 0, 100),
     profitLockGivebackPct: clamp(Number(strategy.profitLockGivebackPct) || 35, 5, 80),
     missedOpportunityMoveBps: clamp(Number(strategy.missedOpportunityMoveBps) || 20, 5, 200),
-    dreamReflection: isPeterDreamReflectionUser(user) ? strategy.dreamReflection !== false : false
+    dreamReflection: strategy.dreamReflection !== false
   };
 }
 

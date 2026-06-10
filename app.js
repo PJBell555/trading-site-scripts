@@ -541,7 +541,7 @@ const DEFAULT_USER_STRATEGY = {
   advisoryOutcomeLearner: true,
   skillsAccess: true,
   openBrainAccess: true,
-  dreamReflection: false,
+  dreamReflection: true,
   skillFocus: "Lessons from Paper Trades",
   openBrainMemory: "Capture trade decisions, advisory context, and outcomes before changing thresholds.",
   regimeAware: true,
@@ -560,9 +560,9 @@ const DEFAULT_USER_STRATEGY = {
   breakoutMinEdgePercent: 55,
   breakoutMinVolatilityBps: 0.8,
   breakoutMinMoveBps: 3,
-  oilSelloffCaptureMode: false,
+  oilSelloffCaptureMode: true,
   trendCaptureMode: true,
-  markovHedgeFundMethod: false,
+  markovHedgeFundMethod: true,
   markovRegimeMoveBps: 8,
   markovSidewaysThresholdBoost: 5,
   markovSidewaysSizeMultiplier: 0.5,
@@ -575,7 +575,7 @@ const DEFAULT_USER_STRATEGY = {
   pullbackEntryRequired: true,
   profitLockTrailingStop: true,
   missedOpportunityLearner: true,
-  missedOpportunityReentry: false,
+  missedOpportunityReentry: true,
   noChaseMoveBps: 18,
   pullbackMinRetraceBps: 2,
   profitLockMinMoveBps: 10,
@@ -599,7 +599,7 @@ const D2_OIL_TEST_AGENT_STRATEGY = {
   breakoutMinEdgePercent: 57,
   oilSelloffCaptureMode: true,
   markovHedgeFundMethod: true,
-  missedOpportunityReentry: false,
+  missedOpportunityReentry: true,
   noChaseMoveBps: 14,
   pullbackMinRetraceBps: 3,
   profitLockMinMoveBps: 8,
@@ -3342,7 +3342,7 @@ function migrateMarkovMethodForTestAgents() {
   userRoster.forEach((user) => {
     const email = normalizeEmail(user.email);
     const strategy = normalizeUserStrategy(user.strategy);
-    const shouldEnable = OIL_TEST_AGENT_EMAILS.has(email);
+    const shouldEnable = Boolean(email);
     if (strategy.markovHedgeFundMethod !== shouldEnable) changed = true;
     user.strategy = {
       ...strategy,
@@ -3376,9 +3376,8 @@ function migratePeterMissedOpportunityReentry() {
   let changed = false;
   userRoster.forEach((user) => {
     const email = normalizeEmail(user.email);
-    if (email !== "peter@pjbell.com" && email !== "aretwo3000@gmail.com") return;
     const strategy = normalizeUserStrategy(user.strategy);
-    const shouldEnable = email === "peter@pjbell.com";
+    const shouldEnable = Boolean(email);
     if (strategy.missedOpportunityReentry !== shouldEnable) changed = true;
     user.strategy = {
       ...strategy,
@@ -3393,8 +3392,8 @@ function migratePeterMissedOpportunityReentry() {
           changedAt: new Date().toISOString(),
           changedByName: "Peter Bell",
           changedByEmail: "peter@pjbell.com",
-          summary: "Refinement 5/21/2026: Peter missed-opportunity re-entry enabled",
-          detail: "Peter only. If oil has already made a large intraday move, Markov favors the same side, and live tape confirms continuation after a pullback or bounce, the Cloudflare scheduler may open a small step-1 paper trade instead of waiting for the slow advisory score. D2 remains off for this rule.",
+          summary: "Refinement 5/21/2026: Missed-opportunity re-entry enabled",
+          detail: "If oil has already made a large intraday move, Markov favors the same side, and live tape confirms continuation after a pullback or bounce, the Cloudflare scheduler may open a small step-1 paper trade instead of waiting for the slow advisory score.",
           before: { ...strategy, missedOpportunityReentry: false },
           after: { ...strategy, missedOpportunityReentry: true }
         },
@@ -3420,18 +3419,9 @@ function migratePeterDreamReflectionStrategy() {
   userRoster.forEach((user) => {
     const email = normalizeEmail(user.email);
     const strategy = normalizeUserStrategy(user.strategy);
-    const shouldEnable = email === "peter@pjbell.com";
+    const shouldEnable = Boolean(email);
     const history = normalizeStrategyHistory(user.strategyHistory);
     const alreadySeeded = history.some((entry) => entry.id === "strategy-change-0006-peter-dream-reflection");
-    if (!shouldEnable && strategy.dreamReflection === true) {
-      changed = true;
-      user.strategy = {
-        ...strategy,
-        dreamReflection: false
-      };
-      user.strategyHistory = history;
-      return;
-    }
     if (shouldEnable && !alreadySeeded) {
       changed = true;
       const after = { ...strategy, dreamReflection: true };
@@ -3443,7 +3433,7 @@ function migratePeterDreamReflectionStrategy() {
           changedByName: "Peter Bell",
           changedByEmail: "peter@pjbell.com",
           summary: "Refinement 6/7/2026: Dream reflection layer enabled",
-          detail: "Peter only. A separate Cloudflare Worker pass reviews D1 Open Brain memory events and recent D1 paper-trading sessions, then writes reviewable synthesized insights back into D1. Other traders remain off.",
+          detail: "A separate Cloudflare Worker pass reviews D1 Open Brain memory events and recent D1 paper-trading sessions, then writes reviewable synthesized insights back into D1 for every trader.",
           before: { ...strategy, dreamReflection: false },
           after
         },
@@ -3667,7 +3657,7 @@ function normalizeUserStrategy(strategy = {}) {
     advisoryOutcomeLearner: merged.advisoryOutcomeLearner !== false,
     skillsAccess: merged.skillsAccess !== false,
     openBrainAccess: merged.openBrainAccess !== false,
-    dreamReflection: merged.dreamReflection === true,
+    dreamReflection: merged.dreamReflection !== false,
     skillFocus: String(merged.skillFocus || DEFAULT_USER_STRATEGY.skillFocus).trim(),
     openBrainMemory: String(merged.openBrainMemory || DEFAULT_USER_STRATEGY.openBrainMemory).trim(),
     regimeAware: merged.regimeAware !== false,
@@ -3686,9 +3676,9 @@ function normalizeUserStrategy(strategy = {}) {
     breakoutMinEdgePercent: clamp(Math.round(Number(merged.breakoutMinEdgePercent) || DEFAULT_USER_STRATEGY.breakoutMinEdgePercent), 50, 80),
     breakoutMinVolatilityBps: clamp(Number(merged.breakoutMinVolatilityBps) || DEFAULT_USER_STRATEGY.breakoutMinVolatilityBps, 0, 20),
     breakoutMinMoveBps: clamp(Number(merged.breakoutMinMoveBps) || DEFAULT_USER_STRATEGY.breakoutMinMoveBps, 0, 50),
-    oilSelloffCaptureMode: merged.oilSelloffCaptureMode === true,
+    oilSelloffCaptureMode: merged.oilSelloffCaptureMode !== false,
     trendCaptureMode: merged.trendCaptureMode !== false,
-    markovHedgeFundMethod: merged.markovHedgeFundMethod === true,
+    markovHedgeFundMethod: merged.markovHedgeFundMethod !== false,
     markovRegimeMoveBps: clamp(Number(merged.markovRegimeMoveBps) || DEFAULT_USER_STRATEGY.markovRegimeMoveBps, 1, 100),
     markovSidewaysThresholdBoost: clamp(Math.round(Number(merged.markovSidewaysThresholdBoost) || DEFAULT_USER_STRATEGY.markovSidewaysThresholdBoost), 0, 30),
     markovSidewaysSizeMultiplier: clamp(Number(merged.markovSidewaysSizeMultiplier) || DEFAULT_USER_STRATEGY.markovSidewaysSizeMultiplier, 0.1, 1),
@@ -3701,7 +3691,7 @@ function normalizeUserStrategy(strategy = {}) {
     pullbackEntryRequired: merged.pullbackEntryRequired !== false,
     profitLockTrailingStop: merged.profitLockTrailingStop !== false,
     missedOpportunityLearner: merged.missedOpportunityLearner !== false,
-    missedOpportunityReentry: merged.missedOpportunityReentry === true,
+    missedOpportunityReentry: merged.missedOpportunityReentry !== false,
     noChaseMoveBps: clamp(Number(merged.noChaseMoveBps) || DEFAULT_USER_STRATEGY.noChaseMoveBps, 0, 100),
     pullbackMinRetraceBps: clamp(Number(merged.pullbackMinRetraceBps) || DEFAULT_USER_STRATEGY.pullbackMinRetraceBps, 0, 30),
     profitLockMinMoveBps: clamp(Number(merged.profitLockMinMoveBps) || DEFAULT_USER_STRATEGY.profitLockMinMoveBps, 0, 100),
@@ -3894,7 +3884,7 @@ function ensureStrategySeedHistory(user, strategy = getCurrentUserStrategy()) {
 function seedMarkovStrategyHistoryForTestAgents() {
   let changed = false;
   userRoster.forEach((user) => {
-    if (!OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email))) return;
+    if (!normalizeEmail(user.email)) return;
     const history = normalizeStrategyHistory(user.strategyHistory);
     if (history.some((entry) => entry.id === "strategy-change-0003-markov-hedge-fund-method")) {
       user.strategyHistory = history;
@@ -3927,15 +3917,13 @@ function seedMarkovStrategyHistoryForTestAgents() {
 function seedOilSelloffCaptureForTestAgents() {
   let changed = false;
   userRoster.forEach((user) => {
-    if (!OIL_TEST_AGENT_EMAILS.has(normalizeEmail(user.email))) return;
+    if (!normalizeEmail(user.email)) return;
     const history = normalizeStrategyHistory(user.strategyHistory);
     const rawStrategy = user.strategy && typeof user.strategy === "object" && !Array.isArray(user.strategy)
       ? user.strategy
       : {};
     const strategy = normalizeUserStrategy(user.strategy);
-    const oilSelloffCaptureEnabled = typeof rawStrategy.oilSelloffCaptureMode === "boolean"
-      ? rawStrategy.oilSelloffCaptureMode
-      : true;
+    const oilSelloffCaptureEnabled = true;
     const after = normalizeUserStrategy({
       ...strategy,
       oilSelloffCaptureMode: oilSelloffCaptureEnabled
