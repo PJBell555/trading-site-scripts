@@ -3980,7 +3980,36 @@ async function handleSkiRealtimeClientSecret(env, request, origin) {
   }
 
   await request.json().catch(() => ({}));
-  const session = {
+  const session = buildSkiRealtimeSession(env);
+
+  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      expires_after: { anchor: "created_at", seconds: 600 },
+      session
+    })
+  });
+
+  const text = await response.text();
+  if (!response.ok) {
+    return jsonResponse({
+      error: "OpenAI Realtime client secret request failed.",
+      detail: text.slice(0, 1000)
+    }, response.status, origin);
+  }
+
+  return new Response(text, {
+    status: 200,
+    headers: corsHeaders(origin)
+  });
+}
+
+function buildSkiRealtimeSession(env) {
+  return {
     type: "realtime",
     model: env.OPENAI_REALTIME_MODEL || DEFAULT_OPENAI_REALTIME_MODEL,
     instructions: SKI_CONCIERGE_INSTRUCTIONS,
@@ -4020,30 +4049,53 @@ async function handleSkiRealtimeClientSecret(env, request, origin) {
       }
     }
   };
+}
 
-  const response = await fetch("https://api.openai.com/v1/realtime/client_secrets", {
+async function handleSkiRealtimeConnect(env, request, origin) {
+  if (request.method !== "POST") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const rateLimit = await enforceSkiRealtimeRateLimit(env, request, origin);
+  if (!rateLimit.ok) return rateLimit.response;
+
+  const apiKey = getOpenAiApiKey(env);
+  if (!apiKey) {
+    return jsonResponse({
+      error: "OPENAI_API_KEY is not configured for the ski voice agent."
+    }, 503, origin);
+  }
+
+  const sdp = await request.text();
+  if (!sdp || !sdp.includes("v=0")) {
+    return jsonResponse({ error: "Valid WebRTC SDP offer is required." }, 400, origin);
+  }
+
+  const body = new FormData();
+  body.set("sdp", sdp);
+  body.set("session", JSON.stringify(buildSkiRealtimeSession(env)));
+
+  const response = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json"
+      Authorization: `Bearer ${apiKey}`
     },
-    body: JSON.stringify({
-      expires_after: { anchor: "created_at", seconds: 600 },
-      session
-    })
+    body
   });
 
   const text = await response.text();
   if (!response.ok) {
     return jsonResponse({
-      error: "OpenAI Realtime client secret request failed.",
+      error: "OpenAI Realtime call connection failed.",
       detail: text.slice(0, 1000)
     }, response.status, origin);
   }
 
+  const headers = corsHeaders(origin);
+  headers["Content-Type"] = "application/sdp; charset=utf-8";
   return new Response(text, {
     status: 200,
-    headers: corsHeaders(origin)
+    headers
   });
 }
 
@@ -9651,6 +9703,10 @@ export default {
 
       if (url.pathname === "/ski/realtime/client-secret") {
         return handleSkiRealtimeClientSecret(env, request, origin);
+      }
+
+      if (url.pathname === "/ski/realtime/connect") {
+        return handleSkiRealtimeConnect(env, request, origin);
       }
 
       if (url.pathname === "/ski/voice/speak") {
