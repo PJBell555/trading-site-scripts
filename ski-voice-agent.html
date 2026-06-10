@@ -526,6 +526,120 @@
       display: inline-flex !important;
     }
 
+    .liveavatar-panel {
+      background: linear-gradient(180deg, rgba(35, 40, 71, 0.98), rgba(38, 29, 79, 0.98));
+      border: 1px solid rgba(177, 168, 255, 0.36);
+      border-radius: 20px;
+      bottom: 32px;
+      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+      color: #fff;
+      display: grid;
+      gap: 8px;
+      max-width: calc(100vw - 32px);
+      overflow: hidden;
+      padding: 10px;
+      position: fixed;
+      right: 24px;
+      width: 320px;
+      z-index: 80;
+    }
+
+    .liveavatar-panel[data-hidden="true"] {
+      display: none;
+    }
+
+    .liveavatar-toggle[hidden] {
+      display: none;
+    }
+
+    .liveavatar-window-head {
+      align-items: center;
+      display: grid;
+      gap: 2px 10px;
+      grid-template-columns: auto 1fr;
+      padding: 4px 8px 0;
+    }
+
+    .liveavatar-status-dot {
+      background: #2dc9ff;
+      border-radius: 999px;
+      box-shadow: 0 0 14px rgba(45, 201, 255, 0.9);
+      grid-row: span 2;
+      height: 10px;
+      width: 10px;
+    }
+
+    .liveavatar-window-title {
+      font-size: 0.96rem;
+      font-weight: 900;
+      line-height: 1.1;
+    }
+
+    .liveavatar-window-kicker {
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 0.62rem;
+      font-weight: 900;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+    }
+
+    .liveavatar-frame-shell {
+      background: rgba(6, 27, 48, 0.62);
+      border-radius: 18px;
+      display: block;
+      height: min(482px, calc(100vh - 208px));
+      overflow: hidden;
+      width: 100%;
+    }
+
+    .liveavatar-frame {
+      border: 0;
+      display: block;
+      height: 100%;
+      min-height: 0;
+      width: calc(100% + 18px);
+    }
+
+    .liveavatar-call-button {
+      align-items: center;
+      background: linear-gradient(135deg, #4db5ff, #7b5cff);
+      border: 0;
+      border-radius: 999px;
+      box-shadow: 0 12px 28px rgba(77, 181, 255, 0.28);
+      color: #fff;
+      display: none;
+      font-size: 1.15rem;
+      height: 64px;
+      justify-content: center;
+      justify-self: center;
+      margin-top: -54px;
+      pointer-events: none;
+      position: relative;
+      width: 64px;
+      z-index: 2;
+    }
+
+    .liveavatar-toggle {
+      background: #3b1b74;
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 999px;
+      bottom: 16px;
+      box-shadow: 0 14px 34px rgba(0, 0, 0, 0.26);
+      color: #fff;
+      font-size: 0.9rem;
+      font-weight: 900;
+      min-height: 46px;
+      padding: 0 20px;
+      position: fixed;
+      right: 24px;
+      z-index: 81;
+    }
+
+    .liveavatar-toggle[data-mode="hide"] {
+      bottom: -68px;
+      transform: translateY(100%);
+    }
+
     .hero-panel {
       align-items: center;
       display: grid;
@@ -927,9 +1041,9 @@
     .trip-workspace-inner {
       display: grid;
       gap: 16px;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
+      grid-template-columns: minmax(0, 1fr);
       margin: 0 auto;
-      max-width: 1220px;
+      max-width: 920px;
     }
 
     .trip-card {
@@ -943,7 +1057,7 @@
     }
 
     .trip-card.large {
-      grid-column: span 2;
+      grid-column: auto;
     }
 
     .accommodation-preview {
@@ -1737,6 +1851,21 @@
       .rental-controls {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+
+      .liveavatar-panel {
+        bottom: 82px;
+        right: 16px;
+        width: min(280px, calc(100vw - 32px));
+      }
+
+      .liveavatar-frame-shell {
+        height: min(462px, calc(100vh - 208px));
+      }
+
+      .liveavatar-toggle {
+        bottom: 22px;
+        right: 16px;
+      }
     }
 
     @media (max-width: 680px) {
@@ -1966,6 +2095,18 @@
         </div>
         <div class="transcript is-hidden" id="transcript" aria-live="polite"></div>
       </div>
+      <aside class="liveavatar-panel" id="liveavatar-panel" data-hidden="true" aria-label="LiveAvatar concierge preview">
+        <div class="liveavatar-window-head">
+          <span class="liveavatar-status-dot" aria-hidden="true"></span>
+          <span class="liveavatar-window-title">Ski Concierge</span>
+          <span class="liveavatar-window-kicker">Ask me about your trip</span>
+        </div>
+        <div class="liveavatar-frame-shell">
+          <iframe class="liveavatar-frame" src="https://embed.liveavatar.com/v1/46b560ab-23ac-4356-92ec-bc44a7974d54?orientation=vertical" allow="microphone" title="LiveAvatar Embed"></iframe>
+        </div>
+        <span class="liveavatar-call-button" aria-hidden="true">☎</span>
+      </aside>
+      <button class="liveavatar-toggle" type="button" id="liveavatar-toggle" data-mode="hide" hidden>Hide</button>
     </section>
 
     <section class="trip-workspace" aria-label="Live trip workspace">
@@ -2410,6 +2551,9 @@
     const previewTripButton = document.querySelector("#preview-trip-button");
     const handoffJumpButton = document.querySelector(".handoff-jump-button");
     const heroVideo = document.querySelector("#hero-video");
+    const liveAvatarPanel = document.querySelector("#liveavatar-panel");
+    const liveAvatarToggle = document.querySelector("#liveavatar-toggle");
+    const firstTripCard = document.querySelector(".trip-workspace .trip-card");
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
     const leadForm = document.querySelector("#lead-form");
@@ -2491,8 +2635,11 @@
 
     if (heroVideo) {
       const playHeroVideoWithAudio = (event) => {
-        if (heroVideo.ended || heroVideo.dataset.ended === "true") return;
         if (event?.target?.closest?.(".voice-button, .talk-topic, .edit-topic")) return;
+        if (heroVideo.ended || heroVideo.dataset.ended === "true") {
+          heroVideo.currentTime = 0;
+          heroVideo.dataset.ended = "false";
+        }
         heroVideo.muted = false;
         heroVideo.volume = 1;
         const playAttempt = heroVideo.play();
@@ -2505,8 +2652,8 @@
         heroVideo.dataset.ended = "false";
       });
       heroVideo.addEventListener("loadeddata", playHeroVideoWithAudio, { once: true });
-      document.addEventListener("pointerdown", playHeroVideoWithAudio, { once: true });
-      document.addEventListener("keydown", playHeroVideoWithAudio, { once: true });
+      document.addEventListener("pointerdown", playHeroVideoWithAudio);
+      document.addEventListener("keydown", playHeroVideoWithAudio);
     }
 
     const selectedChoices = {
@@ -3391,6 +3538,20 @@
       statusEl.dataset.state = state;
     }
 
+    function scrollToTripDetails() {
+      const target = firstTripCard || document.querySelector(".trip-workspace");
+      if (!target) return;
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
+    function setLiveAvatarHidden(isHidden) {
+      if (!liveAvatarPanel || !liveAvatarToggle) return;
+      liveAvatarPanel.dataset.hidden = isHidden ? "true" : "false";
+      liveAvatarToggle.textContent = isHidden ? "Show Avatar" : "Hide";
+      liveAvatarToggle.dataset.mode = isHidden ? "show" : "hide";
+      liveAvatarToggle.hidden = false;
+    }
+
     function showHandoffConfirmation(email) {
       const tripLink = `${window.location.origin}${window.location.pathname}?trip=${encodeURIComponent(cloudTripId)}#concierge`;
       handoffConfirmation.innerHTML = `Email sent. Trip handoff closed. <span aria-hidden="true">&#9993;</span><small>Use trip ID ${cloudTripId} or <a href="${tripLink}">revisit the trip</a> to continue refining later.</small>`;
@@ -4046,6 +4207,7 @@
     }
 
     async function startSession(topic = "") {
+      setLiveAvatarHidden(false);
       startButton.disabled = true;
       setVoiceConnecting(true);
       setStatus("Requesting microphone access.");
@@ -4081,6 +4243,7 @@
           setVoiceConnecting(false);
           setVoiceLive(true);
           setStatus("Connected. Ask about a ski trip.", "ready");
+          scrollToTripDetails();
           sendFocusedTopicPrompt(topic);
         });
         dataChannel.addEventListener("message", (message) => {
@@ -4443,6 +4606,9 @@
     startButton.addEventListener("click", () => startSession());
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
+    liveAvatarToggle?.addEventListener("click", () => {
+      setLiveAvatarHidden(liveAvatarPanel?.dataset.hidden !== "true");
+    });
     previewTripButton?.addEventListener("click", () => {
       previewTripUnlocked = true;
       renderSkiRentalPlanner({ updateSummary: false });
