@@ -4248,8 +4248,11 @@
         dataChannel.addEventListener("open", () => {
           setVoiceConnecting(false);
           setVoiceLive(true);
-          loadLiveAvatarFrame();
-          setLiveAvatarHidden(false);
+          if (liveAvatarToggle) {
+            liveAvatarToggle.hidden = false;
+            liveAvatarToggle.textContent = "Show Avatar";
+            liveAvatarToggle.dataset.mode = "show";
+          }
           setStatus("Connected. Ask about a ski trip.", "ready");
           scrollToTripDetails();
           sendFocusedTopicPrompt(topic);
@@ -4615,7 +4618,9 @@
     stopButton.addEventListener("click", stopSession);
     resetTripButton.addEventListener("click", () => resetTrip());
     liveAvatarToggle?.addEventListener("click", () => {
-      setLiveAvatarHidden(liveAvatarPanel?.dataset.hidden !== "true");
+      const shouldShow = liveAvatarPanel?.dataset.hidden === "true";
+      if (shouldShow) loadLiveAvatarFrame();
+      setLiveAvatarHidden(!shouldShow);
     });
     previewTripButton?.addEventListener("click", () => {
       previewTripUnlocked = true;
