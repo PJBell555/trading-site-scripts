@@ -587,7 +587,7 @@
       background: rgba(6, 27, 48, 0.62);
       border-radius: 18px;
       display: block;
-      height: min(482px, calc(100vh - 208px));
+      height: min(512px, calc(100vh - 178px));
       overflow: hidden;
       width: 100%;
     }
@@ -1859,7 +1859,7 @@
       }
 
       .liveavatar-frame-shell {
-        height: min(462px, calc(100vh - 208px));
+        height: min(492px, calc(100vh - 178px));
       }
 
       .liveavatar-toggle {
@@ -2102,7 +2102,7 @@
           <span class="liveavatar-window-kicker">Ask me about your trip</span>
         </div>
         <div class="liveavatar-frame-shell">
-          <iframe class="liveavatar-frame" src="https://embed.liveavatar.com/v1/46b560ab-23ac-4356-92ec-bc44a7974d54?orientation=vertical" allow="microphone" title="LiveAvatar Embed"></iframe>
+          <iframe class="liveavatar-frame" data-src="https://embed.liveavatar.com/v1/46b560ab-23ac-4356-92ec-bc44a7974d54?orientation=vertical" title="LiveAvatar Embed"></iframe>
         </div>
         <span class="liveavatar-call-button" aria-hidden="true">☎</span>
       </aside>
@@ -2553,6 +2553,7 @@
     const heroVideo = document.querySelector("#hero-video");
     const liveAvatarPanel = document.querySelector("#liveavatar-panel");
     const liveAvatarToggle = document.querySelector("#liveavatar-toggle");
+    const liveAvatarFrame = document.querySelector(".liveavatar-frame");
     const firstTripCard = document.querySelector(".trip-workspace .trip-card");
     const statusEl = document.querySelector("#status");
     const transcriptEl = document.querySelector("#transcript");
@@ -3552,6 +3553,12 @@
       liveAvatarToggle.hidden = false;
     }
 
+    function loadLiveAvatarFrame() {
+      if (!liveAvatarFrame || liveAvatarFrame.src) return;
+      const frameUrl = liveAvatarFrame.dataset.src;
+      if (frameUrl) liveAvatarFrame.src = frameUrl;
+    }
+
     function showHandoffConfirmation(email) {
       const tripLink = `${window.location.origin}${window.location.pathname}?trip=${encodeURIComponent(cloudTripId)}#concierge`;
       handoffConfirmation.innerHTML = `Email sent. Trip handoff closed. <span aria-hidden="true">&#9993;</span><small>Use trip ID ${cloudTripId} or <a href="${tripLink}">revisit the trip</a> to continue refining later.</small>`;
@@ -4207,7 +4214,6 @@
     }
 
     async function startSession(topic = "") {
-      setLiveAvatarHidden(false);
       startButton.disabled = true;
       setVoiceConnecting(true);
       setStatus("Requesting microphone access.");
@@ -4242,6 +4248,8 @@
         dataChannel.addEventListener("open", () => {
           setVoiceConnecting(false);
           setVoiceLive(true);
+          loadLiveAvatarFrame();
+          setLiveAvatarHidden(false);
           setStatus("Connected. Ask about a ski trip.", "ready");
           scrollToTripDetails();
           sendFocusedTopicPrompt(topic);
