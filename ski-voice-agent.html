@@ -629,6 +629,11 @@
       opacity: 0.32;
     }
 
+    .liveavatar-minimize-button {
+      font-size: 0.88rem;
+      width: 34px;
+    }
+
     .liveavatar-frame-shell {
       background: rgba(6, 27, 48, 0.62);
       border-radius: 18px;
@@ -2153,6 +2158,7 @@
           <span class="liveavatar-size-controls" aria-label="Avatar window size controls">
             <button class="liveavatar-size-button" type="button" data-avatar-size="smaller" aria-label="Shrink avatar window">-</button>
             <button class="liveavatar-size-button" type="button" data-avatar-size="larger" aria-label="Enlarge avatar window">+</button>
+            <button class="liveavatar-size-button liveavatar-minimize-button" type="button" id="liveavatar-minimize" aria-label="Collapse avatar window">_</button>
           </span>
         </div>
         <div class="liveavatar-frame-shell">
@@ -2609,6 +2615,7 @@
     const liveAvatarToggle = document.querySelector("#liveavatar-toggle");
     const liveAvatarFrame = document.querySelector(".liveavatar-frame");
     const liveAvatarSizeButtons = document.querySelectorAll("[data-avatar-size]");
+    const liveAvatarMinimize = document.querySelector("#liveavatar-minimize");
     const firstTripCard = document.querySelector(".trip-workspace .trip-card");
     const statusEl = document.querySelector("#status");
     const talkHelper = document.querySelector(".talk-helper");
@@ -3595,7 +3602,7 @@
     function setStatus(message, state = "idle") {
       statusEl.textContent = message;
       statusEl.dataset.state = state;
-      statusEl.classList.remove("is-hidden");
+      statusEl.classList.add("is-hidden");
       if (talkHelper) {
         talkHelper.textContent = message;
         talkHelper.dataset.state = state;
@@ -4773,6 +4780,7 @@
     liveAvatarSizeButtons.forEach((button) => {
       button.addEventListener("click", () => changeLiveAvatarSize(button.dataset.avatarSize));
     });
+    liveAvatarMinimize?.addEventListener("click", () => setLiveAvatarHidden(true));
     liveAvatarToggle?.addEventListener("click", () => {
       const shouldShow = liveAvatarPanel?.dataset.hidden === "true";
       if (shouldShow) loadLiveAvatarFrame();
