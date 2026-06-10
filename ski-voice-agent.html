@@ -4361,8 +4361,8 @@
         try {
           answerSdp = await exchangeSdpThroughWorker(offer.sdp);
         } catch (workerError) {
-          if (![404, 405].includes(workerError.status)) throw workerError;
-          setStatus("Cloudflare audio route not deployed yet. Using browser fallback.");
+          console.warn("Cloudflare audio route failed; using browser fallback", workerError);
+          setStatus("Cloudflare audio route failed. Trying browser fallback.");
           answerSdp = await exchangeSdpWithEphemeralKey(offer.sdp);
         }
         await peerConnection.setRemoteDescription({ type: "answer", sdp: answerSdp });

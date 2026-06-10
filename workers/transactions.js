@@ -4051,6 +4051,19 @@ function buildSkiRealtimeSession(env) {
   };
 }
 
+function buildSkiRealtimeCallSession(env) {
+  return {
+    type: "realtime",
+    model: env.OPENAI_REALTIME_MODEL || DEFAULT_OPENAI_REALTIME_MODEL,
+    instructions: SKI_CONCIERGE_INSTRUCTIONS,
+    audio: {
+      output: {
+        voice: env.OPENAI_REALTIME_VOICE || DEFAULT_OPENAI_REALTIME_VOICE
+      }
+    }
+  };
+}
+
 async function handleSkiRealtimeConnect(env, request, origin) {
   if (request.method !== "POST") {
     return jsonResponse({ error: "Method not allowed" }, 405, origin);
@@ -4073,7 +4086,7 @@ async function handleSkiRealtimeConnect(env, request, origin) {
 
   const body = new FormData();
   body.set("sdp", sdp);
-  body.set("session", JSON.stringify(buildSkiRealtimeSession(env)));
+  body.set("session", JSON.stringify(buildSkiRealtimeCallSession(env)));
 
   const response = await fetch("https://api.openai.com/v1/realtime/calls", {
     method: "POST",
