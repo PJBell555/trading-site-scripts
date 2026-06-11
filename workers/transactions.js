@@ -8717,17 +8717,7 @@ async function runPaperTradingScheduler(env, options = {}) {
     }
 
     await upsertUnifiedTransactionRows(env, transactions, PAPER_TRADE_MODE);
-    try {
-      await saveRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, {
-        ...settings,
-        users,
-        generatedAt: new Date().toISOString(),
-        source: "cloudflare-d1-shared-settings"
-      });
-    } catch (error) {
-      run.settingsSaveError = error.message;
-      console.error("paper scheduler settings save failed", error);
-    }
+    run.settingsSaveSkipped = "Scheduler avoids rewriting the full shared settings document; run decisions are stored in paper_scheduler_runs and strategy records.";
     try {
       await upsertUserStrategyRecordsD1(env, {
         ...settings,
@@ -8818,8 +8808,8 @@ async function handlePaperSchedulerRoute(env, request, origin) {
   const body = await request.json().catch(() => ({}));
   const protectiveSweep = await sweepBreachedOpenPaperTradesD1(env);
   const run = await runPaperTradingScheduler(env, {
-    force: body.force === true || url.searchParams.get("force") === "true",
-    forceAdvisory: body.forceAdvisory === true || url.searchParams.get("forceAdvisory") === "true"
+    force: body.force === true || url.searchParams.get("force") === "true" || url.searchParams.get("force") === "1",
+    forceAdvisory: body.forceAdvisory === true || url.searchParams.get("forceAdvisory") === "true" || url.searchParams.get("forceAdvisory") === "1"
   });
   run.protectiveSweep = protectiveSweep;
   return jsonResponse(run, run.status === "failed" ? 500 : 200, origin);
