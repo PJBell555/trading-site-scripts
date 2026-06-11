@@ -6495,6 +6495,32 @@ async function getServerMarketPrice(env, user, commodity, advisory = null, overr
     };
   }
 
+  try {
+    await ensurePriceTicksTable(env);
+    const tickProductKeys = getServerConfigProductKeys(config);
+    const tickPlaceholders = tickProductKeys.map(() => "?").join(", ");
+    const tick = await env.DB.prepare(`
+      SELECT price, tick_time
+      FROM price_ticks
+      WHERE commodity = ?
+        ${tickProductKeys.length ? `AND (lower(COALESCE(product_id, '')) IN (${tickPlaceholders}) OR lower(COALESCE(ticker, '')) IN (${tickPlaceholders}))` : ""}
+      ORDER BY tick_time DESC
+      LIMIT 1
+    `).bind(...(tickProductKeys.length ? [commodity, ...tickProductKeys, ...tickProductKeys] : [commodity])).first();
+    const tickPrice = Number(tick?.price);
+    const tickTime = getTransactionDate(tick?.tick_time);
+    const tickFresh = Date.now() - tickTime.getTime() <= PAPER_SCHEDULER_PRICE_STALE_MS;
+    if (Number.isFinite(tickPrice) && tickPrice > 0 && tickFresh) {
+      return {
+        price: tickPrice,
+        source: "Latest D1 price tick",
+        time: tickTime.toISOString()
+      };
+    }
+  } catch (_error) {
+    // If D1 tick fallback is unavailable, report no fresh price.
+  }
+
   return null;
 }
 
@@ -7187,7 +7213,7 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
     && priceTrend.bearishTrend
     && Number(priceTrend.downEdge) >= 70
     && Number(priceTrend.vwapDistance) < 0
-    && Number(priceTrend.ret60) < 0
+    && (Number(priceTrend.ret60) < 0 || Number(priceTrend.drawdownBps) <= -180 || Number(priceTrend.moveBps) <= -120)
   );
 
   if (markovMethod?.enabled && markovMethod.counterState && !breakoutSignal) {
@@ -7208,7 +7234,7 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
     }
   }
 
-  if (strategy.noChaseEntries && !breakoutSignal) {
+  if (strategy.noChaseEntries && !breakoutSignal && !d1SelloffCapture) {
     if (side === "long" && ret180 >= noChaseMoveBps && ret10 > 0 && ret30 > 0) {
       return { ok: false, reason: `no-chase rule blocks long after ${ret180.toFixed(2)} bps fast rise; wait for pullback/reclaim.` };
     }
@@ -7217,7 +7243,7 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
     }
   }
 
-  if (strategy.pullbackEntryRequired && !breakoutSignal) {
+  if (strategy.pullbackEntryRequired && !breakoutSignal && !d1SelloffCapture) {
     const minimumVolatility = Math.max(0.5, Math.min(2, volatility || 0.5));
     const longPullbackReclaim = ret60 >= 0 && ret30 <= -pullbackMinRetraceBps && ret10 > 0 && vwapDistance >= 0 && volatility >= minimumVolatility;
     const shortBounceFailure = ret60 <= 0 && ret30 >= pullbackMinRetraceBps && ret10 < 0 && vwapDistance <= 0 && volatility >= minimumVolatility;
@@ -7259,7 +7285,7 @@ function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
     priceTrend.bearishTrend
     && downEdge >= minEdge
     && bearishStrength >= 25
-    && bearishStrength >= bullishStrength + 6
+    && (bearishStrength >= bullishStrength + 6 || drawdownBps <= -180 || moveBps <= -120)
     && !(advisorySide === "long" && advisoryConviction >= 70)
   );
   if (bearishOverride) {
