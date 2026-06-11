@@ -3546,7 +3546,10 @@ function getPaperLedgerSummaryCounts(row = {}) {
 
 function getPaperLedgerSummaryLabel(row = {}, displayedRows = 0) {
   const counts = getPaperLedgerSummaryCounts(row);
-  return `Cloudflare summary: ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
+  const closedPnl = Number(row.closedPnl) || 0;
+  const openPnl = Number(row.openPnl) || 0;
+  const totalPnl = Number.isFinite(Number(row.totalPnl)) ? Number(row.totalPnl) : closedPnl + openPnl;
+  return `Cloudflare summary: closed ${formatSignedMoney(closedPnl)} + open ${formatSignedMoney(openPnl)} = total ${formatSignedMoney(totalPnl)}; ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
 }
 
 function getCloudLedgerFallbackSummaryLabel(displayedRows = 0) {
@@ -7855,7 +7858,7 @@ function appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision) {
 }
 
 function appendSimplePaperHistoryRows(entries) {
-  entries.slice(0, 50).forEach((entry) => {
+  entries.forEach((entry) => {
     const row = document.createElement("tr");
     const pnl = getDisplayPnl(entry);
     const isClosed = isClosingTransaction(entry) || entry.closedAt;
@@ -13595,7 +13598,7 @@ async function loadSharedTransactionHistory(manual = false) {
     sharedHistoryStatusEl.textContent = "Loading Cloudflare ledger";
     const ledgerParams = new URLSearchParams({
       compact: "1",
-      limit: "80",
+      limit: "500",
       prices: "1",
       ts: String(Date.now())
     });
@@ -15039,7 +15042,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
 
   appendQueuedPaperTradeRow(commodity, signal, tradePlan, decision);
   const rowsBeforeHistory = transactionHistoryEl.children.length;
-  rowsToRender.slice(0, 50).forEach((entry) => {
+  rowsToRender.forEach((entry) => {
     try {
       const row = document.createElement("tr");
       const displayPnl = getDisplayPnl(entry);
@@ -15168,7 +15171,7 @@ function renderPaperTrading(commodity, signal, tradePlan) {
     });
     appendSimplePaperHistoryRows(rowsToRender);
     if (sharedHistoryStatusEl) {
-      sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; fallback rendered ${Math.min(rowsToRender.length, 50)}`;
+      sharedHistoryStatusEl.textContent = `Ledger loaded ${displaySourceEntries.length} rows; fallback rendered ${rowsToRender.length}`;
     }
   }
 }
