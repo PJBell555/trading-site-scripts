@@ -5579,6 +5579,11 @@ async function getPriceSnapshots(env, forceRefresh = false) {
         String(item || "").toLowerCase() === String(activeCommodity.productId || activeCommodity.ticker || "").toLowerCase()
       ));
     if (!forceRefresh && existingMatchesActiveContract && existing?.ok && isFreshPriceSnapshot(existing)) {
+      const tickSnapshot = {
+        ...existing,
+        fetchedAt: new Date().toISOString()
+      };
+      await savePriceTick(env, tickSnapshot);
       entries.push(existing);
       continue;
     }
