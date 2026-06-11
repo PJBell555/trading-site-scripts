@@ -9486,6 +9486,12 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
       };
       payload.totalTransactions = filteredTransactions.length;
       payload.transactions = rowLimit > 0 ? filteredTransactions.slice(0, rowLimit) : [];
+      if (payload.summary?.rows && requestedEmail) {
+        payload.summary = {
+          ...payload.summary,
+          rows: payload.summary.rows.filter((row) => normalizeEmail(row?.email || row?.user?.email) === requestedEmail)
+        };
+      }
     }
     return jsonResponse(payload, 200, origin);
   }

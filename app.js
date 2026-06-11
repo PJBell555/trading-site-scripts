@@ -3529,7 +3529,6 @@ async function loadPaperLedgerSummary(manual = false) {
 function shouldUsePaperLedgerSummaryTotals() {
   return Boolean(
     transactionHistoryLoadedFromBackend
-    && !historyFiltersTouched
     && normalizeHistoryCommodityFilter() === "all"
     && historyPeriodFilter === "all"
   );
@@ -3549,7 +3548,7 @@ function getPaperLedgerSummaryLabel(row = {}, displayedRows = 0) {
   const closedPnl = Number(row.closedPnl) || 0;
   const openPnl = Number(row.openPnl) || 0;
   const totalPnl = Number.isFinite(Number(row.totalPnl)) ? Number(row.totalPnl) : closedPnl + openPnl;
-  return `Cloudflare summary: closed ${formatSignedMoney(closedPnl)} + open ${formatSignedMoney(openPnl)} = total ${formatSignedMoney(totalPnl)}; ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
+  return `Cloudflare summary: realized closed P/L ${formatSignedMoney(closedPnl)}; open mark ${formatSignedMoney(openPnl)}; mark-to-market ${formatSignedMoney(totalPnl)}; ${counts.active} active / ${counts.entries} entries / ${counts.exits} matched exits / ${counts.auditRows} audit rows; table shows ${displayedRows} display rows`;
 }
 
 function getCloudLedgerFallbackSummaryLabel(displayedRows = 0) {
@@ -13600,6 +13599,7 @@ async function loadSharedTransactionHistory(manual = false) {
       compact: "1",
       limit: "500",
       prices: "1",
+      summary: "1",
       ts: String(Date.now())
     });
     const ledgerEmail = getCurrentLedgerEmail();
