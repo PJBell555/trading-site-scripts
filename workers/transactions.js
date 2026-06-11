@@ -11,6 +11,7 @@ const PAPER_SCHEDULER_RUN_LIMIT = 20;
 const PAPER_SCHEDULER_DEFAULT_THRESHOLD = 50;
 const PAPER_SCHEDULER_PRICE_STALE_MS = 30 * 60 * 1000;
 const PAPER_SCHEDULER_MIN_EVALUATION_MS = 4 * 60 * 1000;
+const PAPER_SCHEDULER_MAX_USERS_PER_RUN = 4;
 const PAPER_SCHEDULER_DEFAULT_MAX_OPEN = 1;
 const PAPER_SCHEDULER_DEFAULT_RISK_PCT = 0.75;
 const PAPER_SCHEDULER_DEFAULT_START_CAPITAL = 1000;
@@ -8144,18 +8145,43 @@ async function runPaperTradingScheduler(env, options = {}) {
     const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
     const transactions = payload.transactions || [];
     const advisoryRefreshCache = new Map();
+    const maxUsersPerRun = clamp(
+      Math.round(Number(options.maxUsersPerRun ?? env.PAPER_SCHEDULER_MAX_USERS_PER_RUN ?? PAPER_SCHEDULER_MAX_USERS_PER_RUN) || PAPER_SCHEDULER_MAX_USERS_PER_RUN),
+      1,
+      Math.max(1, users.length)
+    );
+    const dueUsers = users
+      .map((user, index) => {
+        const email = normalizeEmail(user.email);
+        if (!email || !shouldEvaluatePaperSchedulerUser(user, env)) return null;
+        const schedulerSettings = getUserPaperSchedulerSettings(user, env, modelSettings);
+        if (!schedulerSettings.enabled) return null;
+        const lastEvaluationAt = schedulerSettings.lastEvaluationAt ? getTransactionDate(schedulerSettings.lastEvaluationAt) : null;
+        const lastEvaluationTime = lastEvaluationAt?.getTime();
+        const due = options.force
+          || !Number.isFinite(lastEvaluationTime)
+          || Date.now() - lastEvaluationTime >= schedulerSettings.minEvaluationMs;
+        if (!due) return null;
+        return {
+          user,
+          email,
+          schedulerSettings,
+          index,
+          lastEvaluationTime: Number.isFinite(lastEvaluationTime) ? lastEvaluationTime : 0
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => (a.lastEvaluationTime - b.lastEvaluationTime) || (a.index - b.index));
+    const selectedUsers = dueUsers.slice(0, maxUsersPerRun);
+    run.batch = {
+      maxUsersPerRun,
+      dueUsers: dueUsers.length,
+      selectedUsers: selectedUsers.length,
+      selectedEmails: selectedUsers.map((item) => item.email)
+    };
 
-    for (const user of users) {
-      const email = normalizeEmail(user.email);
-      if (!email) continue;
-      if (!shouldEvaluatePaperSchedulerUser(user, env)) continue;
-      const schedulerSettings = getUserPaperSchedulerSettings(user, env, modelSettings);
-      if (!schedulerSettings.enabled) continue;
-      const lastEvaluationAt = schedulerSettings.lastEvaluationAt ? getTransactionDate(schedulerSettings.lastEvaluationAt) : null;
-      if (!options.force && lastEvaluationAt && Date.now() - lastEvaluationAt.getTime() < schedulerSettings.minEvaluationMs) {
-        run.skippedTrades += 1;
-        continue;
-      }
+    for (const candidate of selectedUsers) {
+      const { user, email, schedulerSettings } = candidate;
 
       run.evaluatedUsers += 1;
       const openTrades = await loadOpenPaperTradesForUserD1(env, transactions, email);
