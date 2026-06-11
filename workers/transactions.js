@@ -6745,16 +6745,32 @@ async function getServerPriceTrendContext(env, commodity, config = null) {
     ...samples.slice(1).map((sample, index) => Math.abs(getServerBpsMove(samples[index].price, sample.price))),
     Math.abs(moveBps) / Math.max(1, samples.length)
   );
+  const majorSelloffShock = Boolean(
+    drawdownBps <= -150
+    && latest.price < high * 0.99
+    && (latest.price < average || ret60 <= -8 || ret180 <= -12 || moveBps <= -60)
+  );
+  const majorRecoveryShock = Boolean(
+    rallyBps >= 150
+    && latest.price > low * 1.01
+    && (latest.price > average || ret60 >= 8 || ret180 >= 12 || moveBps >= 60)
+  );
   const bearishTrend = Boolean(
-    latest.price < average
-    && (moveBps <= -20 || ret60 <= -10 || ret180 <= -15 || drawdownBps <= -35)
+    (
+      latest.price < average
+      && (moveBps <= -20 || ret60 <= -10 || ret180 <= -15 || drawdownBps <= -35)
+    )
+    || majorSelloffShock
   );
   const bullishTrend = Boolean(
-    latest.price > average
-    && (moveBps >= 20 || ret60 >= 10 || ret180 >= 15 || rallyBps >= 35)
+    (
+      latest.price > average
+      && (moveBps >= 20 || ret60 >= 10 || ret180 >= 15 || rallyBps >= 35)
+    )
+    || majorRecoveryShock
   );
-  const downEdge = bearishTrend ? clamp(Math.round(55 + Math.min(20, Math.abs(Math.min(moveBps, ret60, ret180, drawdownBps)) / 8)), 55, 75) : 50;
-  const upEdge = bullishTrend ? clamp(Math.round(55 + Math.min(20, Math.max(moveBps, ret60, ret180, rallyBps) / 8)), 55, 75) : 50;
+  const downEdge = bearishTrend ? clamp(Math.round(55 + Math.min(25, Math.abs(Math.min(moveBps, ret60, ret180, drawdownBps)) / 8)), 55, 80) : 50;
+  const upEdge = bullishTrend ? clamp(Math.round(55 + Math.min(25, Math.max(moveBps, ret60, ret180, rallyBps) / 8)), 55, 80) : 50;
 
   return {
     ready: true,
@@ -6768,6 +6784,8 @@ async function getServerPriceTrendContext(env, commodity, config = null) {
     ret180,
     drawdownBps,
     rallyBps,
+    majorSelloffShock,
+    majorRecoveryShock,
     vwapDistance,
     volatility,
     downEdge,
@@ -6940,8 +6958,8 @@ function getServerDirectionalContext(micro, advisoryBreakout = null, priceTrend 
   );
   const bearishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove <= -8 && shortShare >= Math.max(35, longShare));
   const bullishAdvisoryTape = Boolean(advisoryBreakout?.ready && recentMove >= 8 && longShare >= Math.max(35, shortShare));
-  const bearishPriceTape = Boolean(priceTrend?.ready && priceTrend.bearishTrend && !priceTrend.bullishTrend);
-  const bullishPriceTape = Boolean(priceTrend?.ready && priceTrend.bullishTrend && !priceTrend.bearishTrend);
+  const bearishPriceTape = Boolean(priceTrend?.ready && (priceTrend.bearishTrend || priceTrend.majorSelloffShock) && !(priceTrend.bullishTrend || priceTrend.majorRecoveryShock));
+  const bullishPriceTape = Boolean(priceTrend?.ready && (priceTrend.bullishTrend || priceTrend.majorRecoveryShock) && !(priceTrend.bearishTrend || priceTrend.majorSelloffShock));
   const isBearishTrend = bearishTape || bearishAdvisoryTape || bearishPriceTape;
   const isBullishTrend = bullishTape || bullishAdvisoryTape || bullishPriceTape;
   const longReversalConfirmed = Boolean(
@@ -7210,10 +7228,10 @@ function getServerEntryQualityGate(activeSignal, price, strategy, directionalCon
     && activeSignal.label === "D1 Trend Short"
     && side === "short"
     && priceTrend.ready
-    && priceTrend.bearishTrend
+    && (priceTrend.bearishTrend || priceTrend.majorSelloffShock)
     && Number(priceTrend.downEdge) >= 70
     && Number(priceTrend.vwapDistance) < 0
-    && (Number(priceTrend.ret60) < 0 || Number(priceTrend.drawdownBps) <= -180 || Number(priceTrend.moveBps) <= -120)
+    && (priceTrend.majorSelloffShock || Number(priceTrend.ret60) < 0 || Number(priceTrend.drawdownBps) <= -180 || Number(priceTrend.moveBps) <= -120)
   );
 
   if (markovMethod?.enabled && markovMethod.counterState && !breakoutSignal) {
@@ -7282,10 +7300,10 @@ function getServerPriceTrendOverrideSignal(signal, strategy, priceTrend) {
   const bullishStrength = Math.max(0, moveBps, ret60, ret180, rallyBps, vwapDistance);
 
   const bearishOverride = Boolean(
-    priceTrend.bearishTrend
+    (priceTrend.bearishTrend || priceTrend.majorSelloffShock)
     && downEdge >= minEdge
     && bearishStrength >= 25
-    && (bearishStrength >= bullishStrength + 6 || drawdownBps <= -180 || moveBps <= -120)
+    && (priceTrend.majorSelloffShock || bearishStrength >= bullishStrength + 6 || drawdownBps <= -180 || moveBps <= -120)
     && !(advisorySide === "long" && advisoryConviction >= 70)
   );
   if (bearishOverride) {
@@ -7350,16 +7368,16 @@ function getServerTrendCaptureSignal(signal, micro, strategy, directionalContext
   );
   const decisiveBearishPriceTrend = Boolean(
     priceTrend.ready
-    && priceTrend.bearishTrend
+    && (priceTrend.bearishTrend || priceTrend.majorSelloffShock)
     && bearishPriceStrength >= 35
-    && bearishPriceStrength >= bullishPriceStrength + 8
+    && (priceTrend.majorSelloffShock || bearishPriceStrength >= bullishPriceStrength + 8)
     && directionalContext.downEdge >= Math.min(minEdge, 55)
   );
   const decisiveBullishPriceTrend = Boolean(
     priceTrend.ready
-    && priceTrend.bullishTrend
+    && (priceTrend.bullishTrend || priceTrend.majorRecoveryShock)
     && bullishPriceStrength >= 35
-    && bullishPriceStrength >= bearishPriceStrength + 8
+    && (priceTrend.majorRecoveryShock || bullishPriceStrength >= bearishPriceStrength + 8)
     && directionalContext.upEdge >= Math.min(minEdge, 55)
   );
   if (decisiveBearishPriceTrend && !(advisorySide === "long" && advisoryConviction >= 70)) {
