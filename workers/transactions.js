@@ -8332,7 +8332,12 @@ async function runPaperTradingScheduler(env, options = {}) {
             closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
             closeReason = openTradeRoll.detail;
           } else if (marketSchedule.flattenWindow) {
-            const holdDecision = getServerPreCloseHoldDecision(openTrade, signal, schedulerSettings, directionalContext);
+            const holdDecision = marketSchedule.closeType === "weekly"
+              ? {
+                  hold: false,
+                  reason: `Weekend gap risk rule: flatten ${openTrade.side} before the weekly market close.`
+                }
+              : getServerPreCloseHoldDecision(openTrade, signal, schedulerSettings, directionalContext);
             if (holdDecision.hold) {
               lastDecision = `${commodity}: holding ${openTrade.side} through configured close`;
               setDecisionAudit("pre-close-hold", lastDecision, {
