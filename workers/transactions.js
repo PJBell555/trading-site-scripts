@@ -9450,34 +9450,55 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     const rowLimit = Number.isFinite(requestedLimit)
       ? Math.max(0, Math.min(500, Math.trunc(requestedLimit)))
       : 200;
+    let filteredTransactions = payload.transactions || [];
+    if (compact) {
+      filteredTransactions = (payload.transactions || []).filter((entry) => {
+        const emailMatch = !requestedEmail || normalizeEmail(entry?.userEmail || entry?.user?.email) === requestedEmail;
+        const commodity = normalizeServerCommodityId(entry?.commodity || inferServerCommodityFromContract(entry?.contract));
+        const commodityMatch = !requestedCommodity || requestedCommodity === "all" || commodity === requestedCommodity;
+        return emailMatch && commodityMatch;
+      });
+    }
+    let priceSnapshots = null;
     if (normalizedMode === PAPER_TRADE_MODE && includePrices) {
-      const priceSnapshots = await loadStoredPriceSnapshots(env);
+      priceSnapshots = await loadStoredPriceSnapshots(env);
       payload.prices = Object.fromEntries(Object.entries(priceSnapshots || {}).map(([commodity, snapshot]) => [
         commodity,
         toLitePriceSnapshot(snapshot)
       ]));
     }
     if (normalizedMode === PAPER_TRADE_MODE && includeSummary) {
-      const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-        env,
-        await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-      ));
-      const priceSnapshots = await loadStoredPriceSnapshots(env);
-      payload.summary = buildServerLeaderboardSummary(
-        settings,
-        payload.transactions || [],
-        priceSnapshots,
-        "all",
-        "cloudflare-d1-paper-ledger-summary"
-      );
+      try {
+        const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
+          env,
+          await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
+        ));
+        const summarySettings = requestedEmail
+          ? {
+              ...settings,
+              users: (settings.users || []).filter((user) => normalizeEmail(user?.email) === requestedEmail)
+            }
+          : settings;
+        if (!priceSnapshots) priceSnapshots = await loadStoredPriceSnapshots(env);
+        payload.summary = buildServerLeaderboardSummary(
+          summarySettings,
+          requestedEmail ? filteredTransactions : (payload.transactions || []),
+          priceSnapshots,
+          "all",
+          "cloudflare-d1-paper-ledger-summary"
+        );
+      } catch (error) {
+        payload.summary = {
+          generatedAt: new Date().toISOString(),
+          source: "cloudflare-d1-paper-ledger-summary",
+          storage: "d1",
+          period: "all",
+          rows: [],
+          error: "summary unavailable"
+        };
+      }
     }
     if (compact) {
-      const filteredTransactions = (payload.transactions || []).filter((entry) => {
-        const emailMatch = !requestedEmail || normalizeEmail(entry?.userEmail || entry?.user?.email) === requestedEmail;
-        const commodity = normalizeServerCommodityId(entry?.commodity || inferServerCommodityFromContract(entry?.contract));
-        const commodityMatch = !requestedCommodity || requestedCommodity === "all" || commodity === requestedCommodity;
-        return emailMatch && commodityMatch;
-      });
       payload.compact = true;
       payload.filter = {
         email: requestedEmail || "",
