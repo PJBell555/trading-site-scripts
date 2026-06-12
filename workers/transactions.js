@@ -7823,6 +7823,9 @@ function getMarketLocalParts(value = new Date(), timeZone = DEFAULT_MARKET_CALEN
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
     weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false
@@ -7834,8 +7837,15 @@ function getMarketLocalParts(value = new Date(), timeZone = DEFAULT_MARKET_CALEN
   const hour = Number(parts.hour) === 24 ? 0 : Number(parts.hour);
   return {
     day: dayMap[parts.weekday] ?? 0,
+    year: Number(parts.year) || 0,
+    month: Number(parts.month) || 0,
+    date: Number(parts.day) || 0,
     minutes: (hour * 60) + Number(parts.minute || 0)
   };
+}
+
+function getWeekMinuteFromMarketParts(parts = {}) {
+  return ((Number(parts.day) || 0) * 24 * 60) + (Number(parts.minutes) || 0);
 }
 
 function isWeekMinuteInRange(current, open, close) {
@@ -7852,7 +7862,7 @@ function getMinutesUntilWeekMinute(current, target) {
 function getUserMarketScheduleStatus(settings, value = new Date()) {
   const schedule = normalizeMarketCalendarSettings(settings);
   const { day, minutes } = getMarketLocalParts(value, schedule.marketTimeZone);
-  const currentWeekMinute = (day * 24 * 60) + minutes;
+  const currentWeekMinute = getWeekMinuteFromMarketParts({ day, minutes });
   const weeklyOpenMinute = (schedule.weeklyOpenDay * 24 * 60) + parseMarketMinutes(schedule.weeklyOpenTime, DEFAULT_MARKET_CALENDAR.weeklyOpenTime);
   const weeklyCloseMinute = (schedule.weeklyCloseDay * 24 * 60) + parseMarketMinutes(schedule.weeklyCloseTime, DEFAULT_MARKET_CALENDAR.weeklyCloseTime);
   const dailyCloseMinute = parseMarketMinutes(schedule.dailyCloseTime, DEFAULT_MARKET_CALENDAR.dailyCloseTime);
@@ -7894,11 +7904,33 @@ function getUserMarketScheduleStatus(settings, value = new Date()) {
     flattenWindow,
     minutesUntilClose,
     closeType: nearestClose?.type || null,
+    currentWeekMinute,
+    weeklyOpenMinute,
+    weeklyCloseMinute,
     shortLabel: isOpen ? "Market open" : "Market closed",
     detail: isOpen
       ? `${Math.round(minutesUntilClose || 0)} minute(s) until configured close.`
       : "Configured calendar says this market is closed."
   };
+}
+
+function isServerWeekendCarriedTrade(openTrade, schedulerSettings, marketSchedule, value = new Date()) {
+  if (!marketSchedule?.isOpen || !openTrade) return false;
+  const schedule = normalizeMarketCalendarSettings(schedulerSettings);
+  const weeklyOpenMinute = Number(marketSchedule.weeklyOpenMinute);
+  const weeklyCloseMinute = Number(marketSchedule.weeklyCloseMinute);
+  const currentWeekMinute = Number(marketSchedule.currentWeekMinute);
+  if (!Number.isFinite(weeklyOpenMinute) || !Number.isFinite(weeklyCloseMinute) || !Number.isFinite(currentWeekMinute)) return false;
+  if (weeklyOpenMinute >= weeklyCloseMinute) return false;
+
+  const openedAt = getTransactionDate(openTrade.openedAt || openTrade.time);
+  if (Number.isNaN(openedAt.getTime()) || openedAt.getTime() >= value.getTime()) return false;
+  const openedParts = getMarketLocalParts(openedAt, schedule.marketTimeZone);
+  const openedWeekMinute = getWeekMinuteFromMarketParts(openedParts);
+
+  return openedWeekMinute >= weeklyOpenMinute
+    && openedWeekMinute < weeklyCloseMinute
+    && currentWeekMinute < openedWeekMinute;
 }
 
 function getServerContractRollStatus(config, value = new Date()) {
@@ -8325,10 +8357,14 @@ async function runPaperTradingScheduler(env, options = {}) {
             continue;
           }
           const openTradeRoll = getServerContractRollStatus(openTradeConfig);
+          const weekendCarriedTrade = isServerWeekendCarriedTrade(openTrade, schedulerSettings, marketSchedule);
           let closeAction = null;
           let closePrice = openTradePrice;
           let closeReason = "";
-          if (marketSchedule.isOpen && openTradeRoll.shouldFlatten) {
+          if (weekendCarriedTrade) {
+            closeAction = openTrade.side === "short" ? "COVER WEEKEND REOPEN" : "SELL WEEKEND REOPEN";
+            closeReason = `Sunday reopen rule: closed ${openTrade.side} carried through the weekly market close before evaluating new trades.`;
+          } else if (marketSchedule.isOpen && openTradeRoll.shouldFlatten) {
             closeAction = openTrade.side === "short" ? "COVER ROLL" : "SELL ROLL";
             closeReason = openTradeRoll.detail;
           } else if (marketSchedule.flattenWindow) {
