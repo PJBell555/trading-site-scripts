@@ -9189,7 +9189,13 @@ function getStaticSnapshotUrl() {
 function getPriceHistoryUrl(commodity = homeMarketCommodity, period = homeMarketPeriod) {
   const apiUrl = getHistoryApiUrl();
   if (!apiUrl) return "";
-  return `${apiUrl}/price-history?commodity=${encodeURIComponent(commodity)}&period=${encodeURIComponent(period)}&lite=1`;
+  const params = new URLSearchParams({
+    commodity,
+    period,
+    lite: "1",
+    ts: String(Date.now())
+  });
+  return `${apiUrl}/price-history?${params.toString()}`;
 }
 
 function hasUsableSnapshotPrices(data) {
@@ -12871,7 +12877,7 @@ async function loadHomeMarketPriceHistory() {
     return homeMarketHistoryRequest;
   }
   homeMarketHistoryLoadedAt = now;
-  homeMarketHistoryRequest = fetchWithTimeout(getPriceHistoryUrl(homeMarketCommodity, homeMarketPeriod), { cache: "default" }, 8000)
+  homeMarketHistoryRequest = fetchWithTimeout(getPriceHistoryUrl(homeMarketCommodity, homeMarketPeriod), { cache: "no-store" }, 8000)
     .then(async (response) => {
       if (!response.ok) throw new Error("price history unavailable");
       const data = await response.json();
