@@ -8135,7 +8135,7 @@ function isSessionActive(session = {}, now = Date.now()) {
   return Number.isFinite(lastSeen) && now - lastSeen <= ACTIVE_SESSION_WINDOW_MS;
 }
 
-function addUser(name, email) {
+async function addUser(name, email) {
   const normalizedEmail = normalizeEmail(email);
   const exists = userRoster.some((user) => String(user.email || "").toLowerCase() === normalizedEmail);
 
@@ -8144,7 +8144,26 @@ function addUser(name, email) {
     return;
   }
 
-  userRoster.unshift({
+  userManagementStatusEl.textContent = "Adding user";
+  let savedUser = null;
+  if (hasHistoryBackend()) {
+    try {
+      const response = await fetchWithTimeout(getSharedSettingsUserUrl(), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: name.trim(), email: normalizedEmail })
+      }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data?.error || "User save failed");
+      savedUser = data.user || null;
+      sharedSettingsLoadedAt = data.settingsGeneratedAt || sharedSettingsLoadedAt || new Date().toISOString();
+    } catch (error) {
+      userManagementStatusEl.textContent = error.message || "User save failed";
+      return;
+    }
+  }
+
+  userRoster.unshift(savedUser || {
     id: `user-${Date.now()}`,
     name: name.trim(),
     email: normalizedEmail,
@@ -8162,10 +8181,10 @@ function addUser(name, email) {
     enabled: true
   });
   saveUserRoster();
-  saveSharedSettings();
   userNameInputEl.value = "";
   userEmailInputEl.value = "";
   renderUserManagement();
+  userManagementStatusEl.textContent = `${name.trim()} added`;
 }
 
 function getDefaultFeatureRequests() {
@@ -11228,6 +11247,10 @@ function getCoinbaseSandboxOrderUrl() {
 
 function getSharedSettingsUrl() {
   return `${getHistoryApiUrl()}/settings`;
+}
+
+function getSharedSettingsUserUrl() {
+  return `${getSharedSettingsUrl()}/user`;
 }
 
 function getPaperSchedulerUrl() {

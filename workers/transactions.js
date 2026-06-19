@@ -1629,10 +1629,7 @@ async function getFirstStoredExitTick(env, openTrade, config, openedAt) {
 
 async function sweepBreachedOpenPaperTradesD1(env, settings = null) {
   if (!hasRuntimeStore(env)) return { closedTrades: 0, decisions: [] };
-  const activeSettings = settings || canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-    env,
-    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-  ));
+  const activeSettings = settings || await loadMergedRuntimeSettingsD1(env);
   const usersByEmail = new Map((Array.isArray(activeSettings.users) ? activeSettings.users : [])
     .map((user) => [normalizeEmail(user.email), user]));
   const openRows = await getD1OpenPaperTradeRows(env);
@@ -2124,8 +2121,7 @@ async function applyDreamRecommendations(env, user = {}, context = {}, insights 
   }
 
   const email = normalizeEmail(user.email || user.userEmail || "");
-  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
-  const enriched = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, settings));
+  const enriched = await loadMergedRuntimeSettingsD1(env);
   const users = Array.isArray(enriched.users) ? enriched.users : [];
   const target = users.find((candidate) => normalizeEmail(candidate.email) === email);
   const profile = enriched.userProfiles?.[email] && typeof enriched.userProfiles[email] === "object"
@@ -2578,10 +2574,7 @@ function createFallbackDreamReflection(context = {}, errorMessage = "") {
 }
 
 async function getDreamReflectionUsers(env) {
-  const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-    env,
-    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-  ));
+  const settings = await loadMergedRuntimeSettingsD1(env);
   const usersByEmail = new Map();
   (Array.isArray(settings.users) ? settings.users : []).forEach((user) => {
     const email = normalizeEmail(user.email);
@@ -5993,10 +5986,7 @@ async function loadLeaderboardSummaryCache(env, period = "all", { allowStale = t
 }
 
 async function refreshLeaderboardSummaryCache(env, periods = LEADERBOARD_PERIODS) {
-  const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-    env,
-    await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-  ));
+  const settings = await loadMergedRuntimeSettingsD1(env);
   const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
   const priceSnapshots = await loadStoredPriceSnapshots(env);
   await saveLeaderboardSummaryCache(env, settings, payload.transactions || [], priceSnapshots, periods);
@@ -7941,12 +7931,28 @@ function getServerContractRollStatus(config, value = new Date()) {
       detail: config.rollReason || `${config.ticker || "Contract"} selected as the active rolled contract.`
     };
   }
+  const contracts = Array.isArray(config?.contracts) ? config.contracts : [];
+  const key = String(config?.productId || config?.ticker || "").toLowerCase();
+  const index = contracts.findIndex((contract) => (
+    [contract.productId, contract.ticker].some((item) => String(item || "").toLowerCase() === key)
+  ));
+  const nextContract = index >= 0 ? contracts[index + 1] : null;
+  const pinnedExpiration = index >= 0 && contracts[index]?.contractExpiresAt
+    ? new Date(contracts[index].contractExpiresAt)
+    : null;
+  const rollBeforeMs = Math.max(0, Number(config.rollBeforeDays) || 0) * 24 * 60 * 60 * 1000;
+  if (nextContract && pinnedExpiration && !Number.isNaN(pinnedExpiration.getTime()) && value.getTime() >= pinnedExpiration.getTime() - rollBeforeMs) {
+    return {
+      shouldOpen: true,
+      shouldFlatten: false,
+      detail: `${contracts[index].ticker || config.ticker || "Front contract"} is inside the roll window; new entries use ${nextContract.ticker || nextContract.productId}.`
+    };
+  }
   const expiration = config?.contractExpiresAt ? new Date(config.contractExpiresAt) : null;
   if (!expiration || Number.isNaN(expiration.getTime())) {
     return { shouldOpen: true, shouldFlatten: false, detail: "No contract expiration configured." };
   }
 
-  const rollBeforeMs = Math.max(0, Number(config.rollBeforeDays) || 0) * 24 * 60 * 60 * 1000;
   const now = value.getTime();
   const rollAt = expiration.getTime() - rollBeforeMs;
   if (now >= expiration.getTime()) {
@@ -8168,10 +8174,7 @@ async function runPaperTradingScheduler(env, options = {}) {
   }
 
   try {
-    const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-      env,
-      await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-    ));
+    const settings = await loadMergedRuntimeSettingsD1(env);
     const modelSettings = normalizeServerModelSettings(settings.modelSettings);
     const users = Array.isArray(settings.users) ? settings.users : [];
     const payload = await loadUnifiedTransactionPayloadD1(env, PAPER_TRADE_MODE, PAPER_LEDGER_SOURCE);
@@ -9049,6 +9052,97 @@ async function upsertUserStrategyRecordsD1(env, settings = {}) {
   }
 }
 
+async function ensureUserProfileRecordsTable(env) {
+  await env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS user_profile_records (
+      user_email TEXT PRIMARY KEY,
+      user_json TEXT NOT NULL DEFAULT '{}',
+      profile_json TEXT NOT NULL DEFAULT '{}',
+      updated_at TEXT NOT NULL
+    )
+  `).run();
+  await env.DB.prepare(`
+    CREATE INDEX IF NOT EXISTS idx_user_profile_records_updated
+    ON user_profile_records (updated_at DESC)
+  `).run();
+}
+
+async function upsertUserProfileRecordD1(env, user = {}, profile = {}) {
+  const email = normalizeEmail(user.email || profile.email);
+  if (!email) return null;
+  await ensureUserProfileRecordsTable(env);
+  const now = new Date().toISOString();
+  const nextUser = {
+    ...user,
+    email,
+    updatedAt: user.updatedAt || now
+  };
+  const nextProfile = {
+    ...profile,
+    email,
+    updatedAt: profile.updatedAt || now
+  };
+  await env.DB.prepare(`
+    INSERT INTO user_profile_records (user_email, user_json, profile_json, updated_at)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(user_email) DO UPDATE SET
+      user_json = excluded.user_json,
+      profile_json = excluded.profile_json,
+      updated_at = excluded.updated_at
+  `).bind(
+    email,
+    JSON.stringify(nextUser),
+    JSON.stringify(nextProfile),
+    now
+  ).run();
+  return { user: nextUser, profile: nextProfile, updatedAt: now };
+}
+
+async function mergeUserProfileRecordsD1(env, settings = {}) {
+  await ensureUserProfileRecordsTable(env);
+  const result = await env.DB.prepare(`
+    SELECT user_email, user_json, profile_json
+    FROM user_profile_records
+  `).all();
+  const users = Array.isArray(settings.users) ? settings.users.slice() : [];
+  const profiles = {
+    ...(settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles) ? settings.userProfiles : {})
+  };
+  const userIndexes = new Map(users.map((user, index) => [normalizeEmail(user.email), index]));
+
+  getResults(result).forEach((row) => {
+    const email = normalizeEmail(row.user_email);
+    if (!email) return;
+    const user = parseStoredJson(row.user_json, {});
+    const profile = parseStoredJson(row.profile_json, {});
+    const existingIndex = userIndexes.get(email);
+    if (Number.isInteger(existingIndex)) {
+      users[existingIndex] = {
+        ...users[existingIndex],
+        ...user,
+        email
+      };
+    } else {
+      userIndexes.set(email, users.length);
+      users.push({
+        ...user,
+        email
+      });
+    }
+    profiles[email] = {
+      ...(profiles[email] || {}),
+      ...profile,
+      email
+    };
+  });
+
+  return {
+    ...settings,
+    users,
+    userProfiles: profiles
+  };
+}
+
 async function mergeUserStrategyRecordsD1(env, settings = {}) {
   await ensureUserStrategyRecordsTable(env);
   const result = await env.DB.prepare(`
@@ -9086,10 +9180,15 @@ async function mergeUserStrategyRecordsD1(env, settings = {}) {
   };
 }
 
+async function loadMergedRuntimeSettingsD1(env) {
+  const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+  const withUserRecords = await mergeUserProfileRecordsD1(env, settings);
+  return canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, withUserRecords));
+}
+
 async function handleD1Settings(env, request, origin, ctx = null) {
   if (request.method === "GET") {
-    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
-    const enrichedSettings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, settings));
+    const enrichedSettings = await loadMergedRuntimeSettingsD1(env);
     return jsonResponse({
       ...defaultSettingsPayload(),
       ...enrichedSettings,
@@ -9197,6 +9296,111 @@ async function handleD1StrategyChange(env, request, origin) {
     strategy: after,
     historyEntry
   }, 200, origin);
+}
+
+function getDefaultOilAllocations(startCapital = PAPER_SCHEDULER_DEFAULT_START_CAPITAL) {
+  return Object.fromEntries(Object.keys(SERVER_COMMODITIES).map((id) => [
+    id,
+    { startCapital: id === "oil" ? Math.max(0, Number(startCapital) || 0) : 0 }
+  ]));
+}
+
+function getDefaultUserPaperTrading() {
+  return {
+    enabled: true,
+    commodities: ["oil"],
+    riskPct: PAPER_SCHEDULER_DEFAULT_RISK_PCT,
+    maxOpenTrades: PAPER_SCHEDULER_DEFAULT_MAX_OPEN,
+    entryThreshold: 63,
+    ...DEFAULT_MARKET_CALENDAR
+  };
+}
+
+async function handleD1UserUpsert(env, request, origin) {
+  try {
+    if (request.method !== "POST") {
+      return jsonResponse({ error: "Method not allowed" }, 405, origin);
+    }
+
+    const body = await request.json().catch(() => ({}));
+    const email = normalizeEmail(body.email);
+    const name = String(body.name || "").trim();
+    if (!email || !name) {
+      return jsonResponse({ error: "User name and email are required" }, 400, origin);
+    }
+
+    const now = new Date().toISOString();
+    const settings = await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload());
+    const users = Array.isArray(settings.users) ? settings.users : [];
+    const profiles = settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+      ? { ...settings.userProfiles }
+      : {};
+    let user = users.find((candidate) => normalizeEmail(candidate.email) === email);
+    const created = !user;
+    const startCapital = Number.isFinite(Number(body.paperBaseEquity))
+      ? Math.max(0, Number(body.paperBaseEquity))
+      : PAPER_SCHEDULER_DEFAULT_START_CAPITAL;
+    const defaultPaperTrading = getDefaultUserPaperTrading();
+    const defaultAllocations = getDefaultOilAllocations(startCapital);
+
+    if (!user) {
+      user = {
+        id: String(body.id || `user-${Date.now()}`),
+        name,
+        email,
+        createdAt: now,
+        lastActiveAt: now,
+        sessions: 0,
+        paperBaseEquity: startCapital,
+        paperRiskPct: PAPER_SCHEDULER_DEFAULT_RISK_PCT,
+        commodities: ["oil"],
+        commodityAllocations: defaultAllocations,
+        paperTrading: defaultPaperTrading,
+        enabled: true
+      };
+      users.unshift(user);
+    } else {
+      user.name = user.name || name;
+      user.enabled = true;
+      user.commodities = Array.isArray(user.commodities) && user.commodities.length ? user.commodities : ["oil"];
+      user.paperBaseEquity = Number.isFinite(Number(user.paperBaseEquity)) ? Number(user.paperBaseEquity) : startCapital;
+      user.paperRiskPct = Number.isFinite(Number(user.paperRiskPct)) ? Number(user.paperRiskPct) : PAPER_SCHEDULER_DEFAULT_RISK_PCT;
+      user.commodityAllocations = user.commodityAllocations && typeof user.commodityAllocations === "object" && !Array.isArray(user.commodityAllocations)
+        ? user.commodityAllocations
+        : defaultAllocations;
+      user.paperTrading = {
+        ...defaultPaperTrading,
+        ...(user.paperTrading && typeof user.paperTrading === "object" && !Array.isArray(user.paperTrading) ? user.paperTrading : {})
+      };
+    }
+
+    profiles[email] = {
+      ...(profiles[email] && typeof profiles[email] === "object" && !Array.isArray(profiles[email]) ? profiles[email] : {}),
+      email,
+      name: user.name || name,
+      paperBaseEquity: user.paperBaseEquity,
+      paperRiskPct: user.paperRiskPct,
+      commodities: user.commodities,
+      commodityAllocations: user.commodityAllocations,
+      paperTrading: user.paperTrading,
+      enabled: true,
+      updatedAt: now
+    };
+
+    const profile = profiles[email];
+    const saved = await upsertUserProfileRecordD1(env, user, profile);
+    const savedUser = saved?.user || user;
+    return jsonResponse({
+      storage: "d1",
+      created,
+      user: savedUser,
+      profile: saved?.profile || profile,
+      settingsGeneratedAt: saved?.updatedAt || now
+    }, created ? 201 : 200, origin);
+  } catch (error) {
+    console.error("settings user upsert failed", error);
+    return jsonResponse({ error: error.message || "User save failed" }, 500, origin);
+  }
 }
 
 async function handleD1UserCapitalUpdate(env, request, origin) {
@@ -9510,10 +9714,7 @@ async function handleD1UnifiedTransactionLedger(env, request, tradeMode, source,
     }
     if (normalizedMode === PAPER_TRADE_MODE && includeSummary) {
       try {
-        const settings = canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(
-          env,
-          await getRuntimeDocumentD1(env, SETTINGS_DOCUMENT_KEY, defaultSettingsPayload())
-        ));
+        const settings = await loadMergedRuntimeSettingsD1(env);
         const summarySettings = requestedEmail
           ? {
               ...settings,
@@ -9966,6 +10167,10 @@ export default {
 
       if (url.pathname === "/settings/strategy-change") {
         return handleD1StrategyChange(env, request, origin);
+      }
+
+      if (url.pathname === "/settings/user") {
+        return handleD1UserUpsert(env, request, origin);
       }
 
       if (url.pathname === "/settings/user-capital") {
