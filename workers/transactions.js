@@ -9186,12 +9186,67 @@ async function loadMergedRuntimeSettingsD1(env) {
   return canonicalizeSettingsPayload(await mergeUserStrategyRecordsD1(env, withUserRecords));
 }
 
+function compactStrategyHistoryForClient(history = []) {
+  return (Array.isArray(history) ? history : []).slice(0, 8).map((entry = {}) => ({
+    id: entry.id,
+    changedAt: entry.changedAt,
+    changedByName: entry.changedByName,
+    changedByEmail: entry.changedByEmail,
+    summary: entry.summary,
+    detail: entry.detail
+  }));
+}
+
+function compactUserRecordForClient(user = {}) {
+  const avatarDataUrl = String(user.avatarDataUrl || "");
+  return {
+    ...user,
+    avatarDataUrl: avatarDataUrl.length <= 20000 ? avatarDataUrl : "",
+    sessionHistory: Array.isArray(user.sessionHistory) ? user.sessionHistory.slice(0, 5) : [],
+    strategyHistory: compactStrategyHistoryForClient(user.strategyHistory)
+  };
+}
+
+function compactUserProfileForClient(profile = {}) {
+  const avatarDataUrl = String(profile.avatarDataUrl || "");
+  return {
+    ...profile,
+    avatarDataUrl: avatarDataUrl.length <= 20000 ? avatarDataUrl : "",
+    strategyHistory: compactStrategyHistoryForClient(profile.strategyHistory)
+  };
+}
+
+function compactSettingsForClient(settings = {}) {
+  const profiles = {};
+  Object.entries(settings.userProfiles && typeof settings.userProfiles === "object" && !Array.isArray(settings.userProfiles)
+    ? settings.userProfiles
+    : {}
+  ).forEach(([email, profile]) => {
+    profiles[email] = compactUserProfileForClient(profile);
+  });
+
+  const {
+    userStrategyRecords,
+    ...rest
+  } = settings;
+
+  return {
+    ...rest,
+    users: (Array.isArray(settings.users) ? settings.users : []).map(compactUserRecordForClient),
+    userProfiles: profiles
+  };
+}
+
 async function handleD1Settings(env, request, origin, ctx = null) {
   if (request.method === "GET") {
+    const url = new URL(request.url);
     const enrichedSettings = await loadMergedRuntimeSettingsD1(env);
+    const clientSettings = url.searchParams.get("view") === "lite"
+      ? compactSettingsForClient(enrichedSettings)
+      : enrichedSettings;
     return jsonResponse({
       ...defaultSettingsPayload(),
-      ...enrichedSettings,
+      ...clientSettings,
       source: "cloudflare-d1-shared-settings",
       storage: "d1"
     }, 200, origin);

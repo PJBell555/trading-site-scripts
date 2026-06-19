@@ -11357,7 +11357,7 @@ async function loadSharedSettings(manual = false) {
   backendSettingsSyncInFlight = true;
 
   try {
-    const response = await fetchWithTimeout(`${getSharedSettingsUrl()}?ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    const response = await fetchWithTimeout(`${getSharedSettingsUrl()}?view=lite&ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
     if (!response.ok) throw new Error("settings unavailable");
 
     const settings = await response.json();
