@@ -58,7 +58,19 @@ const DEFAULT_MARKET_CALENDAR = {
   dailyCloseTime: "17:00",
   dailyReopenTime: "18:00",
   closeBeforeMinutes: 30,
-  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays."
+  marketHolidayDates: [
+    "2026-01-01",
+    "2026-01-19",
+    "2026-02-16",
+    "2026-04-03",
+    "2026-05-25",
+    "2026-06-19",
+    "2026-07-03",
+    "2026-09-07",
+    "2026-11-26",
+    "2026-12-25"
+  ],
+  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays. New paper entries are blocked on configured US market holidays."
 };
 const SERVER_COMMODITIES = {
   oil: {
@@ -4798,6 +4810,14 @@ function normalizeMarketTime(value, fallback) {
   return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback;
 }
 
+function normalizeMarketHolidayDates(value = DEFAULT_MARKET_CALENDAR.marketHolidayDates) {
+  const source = Array.isArray(value) ? value : String(value || "").split(",");
+  const normalized = source
+    .map((item) => String(item || "").trim())
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item));
+  return [...new Set(normalized)];
+}
+
 function normalizeMarketCalendarSettings(explicit = {}) {
   const overnightRiskMode = explicit.overnightRiskMode ?? DEFAULT_MARKET_CALENDAR.overnightRiskMode;
   return {
@@ -4810,6 +4830,7 @@ function normalizeMarketCalendarSettings(explicit = {}) {
     dailyCloseTime: normalizeMarketTime(explicit.dailyCloseTime, DEFAULT_MARKET_CALENDAR.dailyCloseTime),
     dailyReopenTime: normalizeMarketTime(explicit.dailyReopenTime, DEFAULT_MARKET_CALENDAR.dailyReopenTime),
     closeBeforeMinutes: clamp(Math.round(Number(explicit.closeBeforeMinutes) || DEFAULT_MARKET_CALENDAR.closeBeforeMinutes), 1, 240),
+    marketHolidayDates: normalizeMarketHolidayDates(explicit.marketHolidayDates || DEFAULT_MARKET_CALENDAR.marketHolidayDates),
     marketCalendarNotes: String(explicit.marketCalendarNotes || DEFAULT_MARKET_CALENDAR.marketCalendarNotes).trim()
   };
 }
@@ -7834,6 +7855,13 @@ function getMarketLocalParts(value = new Date(), timeZone = DEFAULT_MARKET_CALEN
   };
 }
 
+function getMarketLocalDateKey(parts = {}) {
+  const year = String(parts.year || "").padStart(4, "0");
+  const month = String(parts.month || "").padStart(2, "0");
+  const date = String(parts.date || "").padStart(2, "0");
+  return year && month && date ? `${year}-${month}-${date}` : "";
+}
+
 function getWeekMinuteFromMarketParts(parts = {}) {
   return ((Number(parts.day) || 0) * 24 * 60) + (Number(parts.minutes) || 0);
 }
@@ -7851,7 +7879,10 @@ function getMinutesUntilWeekMinute(current, target) {
 
 function getUserMarketScheduleStatus(settings, value = new Date()) {
   const schedule = normalizeMarketCalendarSettings(settings);
-  const { day, minutes } = getMarketLocalParts(value, schedule.marketTimeZone);
+  const parts = getMarketLocalParts(value, schedule.marketTimeZone);
+  const { day, minutes } = parts;
+  const localDate = getMarketLocalDateKey(parts);
+  const holidayClosed = Boolean(localDate && schedule.marketHolidayDates.includes(localDate));
   const currentWeekMinute = getWeekMinuteFromMarketParts({ day, minutes });
   const weeklyOpenMinute = (schedule.weeklyOpenDay * 24 * 60) + parseMarketMinutes(schedule.weeklyOpenTime, DEFAULT_MARKET_CALENDAR.weeklyOpenTime);
   const weeklyCloseMinute = (schedule.weeklyCloseDay * 24 * 60) + parseMarketMinutes(schedule.weeklyCloseTime, DEFAULT_MARKET_CALENDAR.weeklyCloseTime);
@@ -7862,7 +7893,7 @@ function getUserMarketScheduleStatus(settings, value = new Date()) {
     && day <= 4
     && minutes >= dailyCloseMinute
     && minutes < dailyReopenMinute;
-  const isOpen = insideWeeklySession && !dailyMaintenanceClosed;
+  const isOpen = insideWeeklySession && !dailyMaintenanceClosed && !holidayClosed;
 
   const closeCandidates = [];
   const weeklyCloseDelta = getMinutesUntilWeekMinute(currentWeekMinute, weeklyCloseMinute);
@@ -7894,12 +7925,16 @@ function getUserMarketScheduleStatus(settings, value = new Date()) {
     flattenWindow,
     minutesUntilClose,
     closeType: nearestClose?.type || null,
+    holidayClosed,
+    localDate,
     currentWeekMinute,
     weeklyOpenMinute,
     weeklyCloseMinute,
     shortLabel: isOpen ? "Market open" : "Market closed",
     detail: isOpen
       ? `${Math.round(minutesUntilClose || 0)} minute(s) until configured close.`
+      : holidayClosed
+        ? `Configured market holiday ${localDate}; new paper entries are disabled.`
       : "Configured calendar says this market is closed."
   };
 }
@@ -8262,6 +8297,18 @@ async function runPaperTradingScheduler(env, options = {}) {
 
       for (const commodity of schedulerSettings.commodities) {
         const config = getServerCommodityConfig(user, commodity);
+        const hasCommodityOpenBeforeEvaluation = enabledOpenTrades.some((trade) => (
+          normalizeServerCommodityId(trade.commodity || inferServerCommodityFromContract(trade.contract)) === commodity
+        ));
+        if (!marketSchedule.isOpen && !hasCommodityOpenBeforeEvaluation) {
+          lastDecision = `${commodity}: ${marketSchedule.detail}`;
+          setDecisionAudit("market", lastDecision, {
+            action: "skip",
+            signal: { label: marketSchedule.shortLabel, side: "", conviction: 0 }
+          });
+          run.skippedTrades += 1;
+          continue;
+        }
         const contractRoll = getServerContractRollStatus(config);
         let advisory = await getLatestAdvisoryByCommodity(env, commodity, config);
         const price = await getServerMarketPrice(env, user, commodity, advisory);
@@ -8873,6 +8920,7 @@ async function handlePaperSchedulerRoute(env, request, origin) {
         dailyCloseTime: scheduler.dailyCloseTime,
         dailyReopenTime: scheduler.dailyReopenTime,
         closeBeforeMinutes: scheduler.closeBeforeMinutes,
+        marketHolidayDates: normalizeMarketHolidayDates(scheduler.marketHolidayDates || DEFAULT_MARKET_CALENDAR.marketHolidayDates),
         marketCalendarNotes: scheduler.marketCalendarNotes,
         primaryModelId: scheduler.primaryModelId,
         criticModelId: scheduler.criticModelId,
@@ -9235,6 +9283,21 @@ function compactSettingsForClient(settings = {}) {
     users: (Array.isArray(settings.users) ? settings.users : []).map(compactUserRecordForClient),
     userProfiles: profiles
   };
+}
+
+async function handleD1SettingsUsers(env, request, origin) {
+  if (request.method !== "GET") {
+    return jsonResponse({ error: "Method not allowed" }, 405, origin);
+  }
+
+  const settings = compactSettingsForClient(await loadMergedRuntimeSettingsD1(env));
+  return jsonResponse({
+    generatedAt: settings.generatedAt || new Date().toISOString(),
+    source: "cloudflare-d1-user-roster",
+    storage: "d1",
+    users: settings.users || [],
+    userProfiles: settings.userProfiles || {}
+  }, 200, origin);
 }
 
 async function handleD1Settings(env, request, origin, ctx = null) {
@@ -10222,6 +10285,10 @@ export default {
 
       if (url.pathname === "/settings/strategy-change") {
         return handleD1StrategyChange(env, request, origin);
+      }
+
+      if (url.pathname === "/settings/users") {
+        return handleD1SettingsUsers(env, request, origin);
       }
 
       if (url.pathname === "/settings/user") {

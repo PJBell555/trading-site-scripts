@@ -657,7 +657,19 @@ const DEFAULT_SERVER_PAPER_TRADING = {
   dailyCloseTime: "17:00",
   dailyReopenTime: "18:00",
   closeBeforeMinutes: 30,
-  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays.",
+  marketHolidayDates: [
+    "2026-01-01",
+    "2026-01-19",
+    "2026-02-16",
+    "2026-04-03",
+    "2026-05-25",
+    "2026-06-19",
+    "2026-07-03",
+    "2026-09-07",
+    "2026-11-26",
+    "2026-12-25"
+  ],
+  marketCalendarNotes: "Coinbase futures calendar: Sunday 18:00 ET through Friday 17:00 ET, with a 17:00-18:00 ET maintenance break on weekdays. New paper entries are blocked on configured US market holidays.",
   lastEvaluationAt: null,
   lastDecision: "Not evaluated yet"
 };
@@ -827,6 +839,7 @@ let userSearchQuery = "";
 let userListFilter = "all";
 let expandedUserEmail = "";
 let editingUserEmail = "";
+let pendingUserDetailScrollEmail = "";
 let expandedLeaderBoardUserEmail = "";
 let leaderBoardDetailMode = "profile";
 let activeSection = "home";
@@ -1115,6 +1128,7 @@ function showUserManagement(resetSearch = false) {
 
   // Pull shared settings and Cloudflare P/L summary without blocking first paint.
   Promise.all([
+    loadSharedUserRoster(),
     loadSharedSettings(),
     loadPaperLedgerSummary()
   ]).then(() => {
@@ -4033,6 +4047,14 @@ function normalizeMarketTime(value, fallback) {
   return /^\d{2}:\d{2}$/.test(raw) ? raw : fallback;
 }
 
+function normalizeMarketHolidayDates(value = DEFAULT_SERVER_PAPER_TRADING.marketHolidayDates) {
+  const source = Array.isArray(value) ? value : String(value || "").split(",");
+  const normalized = source
+    .map((item) => String(item || "").trim())
+    .filter((item) => /^\d{4}-\d{2}-\d{2}$/.test(item));
+  return [...new Set(normalized)];
+}
+
 function normalizeServerPaperTrading(settings = {}, fallback = {}) {
   const merged = {
     ...DEFAULT_SERVER_PAPER_TRADING,
@@ -4054,6 +4076,7 @@ function normalizeServerPaperTrading(settings = {}, fallback = {}) {
     dailyCloseTime: normalizeMarketTime(merged.dailyCloseTime, DEFAULT_SERVER_PAPER_TRADING.dailyCloseTime),
     dailyReopenTime: normalizeMarketTime(merged.dailyReopenTime, DEFAULT_SERVER_PAPER_TRADING.dailyReopenTime),
     closeBeforeMinutes: clamp(Math.round(Number(merged.closeBeforeMinutes) || DEFAULT_SERVER_PAPER_TRADING.closeBeforeMinutes), 1, 240),
+    marketHolidayDates: normalizeMarketHolidayDates(merged.marketHolidayDates || DEFAULT_SERVER_PAPER_TRADING.marketHolidayDates),
     marketCalendarNotes: String(merged.marketCalendarNotes || DEFAULT_SERVER_PAPER_TRADING.marketCalendarNotes).trim(),
     lastEvaluationAt: merged.lastEvaluationAt || null,
     lastDecision: String(merged.lastDecision || DEFAULT_SERVER_PAPER_TRADING.lastDecision).trim()
@@ -7542,30 +7565,59 @@ function renderUserListFilterButtons() {
 
 function renderInlineUserDetail() {
   if (!userInlineDetailPanelEl || !userInlineDetailBodyEl || !userInlineDetailTitleEl) return;
-  const selectedUser = userRoster.find((user) => normalizeEmail(user.email) === expandedUserEmail);
   userInlineDetailBodyEl.innerHTML = "";
+  userInlineDetailPanelEl.hidden = true;
+  userInlineDetailTitleEl.textContent = "No user selected";
+}
 
-  if (!selectedUser) {
-    userInlineDetailPanelEl.hidden = true;
-    userInlineDetailTitleEl.textContent = "No user selected";
-    return;
-  }
+function createUserDetailTableRow(user) {
+  const detailRow = document.createElement("tr");
+  const detailCell = document.createElement("td");
+  const shell = document.createElement("section");
+  const header = document.createElement("div");
+  const headerText = document.createElement("div");
+  const eyebrow = document.createElement("span");
+  const title = document.createElement("strong");
+  const closeButton = document.createElement("button");
 
-  userInlineDetailTitleEl.textContent = `${selectedUser.name || "Unnamed user"} / ${selectedUser.email || "-"}`;
+  detailRow.className = "user-profile-detail-row";
+  detailRow.dataset.userDetailEmail = normalizeEmail(user.email);
+  detailCell.colSpan = 11;
+  shell.className = "user-inline-detail-panel user-table-detail-panel";
+  shell.tabIndex = -1;
+  header.className = "user-inline-detail-head";
+  eyebrow.className = "stat-label";
+  eyebrow.textContent = "Profile / strategy editor";
+  title.textContent = `${user.name || "Unnamed user"} / ${user.email || "-"}`;
+  closeButton.className = "filter-button";
+  closeButton.type = "button";
+  closeButton.textContent = "Close";
+  closeButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    closeUserDetail();
+  });
+
+  headerText.append(eyebrow, title);
+  header.append(headerText, closeButton);
+  shell.append(header);
   try {
-    userInlineDetailBodyEl.append(createUserProfilePanel(selectedUser));
+    shell.append(createUserProfilePanel(user));
   } catch (error) {
     console.error("User profile render failed", error);
     const fallback = document.createElement("div");
     fallback.className = "user-profile-render-error";
     fallback.textContent = `User profile could not render: ${error?.message || "unknown error"}`;
-    userInlineDetailBodyEl.append(fallback);
+    shell.append(fallback);
   }
-  userInlineDetailPanelEl.hidden = false;
+
+  detailCell.append(shell);
+  detailRow.append(detailCell);
+  return detailRow;
 }
 
 function openUserDetail(user) {
   expandedUserEmail = normalizeEmail(user.email);
+  pendingUserDetailScrollEmail = expandedUserEmail;
   editingUserEmail = "";
   userRosterViewEl.hidden = false;
   userDetailViewEl.hidden = true;
@@ -8010,6 +8062,12 @@ function renderUserManagement() {
     } else {
       profileText.append(name, email);
     }
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const selectedHint = document.createElement("small");
+      selectedHint.className = "user-detail-open-note";
+      selectedHint.textContent = "Strategy editor open below";
+      profileText.append(selectedHint);
+    }
     profile.append(createUserAvatar(user), profileText);
     profileCell.append(profile);
 
@@ -8020,10 +8078,11 @@ function renderUserManagement() {
     actions.className = "user-actions";
     action.type = "button";
     action.className = "view-user-button";
-    action.textContent = "View";
+    action.textContent = expandedUserEmail === normalizeEmail(user.email) ? "Close" : "Edit strategy";
     action.addEventListener("click", (event) => {
       event.stopPropagation();
-      openUserDetail(user);
+      if (expandedUserEmail === normalizeEmail(user.email)) closeUserDetail();
+      else openUserDetail(user);
     });
     actions.append(action);
     actionCell.append(actions);
@@ -8063,6 +8122,19 @@ function renderUserManagement() {
     });
 
     userTableBodyEl.append(row);
+
+    if (expandedUserEmail === normalizeEmail(user.email)) {
+      const detailRow = createUserDetailTableRow(user);
+      userTableBodyEl.append(detailRow);
+      if (pendingUserDetailScrollEmail === expandedUserEmail) {
+        pendingUserDetailScrollEmail = "";
+        window.requestAnimationFrame(() => {
+          const panel = detailRow.querySelector(".user-table-detail-panel");
+          panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+          panel?.focus({ preventScroll: true });
+        });
+      }
+    }
 
   });
   renderSelectedUserProfile();
@@ -9062,6 +9134,9 @@ function getEasternMarketParts(value = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "America/New_York",
     weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
     hour: "numeric",
     minute: "2-digit",
     hour12: false
@@ -9074,19 +9149,42 @@ function getEasternMarketParts(value = new Date()) {
 
   return {
     day: dayMap[parts.weekday] ?? 0,
+    year: Number(parts.year) || 0,
+    month: Number(parts.month) || 0,
+    date: Number(parts.day) || 0,
     minutes: (hour * 60) + Number(parts.minute || 0)
   };
 }
 
+function getEasternDateKey(parts = {}) {
+  return [
+    String(parts.year || "").padStart(4, "0"),
+    String(parts.month || "").padStart(2, "0"),
+    String(parts.date || "").padStart(2, "0")
+  ].join("-");
+}
+
 function getFuturesMarketStatus(value = new Date()) {
   const dateValue = getTransactionDate(value);
-  const { day, minutes } = getEasternMarketParts(dateValue);
+  const parts = getEasternMarketParts(dateValue);
+  const { day, minutes } = parts;
   const dayNames = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const todayDate = formatEasternDate(dateValue);
+  const localDate = getEasternDateKey(parts);
+  const holidayClosed = normalizeMarketHolidayDates().includes(localDate);
   const isMaintenanceBreak = day >= 1 && day <= 4 && minutes >= 17 * 60 && minutes < 18 * 60;
-  const isOpen = (day === 0 && minutes >= 18 * 60)
+  const isOpen = !holidayClosed && ((day === 0 && minutes >= 18 * 60)
     || (day >= 1 && day <= 4 && !isMaintenanceBreak)
-    || (day === 5 && minutes < 17 * 60);
+    || (day === 5 && minutes < 17 * 60));
+
+  if (holidayClosed) {
+    return {
+      isOpen: false,
+      label: "Market closed",
+      shortLabel: "Holiday closed",
+      detail: `Today is ${todayDate} ET. Configured market holiday ${localDate}; new paper entries are disabled.`
+    };
+  }
 
   if (isOpen) {
     const closeCopy = day >= 1 && day <= 4 && minutes < 17 * 60
@@ -11253,6 +11351,10 @@ function getSharedSettingsUserUrl() {
   return `${getSharedSettingsUrl()}/user`;
 }
 
+function getSharedSettingsUsersUrl() {
+  return `${getSharedSettingsUrl()}/users`;
+}
+
 function getPaperSchedulerUrl() {
   return `${getHistoryApiUrl()}/paper-scheduler`;
 }
@@ -11393,6 +11495,31 @@ async function loadSharedSettings(manual = false) {
     return false;
   } finally {
     backendSettingsSyncInFlight = false;
+  }
+}
+
+async function loadSharedUserRoster(manual = false) {
+  if (!hasHistoryBackend()) return false;
+
+  try {
+    const response = await fetchWithTimeout(`${getSharedSettingsUsersUrl()}?ts=${Date.now()}`, { cache: "no-store" }, CLOUD_SOURCE_FETCH_TIMEOUT_MS);
+    if (!response.ok) throw new Error("user roster unavailable");
+
+    const payload = await response.json();
+    sharedSettingsLoadedFromBackend = true;
+    sharedSettingsLoadedAt = payload.generatedAt || sharedSettingsLoadedAt || new Date().toISOString();
+    const usersChanged = mergeSharedUsers(payload.users);
+    const profilesChanged = mergeSharedUserProfiles(payload.userProfiles);
+    if (usersChanged || profilesChanged) {
+      applyCurrentUserPaperSettings();
+      renderUserManagement();
+      renderLeaderBoard();
+    }
+    nextBackendSettingsSyncAt = 0;
+    return usersChanged || profilesChanged;
+  } catch (error) {
+    if (manual) userManagementStatusEl.textContent = error.message || "User roster sync failed";
+    return false;
   }
 }
 
@@ -13829,6 +13956,7 @@ async function initializeBackendState() {
   const needsHomePreview = activeSection === "home";
   const historyLoad = needsLedger ? autoSyncTransactionHistory() : Promise.resolve(false);
   const settingsLoad = loadSharedSettings();
+  const userRosterLoad = needsUserProfiles ? loadSharedUserRoster() : Promise.resolve(false);
   const leaderboardLoad = needsLeaderboard ? loadLeaderBoardSummary() : Promise.resolve(false);
   const schedulerLoad = (needsLeaderboard || needsUserProfiles) ? loadLeaderBoardSchedulerStatus() : Promise.resolve(false);
   const shadowBacktestLoad = needsUserProfiles ? loadOilShadowBacktestHistory() : Promise.resolve(false);
@@ -13838,6 +13966,7 @@ async function initializeBackendState() {
   const [loadedHistory] = await Promise.all([
     historyLoad,
     settingsLoad,
+    userRosterLoad,
     leaderboardLoad,
     schedulerLoad,
     shadowBacktestLoad,
